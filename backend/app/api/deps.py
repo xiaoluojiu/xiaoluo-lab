@@ -1,0 +1,96 @@
+"""FastAPI 依赖注入。"""
+from __future__ import annotations
+import threading
+from fastapi import Depends
+from sqlalchemy.orm import Session
+from app.agent.llm.base import LLMProvider
+from app.agent.llm.capabilities import LLMCapabilities
+from app.agent.llm.openai_compatible import OpenAICompatibleProvider
+from app.agent.planner.planner import AgentPlanner
+from app.agent.planner.replanner import ReplanLimits
+from app.agent.runtime.models import AgentStore
+from app.agent.runtime.agent_runtime import AgentRuntime
+from app.core.config import settings
+from app.core.database import get_db
+from app.data_engine.service import DataEngineService
+from app.experiments.service import ExperimentService
+from app.learning.service import LearningService
+from app.services.dataset_service import DatasetService
+from app.services.file_service import FileService
+from app.storage.service import StorageService, get_storage
+from app.workflow.runners import NODE_REQUIRED_CONFIG, build_default_runners
+from app.workflow.service import WorkflowService
+
+AGENT_STORE = AgentStore()
+WORKFLOW_SERVICE = WorkflowService(
+    node_runners=build_default_runners(),
+    # 必需的节点参数规格：只在 run() 前预检生效，create/update 仍允许保存未配置的草稿。
+    required_config_keys=NODE_REQUIRED_CONFIG,
+)
+
+# Planner（含 plan cache）必须进程级共享：AgentRuntime 每请求重建，
+# 若 Planner 也随之重建，plan cache 跨请求永远 miss（S-4）。
+_PLANNER_LOCK = threading.Lock()
+_PLANNERS: dict[tuple, AgentPlanner] = {}
+_PLANNER_CACHE_MAX = 8
+
+
+def _shared_planner(llm: LLMProvider | None) -> AgentPlanner:
+    key = (getattr(llm, "name", "rule"), getattr(llm, "model", "") or "") if llm is not None else ("rule", "")
+    with _PLANNER_LOCK:
+        planner = _PLANNERS.get(key)
+        if planner is None:
+            planner = AgentPlanner(llm, max_steps=settings.AGENT_MAX_STEPS)
+            if len(_PLANNERS) >= _PLANNER_CACHE_MAX:
+                _PLANNERS.clear()
+            _PLANNERS[key] = planner
+        return planner
+
+def get_storage_service() -> StorageService:
+    return get_storage()
+
+def get_dataset_service(db: Session = Depends(get_db), storage: StorageService = Depends(get_storage_service)) -> DatasetService:
+    return DatasetService(db, storage)
+
+def get_data_engine_service(dataset_service: DatasetService = Depends(get_dataset_service)) -> DataEngineService:
+    return DataEngineService(dataset_service)
+
+def get_experiment_service(db: Session = Depends(get_db), dataset_service: DatasetService = Depends(get_dataset_service)) -> ExperimentService:
+    return ExperimentService(db, dataset_service)
+
+def get_llm_provider() -> LLMProvider | None:
+    """默认 Agent Provider；具体厂商由 Base URL / OpenAI-compatible 协议决定。
+
+    返回 None ⇒ 上层退回平台自带的规则规划器。两种情况：
+    ① 设置页把「启用远程 API 大模型」关掉了（用于测试平台自带小模型）；
+    ② 从未配置过 API Key。
+    """
+    if not settings.remote_llm_available():
+        return None
+    capabilities = LLMCapabilities(
+        chat=True,
+        context_window=settings.LLM_CONTEXT_WINDOW,
+        max_output_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+    )
+    return OpenAICompatibleProvider(settings.LLM_BASE_URL, settings.LLM_MODEL, settings.LLM_API_KEY, capabilities=capabilities)
+
+def get_agent_runtime(
+    data_engine: DataEngineService = Depends(get_data_engine_service),
+    experiment_service: ExperimentService = Depends(get_experiment_service),
+    db: Session = Depends(get_db),
+    llm: LLMProvider | None = Depends(get_llm_provider),
+) -> AgentRuntime:
+    limits = ReplanLimits(
+        max_steps=settings.AGENT_MAX_STEPS,
+        timeout_seconds=180.0,
+    )
+    return AgentRuntime(data_engine, experiment_service=experiment_service, db=db, llm=llm, store=AGENT_STORE, planner=_shared_planner(llm), limits=limits)
+
+def get_file_service(db: Session = Depends(get_db), storage: StorageService = Depends(get_storage_service)) -> FileService:
+    return FileService(db, storage)
+
+def get_learning_service(db: Session = Depends(get_db)) -> LearningService:
+    return LearningService(db)
+
+def get_workflow_service() -> WorkflowService:
+    return WORKFLOW_SERVICE

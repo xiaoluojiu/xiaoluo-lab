@@ -1,0 +1,326 @@
+{
+ "tools": [
+  "data.aggregate",
+  "data.clean",
+  "data.filter",
+  "data.merge",
+  "data.transform",
+  "dataset.inspect",
+  "dataset.list",
+  "dataset.preview",
+  "dataset.profile",
+  "dataset.quality",
+  "dataset.schema",
+  "eda.correlation",
+  "eda.describe",
+  "eda.distribution",
+  "eda.outlier",
+  "eda.visualize",
+  "ml.compare",
+  "ml.detect_task",
+  "ml.evaluate",
+  "ml.explain",
+  "ml.explain_config",
+  "ml.predict",
+  "ml.prepare",
+  "ml.train",
+  "report.generate",
+  "workflow.build_and_run",
+  "workflow.create",
+  "workflow.inspect",
+  "workflow.list",
+  "workflow.run"
+ ],
+ "intent_of_tool": {
+  "data.aggregate": "data_transform",
+  "data.clean": "data_transform",
+  "data.filter": "data_transform",
+  "data.merge": "data_transform",
+  "data.transform": "data_transform",
+  "dataset.inspect": "dataset",
+  "dataset.list": "dataset",
+  "dataset.preview": "dataset",
+  "dataset.profile": "dataset",
+  "dataset.quality": "dataset",
+  "dataset.schema": "dataset",
+  "eda.correlation": "eda",
+  "eda.describe": "eda",
+  "eda.distribution": "eda",
+  "eda.outlier": "eda",
+  "eda.visualize": "eda",
+  "ml.compare": "ml",
+  "ml.detect_task": "ml",
+  "ml.evaluate": "ml",
+  "ml.explain": "ml",
+  "ml.explain_config": "ml",
+  "ml.predict": "ml",
+  "ml.prepare": "ml",
+  "ml.train": "ml",
+  "report.generate": "report",
+  "workflow.build_and_run": "workflow",
+  "workflow.create": "workflow",
+  "workflow.inspect": "workflow",
+  "workflow.list": "workflow",
+  "workflow.run": "workflow"
+ },
+ "required_params": {
+  "data.aggregate": [
+   "dataset_id",
+   "group_by",
+   "aggregations"
+  ],
+  "data.clean": [
+   "dataset_id"
+  ],
+  "data.filter": [
+   "dataset_id",
+   "conditions"
+  ],
+  "data.merge": [
+   "left_dataset_id",
+   "right_dataset_id"
+  ],
+  "data.transform": [
+   "dataset_id",
+   "name",
+   "expression"
+  ],
+  "dataset.inspect": [
+   "dataset_id"
+  ],
+  "dataset.list": [],
+  "dataset.preview": [
+   "dataset_id"
+  ],
+  "dataset.profile": [
+   "dataset_id"
+  ],
+  "dataset.quality": [
+   "dataset_id"
+  ],
+  "dataset.schema": [
+   "dataset_id"
+  ],
+  "eda.correlation": [
+   "dataset_id"
+  ],
+  "eda.describe": [
+   "dataset_id"
+  ],
+  "eda.distribution": [
+   "dataset_id",
+   "column"
+  ],
+  "eda.outlier": [
+   "dataset_id"
+  ],
+  "eda.visualize": [
+   "dataset_id",
+   "chart"
+  ],
+  "ml.compare": [],
+  "ml.detect_task": [
+   "dataset_id"
+  ],
+  "ml.evaluate": [
+   "run_id"
+  ],
+  "ml.explain": [
+   "run_id"
+  ],
+  "ml.explain_config": [
+   "topic"
+  ],
+  "ml.predict": [
+   "run_id"
+  ],
+  "ml.prepare": [
+   "dataset_id"
+  ],
+  "ml.train": [
+   "dataset_id",
+   "model"
+  ],
+  "report.generate": [
+   "dataset_id"
+  ],
+  "workflow.build_and_run": [
+   "name",
+   "nodes",
+   "edges"
+  ],
+  "workflow.create": [
+   "name",
+   "nodes",
+   "edges"
+  ],
+  "workflow.inspect": [
+   "workflow_id"
+  ],
+  "workflow.list": [],
+  "workflow.run": [
+   "workflow_id"
+  ]
+ },
+ "optional_params": {
+  "data.aggregate": [
+   "version"
+  ],
+  "data.clean": [
+   "version",
+   "missing",
+   "deduplicate"
+  ],
+  "data.filter": [
+   "version",
+   "logic"
+  ],
+  "data.merge": [
+   "keys",
+   "join_type",
+   "mappings"
+  ],
+  "data.transform": [
+   "version",
+   "overwrite"
+  ],
+  "dataset.inspect": [],
+  "dataset.list": [
+   "page",
+   "page_size"
+  ],
+  "dataset.preview": [
+   "version",
+   "page",
+   "page_size",
+   "columns",
+   "filters"
+  ],
+  "dataset.profile": [
+   "version"
+  ],
+  "dataset.quality": [
+   "version"
+  ],
+  "dataset.schema": [
+   "version"
+  ],
+  "eda.correlation": [
+   "version",
+   "columns",
+   "method"
+  ],
+  "eda.describe": [
+   "version",
+   "columns"
+  ],
+  "eda.distribution": [
+   "version",
+   "bins",
+   "top_n"
+  ],
+  "eda.outlier": [
+   "version",
+   "columns",
+   "method"
+  ],
+  "eda.visualize": [
+   "version",
+   "column",
+   "x",
+   "y",
+   "columns",
+   "group_by",
+   "agg",
+   "bins",
+   "top_n"
+  ],
+  "ml.compare": [
+   "run_ids",
+   "experiment_ids"
+  ],
+  "ml.detect_task": [
+   "version",
+   "target",
+   "infer_target"
+  ],
+  "ml.evaluate": [],
+  "ml.explain": [],
+  "ml.explain_config": [
+   "model",
+   "metric"
+  ],
+  "ml.predict": [
+   "dataset_id",
+   "version",
+   "limit",
+   "threshold"
+  ],
+  "ml.prepare": [
+   "version",
+   "target"
+  ],
+  "ml.train": [
+   "version",
+   "target",
+   "params",
+   "preprocessing",
+   "test_size",
+   "seed",
+   "description"
+  ],
+  "report.generate": [
+   "title",
+   "request",
+   "conclusions"
+  ],
+  "workflow.build_and_run": [
+   "metadata",
+   "context"
+  ],
+  "workflow.create": [
+   "metadata"
+  ],
+  "workflow.inspect": [],
+  "workflow.list": [],
+  "workflow.run": [
+   "context"
+  ]
+ },
+ "label_space": [
+  "chat",
+  "call::data.aggregate",
+  "call::data.clean",
+  "call::data.filter",
+  "call::data.merge",
+  "call::data.transform",
+  "call::dataset.inspect",
+  "call::dataset.list",
+  "call::dataset.preview",
+  "call::dataset.profile",
+  "call::dataset.quality",
+  "call::dataset.schema",
+  "call::eda.correlation",
+  "call::eda.describe",
+  "call::eda.distribution",
+  "call::eda.outlier",
+  "call::eda.visualize",
+  "call::ml.compare",
+  "call::ml.detect_task",
+  "call::ml.evaluate",
+  "call::ml.explain",
+  "call::ml.explain_config",
+  "call::ml.predict",
+  "call::ml.prepare",
+  "call::ml.train",
+  "call::report.generate",
+  "call::workflow.build_and_run",
+  "call::workflow.create",
+  "call::workflow.inspect",
+  "call::workflow.list",
+  "call::workflow.run"
+ ],
+ "category_inconsistencies": [],
+ "source_sha1": "154392f35293e9b6f5eba6d3ca3d0a45bcaaae5b",
+ "generated_at_epoch": 1790054521
+}

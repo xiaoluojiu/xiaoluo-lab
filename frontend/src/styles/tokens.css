@@ -1,0 +1,301 @@
+/* =============================================================
+   tokens.css —— 全站唯一 Token 来源
+   -------------------------------------------------------------
+   历史问题：
+   - 颜色/字阶/间距曾同时散落在 index.css、theme.css、ui-overrides.css、
+     design-foundation.css 四张表里，其中 :root、html、body、.sidebar
+     被 4 个文件重复定义，字号体系更是存在两套互相打架的 scale
+     （theme/ui-overrides 的 --ui-*-size 与 design-foundation 的
+     --app-*-size 取值不同）。
+   - 结果就是 122 个跨文件重复选择器 + 79 处 !important。
+
+   约定：
+   1. 本文件是 Token 的唯一事实源，其它样式表只允许「消费」不允许「再定义」
+      （不再出现第二个 :root 定义这些变量，也不再出现第二套 data-font-size）。
+   2. 为兼容历史调用方，保留 --ui-*-size / --app-*-size 作为别名，
+      两者都指向同一套 --fs-* 真值，改一处即可全站生效。
+   3. 组件与页面中禁止出现 #hex / rgba() 硬编码颜色，一律走语义色变量。
+   ============================================================= */
+
+:root {
+  /* ---------- 语义色：中性 ---------- */
+  --bg: #f5f6fa;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --surface-muted: #f1f5f9;
+  --surface-hover: #f1f5f9;
+  --border: #e6e8ef;
+  --border-strong: #d3d7e3;
+  --text: #0f172a;
+  --text-2: #475569;
+  --muted: #64748b;
+  /* 别名：`--text-muted` 在 visual.css 等文件里被当作次要文字色使用，
+     但一直没有定义（var() 失败会退化成继承色）。这里做一次显式映射，
+     它引用 --muted，因此会随主题自动切换。 */
+  --text-muted: var(--muted);
+
+  /* ---------- 语义色：主色与状态 ---------- */
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-weak: #eef2ff;
+  --primary-soft: color-mix(in srgb, var(--primary) 7%, transparent);
+  --primary-border: color-mix(in srgb, var(--primary) 40%, transparent);
+  --on-primary: #ffffff;
+  --accent: var(--primary);
+  --success: #16a34a;
+  --success-weak: #ecfdf5;
+  --warning: #d97706;
+  --warning-weak: #fffbeb;
+  --danger: #dc2626;
+  --danger-weak: #fef2f2;
+  --info: #2563eb;
+  --info-weak: #eff6ff;
+
+  /* ---------- 组件内辅助语义色（仅用于 style 对象；深色模式单独覆盖） ---------- */
+  --c-code-bg: #f6f8fa;
+  --c-running: #3b82f6;
+  --c-skipped: #9ca3af;
+  --c-exclude: #e0a060;
+  --c-exclude-text: #b07030;
+  --c-green: #2ea043;
+  --c-exclude-weak: rgba(224, 160, 96, 0.18);
+  --c-green-weak: rgba(46, 160, 67, 0.15);
+  --c-scrim: rgba(0, 0, 0, 0.35);
+  --shadow-drawer: -8px 0 30px rgba(0, 0, 0, 0.12);
+
+  /* ---------- 侧栏（浅色 SaaS 风格，跟随主题） ---------- */
+  --sidebar-bg: var(--surface);
+  --sidebar-surface: var(--surface-2);
+  --sidebar-border: var(--border);
+  --sidebar-border-strong: var(--border-strong);
+  --sidebar-text: var(--text-2);
+  --sidebar-text-strong: var(--text);
+  --sidebar-muted: var(--muted);
+  --sidebar-hover: var(--surface-hover);
+  --sidebar-active-bg: var(--primary-weak);
+  --sidebar-active-text: var(--primary);
+  --sidebar-active-bar: var(--primary);
+  --sidebar-logo-text: var(--text);
+  /* 兼容旧调用方 */
+  --sidebar-active: var(--sidebar-active-bar);
+
+  /* ---------- 侧栏材质（2026-09-22 去 AI 味改造）----------
+     历史：这里曾是「磨砂玻璃 + 品牌渐变描边 + 顶部光晕」三件套，是整站最重的
+     模板味来源（backdrop-filter 全站 6 处、渐变 16 处，侧栏独占 3 处）。
+     现改为**实色侧栏**：颜色直接复用 --sidebar-* 语义色（与 index.css 的 .sidebar
+     同一套事实源），取消 backdrop-filter / halo / edge 三个装饰层。
+     变量名保留 --nav-glass-* 只为兼容 visual.css 的既有引用，语义已变，
+     新代码请直接用 --sidebar-*。深色主题同样在下面那一段重定义。 */
+  --nav-glass-bg: var(--sidebar-bg);
+  --nav-glass-halo: none;
+  --nav-glass-border: var(--sidebar-border);
+  --nav-glass-edge: transparent;
+  --nav-glass-shadow: none;
+  --nav-glass-blur: 0px;
+  --nav-glass-text: var(--sidebar-text);
+  --nav-glass-text-strong: var(--sidebar-text-strong);
+  --nav-glass-muted: var(--sidebar-muted);
+  --nav-glass-hover: var(--sidebar-hover);
+  --nav-glass-active-bg: var(--sidebar-active-bg);
+  --nav-glass-active-text: var(--sidebar-active-text);
+  /* 激活指示条：实色 3px，取代原来的 indigo→violet 渐变 */
+  --nav-glass-bar: var(--sidebar-active-bar);
+  --nav-glass-divider: var(--sidebar-border);
+  --nav-glass-surface: var(--surface-2);
+  --nav-glass-surface-hover: var(--surface-hover);
+
+  /* ---------- 间距：只用这 9 档 ---------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+
+  /* ---------- 圆角 ----------
+     2026-09-22：原 6/10/14 三档两两相差不到 2 倍，肉眼完全区分不出来，
+     等于「全站同一个圆角」。现拉开成 4 / 8 / 16，相邻档差 2 倍，
+     让「标签=4、控件=8、卡片=16」三种语义在视觉上真的能被读出区别。 */
+  --radius-sm: 4px;
+  --radius: 8px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+
+  /* ---------- 阴影 ---------- */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, .05);
+  --shadow: 0 2px 8px rgba(15, 23, 42, .06);
+  --shadow-lg: 0 12px 32px rgba(15, 23, 42, .10);
+  --shadow-hover: 0 8px 24px rgba(15, 23, 42, .08);
+
+  /* ---------- 控件高度：只有三种 ---------- */
+  --control-height-sm: 34px;
+  --control-height: 40px;
+  --control-height-lg: 44px;
+
+  /* ---------- 动效 ---------- */
+  --transition-fast: 140ms ease;
+  --transition-normal: 180ms ease;
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent);
+
+  /* ---------- 字体 ---------- */
+  --app-font-family: Inter, "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* ---------- 布局尺寸 ---------- */
+  --content-max-width: 1440px;
+  /* 布局尺寸：展开态 264px（原 240px），容纳更大的导航字号与 44px logo 砖；
+     收起态 68→72px，保证 20px 图标 + 胶囊左右留白不挤。 */
+  --nav-width: 264px;
+  --nav-width-mini: 72px;
+
+  /* 从 theme.css / ui-overrides.css 上收的历史布局变量（保持原值，仅改归属） */
+  --content-gutter: 28px;
+  --ui-page-gutter: 20px;
+  --ui-page-max: none;
+  --ui-control-height: 42px;
+  --ui-panel-radius: 12px;
+
+  /* ---------- 字阶真值（基准档） ----------
+     注意：design-foundation.css 把 .content 内的 p/label/td/th/button/input
+     统一指向 --fs-control，故「正文/控件字号」＝ --fs-control。
+     历史上 --fs-control / --fs-muted 取 14px 偏小，整体观感偏紧；
+     现将基准档上调（control 14→16、body 16→17、muted 14→15、nav 15→16），
+     四档整体上移一档，默认即更舒适，仍可在设置页「字体大小」内切换。 */
+  --fs-title: 30px;
+  --fs-section: 21px;
+  --fs-body: 17px;
+  --fs-control: 16px;
+  --fs-muted: 15px;
+  --fs-nav: 16px;
+  --fs-nav-sub: 15px;
+
+  /* ---------- 兼容别名：旧调用方统一指向真值 ---------- */
+  --app-font-size: var(--fs-body);
+  --app-muted-size: var(--fs-muted);
+  --app-control-size: var(--fs-control);
+  --app-nav-size: var(--fs-nav);
+  --app-nav-sub-size: var(--fs-nav-sub);
+  --app-title-size: var(--fs-title);
+  --app-section-size: var(--fs-section);
+
+  --ui-body-size: var(--fs-body);
+  --ui-muted-size: var(--fs-muted);
+  --ui-control-size: var(--fs-control);
+  --ui-nav-size: var(--fs-nav);
+  --ui-title-size: var(--fs-title);
+
+  /* 历史遗留宽度变量，统一指向 --nav-width */
+  --ui-sidebar-width: var(--nav-width);
+
+  /* ---------- 品牌与 Logo（便于后续替换为自定义 Logo） ---------- */
+  /* ---------- 品牌（名称与 Logo 图片统一在 src/config/brand.ts，此处仅供 CSS 消费） ----------
+     注意：品牌名/简称的**唯一事实源**是 config/brand.ts；这两个变量仅用于纯 CSS 场景
+     （如 content 伪元素）。改品牌名请改 brand.ts，并同步此处，避免两处不一致。 */
+  --brand-name: "小洛实验室";
+  --brand-short: "洛";
+  --primary-2: #7c3aed;
+  /* 品牌色（2026-09-22 去 AI 味）：
+     原为 `linear-gradient(135deg,#6366f1,#4f46e5,#7c3aed)` 紫蓝渐变，是「一眼 AI」
+     的头号特征。渐变填充一律取消，Logo 标记 / 主按钮 / 强调元素改用**单实色**。
+     变量名保留只为兼容旧引用（shell.css、visual.css），新代码请直接用 --primary。 */
+  --brand-gradient: var(--primary);
+
+  /* ---------- 品牌带上的文字/控件色（HeroBand 专用）----------
+     2026-09-22：HeroBand 已从「整条紫蓝渐变 + 恒白文字」改成「中性底 + 左侧主色竖条」，
+     这一组不再是「渐变上的白」，全部改为语义色别名，两个主题自动跟随。 */
+  --on-brand: var(--text);
+  --on-brand-muted: var(--muted);
+  --on-brand-border: var(--border-strong);
+  --on-brand-surface: var(--surface-2);
+  --on-brand-surface-hover: var(--surface-hover);
+
+  /* ---------- 外壳细节 ---------- */
+  --topbar-h: 60px;
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, .04);
+  --transition-slow: 320ms cubic-bezier(.4, 0, .2, 1);
+
+  /* ---------- 动态背景 / 渐变过渡（默认关闭，由 html[data-bg="dynamic"] 启用） ---------- */
+  --bg-glow-1: rgba(99, 102, 241, .14);
+  --bg-glow-2: rgba(124, 58, 237, .12);
+  --bg-glow-3: rgba(14, 165, 233, .10);
+  --bg-gradient: none;
+}
+
+/* ---------- 字阶缩放：全站唯一一处 data-font-size ---------- */
+html[data-font-size="small"] {
+  --fs-title: 28px; --fs-section: 20px; --fs-body: 16px;
+  --fs-control: 15px; --fs-muted: 14px; --fs-nav: 15px; --fs-nav-sub: 14px;
+}
+html[data-font-size="standard"],
+html:not([data-font-size]) {
+  --fs-title: 30px; --fs-section: 21px; --fs-body: 17px;
+  --fs-control: 16px; --fs-muted: 15px; --fs-nav: 16px; --fs-nav-sub: 15px;
+}
+html[data-font-size="large"] {
+  --fs-title: 32px; --fs-section: 22px; --fs-body: 18px;
+  --fs-control: 17px; --fs-muted: 16px; --fs-nav: 17px; --fs-nav-sub: 16px;
+}
+html[data-font-size="xlarge"] {
+  --fs-title: 34px; --fs-section: 23px; --fs-body: 19px;
+  --fs-control: 18px; --fs-muted: 17px; --fs-nav: 18px; --fs-nav-sub: 17px;
+}
+
+/* ---------- 深色主题：同样只在这一处定义 ---------- */
+html[data-theme="dark"] {
+  --bg: #0b1220;
+  --surface: #111a2b;
+  --surface-2: #16223a;
+  --surface-muted: #16223a;
+  --surface-hover: #1b2740;
+  --border: #25324e;
+  --border-strong: #33415f;
+  --text: #e8edf7;
+  --text-2: #b3bdd0;
+  --muted: #94a0b8;
+  --primary: #818cf8;
+  --primary-hover: #a5b4fc;
+  --primary-weak: #1e2a4a;
+  --sidebar-bg: #0e1626;
+  --sidebar-surface: #16223a;
+  --sidebar-border: #25324e;
+  --sidebar-border-strong: #33415f;
+  --sidebar-text: #b3bdd0;
+  --sidebar-text-strong: #e8edf7;
+  --sidebar-muted: #94a0b8;
+  --sidebar-hover: #1b2740;
+  --sidebar-active-bg: color-mix(in srgb, var(--primary) 20%, transparent);
+  --sidebar-active-text: #a5b4fc;
+  --sidebar-active-bar: #a5b4fc;
+  --sidebar-logo-text: #e8edf7;
+  --sidebar-active: #a5b4fc;
+
+  /* 深色侧栏：同样是实色，直接复用深色 --sidebar-*（与浅色同一套事实源） */
+  --nav-glass-bg: var(--sidebar-bg);
+  --nav-glass-halo: none;
+  --nav-glass-border: var(--sidebar-border);
+  --nav-glass-edge: transparent;
+  --nav-glass-shadow: none;
+  --nav-glass-blur: 0px;
+  --nav-glass-text: var(--sidebar-text);
+  --nav-glass-text-strong: var(--sidebar-text-strong);
+  --nav-glass-muted: var(--sidebar-muted);
+  --nav-glass-hover: var(--sidebar-hover);
+  --nav-glass-active-bg: var(--sidebar-active-bg);
+  --nav-glass-active-text: var(--sidebar-active-text);
+  --nav-glass-bar: var(--sidebar-active-bar);
+  --nav-glass-divider: var(--sidebar-border);
+  --nav-glass-surface: var(--surface-2);
+  --nav-glass-surface-hover: var(--surface-hover);
+  --primary-soft: color-mix(in srgb, var(--primary) 16%, transparent);
+  --primary-border: color-mix(in srgb, var(--primary) 50%, transparent);
+  --on-primary: #ffffff;
+  --accent: var(--primary);
+  --primary-2: #a78bfa;
+  /* 深色下同样取消渐变填充（见浅色段注释） */
+  --brand-gradient: var(--primary);
+  --bg-glow-1: rgba(129, 140, 248, .16);
+  --bg-glow-2: rgba(167, 139, 250, .14);
+  --bg-glow-3: rgba(45, 212, 191, .10);
+}

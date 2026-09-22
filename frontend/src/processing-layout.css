@@ -1,0 +1,68 @@
+/* 数据处理页：配置与预览是同级工作区。真正的布局容器是 processing-config-grid。 */
+.content .processing-config-grid {
+  display: grid !important;
+  grid-template-columns: minmax(360px, 400px) minmax(0, 1fr) !important;
+  gap: 20px !important;
+  align-items: start;
+  min-width: 0;
+  width: 100%;
+}
+
+.content .processing-config-grid > .processing-config-main,
+.content .processing-config-grid > .processing-preview {
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+}
+
+.content .processing-config-grid > .processing-config-main {
+  grid-column: 1;
+}
+
+.content .processing-config-grid > .processing-preview {
+  grid-column: 2;
+  min-height: 360px;
+}
+
+/* 预览内容本身不再套第二层大卡片。 */
+.content .processing-preview > .processing-flush {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+/* 中等桌面宽度也保持左右布局。 */
+@media (min-width: 901px) and (max-width: 1440px) {
+  .content .processing-config-grid {
+    grid-template-columns: minmax(340px, 380px) minmax(0, 1fr) !important;
+  }
+}
+
+@media (min-width: 1441px) {
+  .content .processing-config-grid {
+    grid-template-columns: 400px minmax(0, 1fr) !important;
+  }
+}
+
+/* 只有真正的小屏才上下排列。 */
+@media (max-width: 900px) {
+  .content .processing-config-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .content .processing-config-grid > .processing-config-main,
+  .content .processing-config-grid > .processing-preview {
+    grid-column: 1;
+    width: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .content .processing-config-grid {
+    gap: 14px !important;
+  }
+}

@@ -1,0 +1,129 @@
+{
+ "source_file": "D:\\xiaoluodataweb\\xiaoluoAIdata\\xiaoluo-lab\\backend\\data\\agent_store.json",
+ "source_bytes": 51116716,
+ "sessions": 5,
+ "runs": 6,
+ "runs_profile": [
+  {
+   "run_id": "r-1",
+   "status": "completed",
+   "utterance": "检查一下数据质量",
+   "tool_call_count": 4,
+   "event_count": 17,
+   "error": "",
+   "elapsed_seconds": 0.591
+  },
+  {
+   "run_id": "r-2",
+   "status": "completed",
+   "utterance": "检查一下数据质量",
+   "tool_call_count": 4,
+   "event_count": 17,
+   "error": "",
+   "elapsed_seconds": 0.59
+  },
+  {
+   "run_id": "r-3",
+   "status": "failed",
+   "utterance": "帮我训练一个分类模型",
+   "tool_call_count": 6,
+   "event_count": 200009,
+   "error": "后端进程重启，上一轮 Agent Turn 被中断；原执行过程已保留，可重新发起任务。",
+   "elapsed_seconds": 0.59
+  },
+  {
+   "run_id": "r-4",
+   "status": "completed",
+   "utterance": "你好",
+   "tool_call_count": 0,
+   "event_count": 3,
+   "error": "",
+   "elapsed_seconds": 0.273
+  },
+  {
+   "run_id": "r-5",
+   "status": "completed",
+   "utterance": "你好",
+   "tool_call_count": 0,
+   "event_count": 3,
+   "error": "",
+   "elapsed_seconds": 0.273
+  },
+  {
+   "run_id": "r-6",
+   "status": "completed",
+   "utterance": "你是编程学习助手，正在点评一张自建练习卡。请严格基于下面的目标与代码给出反馈，不要编造运行结果。\n\n点评方式：给我一个提示\n要求：只给一个能推动我继续思考的提示，不要泄露完整实现。\n\n练习目标：学习二分查找算法\n\n我的代码：\n```python\n# 空\n```\n\n通用原则：以鼓励为主，指出证据、解释原因、提出下一步；只有明确要求解释概念时才展开知识讲解。",
+   "tool_call_count": 0,
+   "event_count": 5,
+   "error": "",
+   "elapsed_seconds": 0.273
+  }
+ ],
+ "event_type_distribution": {
+  "replanning": 199987,
+  "tool_call": 14,
+  "tool_result": 13,
+  "validation": 13,
+  "planning": 12,
+  "route": 6,
+  "completed": 5,
+  "permission": 2,
+  "chat": 2
+ },
+ "tool_call_distribution": {},
+ "harvestable": {
+  "samples_written": 0,
+  "note": "只有 status=ok 的调用才计入；失败与多步只进诊断"
+ },
+ "diagnostics": {
+  "failures": [],
+  "multi_step_runs": [
+   {
+    "run_id": "r-1",
+    "utterance": "检查一下数据质量",
+    "tools": [
+     "dataset.inspect",
+     "dataset.schema",
+     "dataset.quality",
+     "report.generate"
+    ],
+    "status": "completed"
+   },
+   {
+    "run_id": "r-2",
+    "utterance": "检查一下数据质量",
+    "tools": [
+     "dataset.inspect",
+     "dataset.schema",
+     "dataset.quality",
+     "report.generate"
+    ],
+    "status": "completed"
+   },
+   {
+    "run_id": "r-3",
+    "utterance": "帮我训练一个分类模型",
+    "tools": [
+     "dataset.inspect",
+     "dataset.profile",
+     "ml.detect_task",
+     "ml.prepare",
+     "ml.train",
+     "ml.train"
+    ],
+    "status": "failed"
+   }
+  ],
+  "authorization_cases": [],
+  "issues": []
+ },
+ "real_utterances": [
+  "检查一下数据质量",
+  "检查一下数据质量",
+  "帮我训练一个分类模型",
+  "你好",
+  "你好",
+  "你是编程学习助手，正在点评一张自建练习卡。请严格基于下面的目标与代码给出反馈，不要编造运行结果。\n\n点评方式：给我一个提示\n要求：只给一个能推动我继续思考的提示，不要泄露完整实现。\n\n练习目标：学习二分查找算法\n\n我的代码：\n```python\n# 空\n```\n\n通用原则：以鼓励为主，指出证据、解释原因、提出下一步；只有明确要求解释概念时才展开知识讲解。"
+ ],
+ "verdict": "真实轨迹数量不足以独立训练 Router，但足以① 校验合成数据是否覆盖真实表达，② 建立可持续的增量采集管线。"
+}

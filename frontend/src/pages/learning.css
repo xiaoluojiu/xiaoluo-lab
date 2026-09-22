@@ -1,0 +1,1270 @@
+/* ==========================================================================
+   学习中心 · 样式
+   --------------------------------------------------------------------------
+   约定：
+   - 页面前缀统一 .learning- / 页面根为 .learning-page（压过 main.tsx 全局四件套）。
+   - 颜色与间距一律走 tokens.css 的变量，不出现色值字面量（浅/深主题自动切换）。
+   - 断点沿用项目 6 档：1440 / 1280 / 1100 / 900 / 760 / 520。
+   ========================================================================== */
+
+.learning-page {
+  width: 100%;
+  display: block;
+}
+
+/* ---------- 通用小件 ---------- */
+.learning-kicker {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+.learning-muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+.learning-field {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.learning-field select {
+  width: 100%;
+}
+.learning-panel {
+  min-width: 0;
+  margin-bottom: 0;
+}
+.panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* 标签族：主线 / 难度 / 状态 */
+.learning-level,
+.learning-track-tag,
+.learning-status {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  padding: 2px 9px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.learning-level {
+  color: var(--text-2);
+  background: var(--surface-muted);
+}
+.learning-level.level-basic {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+  background: var(--success-weak);
+}
+.learning-level.level-advanced {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+  background: var(--warning-weak);
+}
+.learning-level.level-challenge {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  background: var(--danger-weak);
+}
+.learning-track-tag {
+  font-weight: 600;
+}
+.learning-track-tag.track-ml {
+  color: var(--primary);
+  border-color: var(--primary-border);
+  background: var(--primary-weak);
+}
+.learning-track-tag.track-llm {
+  color: var(--primary-2, var(--primary));
+  border-color: color-mix(in srgb, var(--primary-2, var(--primary)) 40%, transparent);
+  background: var(--surface-muted);
+}
+.learning-status {
+  color: var(--muted);
+}
+.learning-status.completed {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+  background: var(--success-weak);
+}
+.learning-status.in_progress {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+  background: var(--warning-weak);
+}
+
+/* ---------- 总览统计 ---------- */
+.learning-overview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.learning-stat {
+  display: grid;
+  gap: 4px;
+  padding: 16px 18px;
+  margin-bottom: 0;
+}
+.learning-stat-value {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text);
+}
+.learning-stat-value em {
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 500;
+  color: var(--muted);
+}
+.learning-stat-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.learning-stat-sub {
+  font-size: 11px;
+  color: var(--muted);
+}
+.learning-progress-bar {
+  margin-top: 8px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: var(--surface-muted);
+  overflow: hidden;
+}
+.learning-progress-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  transition: width 0.4s ease;
+}
+
+/* ---------- 推荐的下一步 ---------- */
+.learning-next {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+  padding: 20px 22px;
+  border-color: var(--primary-border);
+  background: var(--primary-soft);
+}
+.learning-next-main {
+  min-width: 0;
+}
+.learning-next h2 {
+  margin: 4px 0 6px;
+  font-size: 18px;
+}
+.learning-next p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.7;
+  max-width: 720px;
+}
+
+/* ---------- 工具栏（筛选 + 搜索）---------- */
+.learning-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.learning-filter-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.learning-filter-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.learning-filter-tab:hover {
+  border-color: var(--primary-border);
+  color: var(--primary);
+}
+.learning-filter-tab.active {
+  border-color: var(--primary);
+  background: var(--primary-weak);
+  color: var(--primary);
+  font-weight: 600;
+}
+.learning-filter-tab span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.learning-filter-tab.active span {
+  color: var(--primary);
+}
+.learning-search {
+  min-width: 240px;
+  flex: 1 1 240px;
+  max-width: 360px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+.learning-search:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+/* ---------- 主线分组 + 实验卡片 ---------- */
+.learning-track {
+  margin-bottom: 26px;
+}
+.learning-track-head {
+  margin-bottom: 12px;
+}
+.learning-track-head h2 {
+  margin: 0 0 4px;
+  font-size: 17px;
+}
+.learning-track-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  max-width: 820px;
+}
+.learning-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+.learning-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 0;
+  padding: 20px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.learning-card:hover {
+  border-color: var(--primary-border);
+  box-shadow: var(--shadow-hover);
+}
+.learning-card.completed {
+  border-color: color-mix(in srgb, var(--success) 28%, var(--border));
+}
+.learning-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.learning-card h3 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.45;
+}
+.learning-card-summary {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.learning-card-meta {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.learning-card-meta li {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 8px;
+}
+.learning-card-meta span:first-child {
+  color: var(--muted);
+}
+.learning-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.learning-locked-hint {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  flex: 1 1 150px;
+}
+
+/* ==========================================================================
+   实验工作台
+   ========================================================================== */
+
+.learning-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.learning-crumbs a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.learning-crumbs a:hover {
+  color: var(--primary);
+}
+.learning-crumbs .current {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.learning-ws-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+}
+.learning-ws-title {
+  min-width: 0;
+}
+.learning-ws-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.learning-ws-title h1 {
+  margin: 0 0 8px;
+  font-size: 22px;
+  line-height: 1.35;
+}
+.learning-ws-title p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.75;
+  max-width: 780px;
+}
+.learning-ws-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.learning-notice {
+  margin-bottom: 16px;
+  padding: 11px 14px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  background: var(--warning-weak);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.learning-notice a {
+  color: var(--primary);
+  margin: 0 3px;
+}
+
+.learning-ws-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 18px;
+  align-items: start;
+}
+.learning-ws-main {
+  min-width: 0;
+  display: grid;
+  gap: 16px;
+}
+.learning-ws-side {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+  align-self: start;
+  position: sticky;
+  top: 18px;
+}
+
+.learning-goal {
+  margin: 0 0 12px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.75;
+}
+
+/* 要求清单：每条带达成标记 + 检查细节 */
+.requirement-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.requirement-list li {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.requirement-list li:first-child {
+  border-top: none;
+}
+.req-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+.requirement-list li.done .req-mark {
+  border-color: transparent;
+  background: var(--success);
+  color: var(--surface);
+}
+.requirement-list li.pending .req-mark {
+  border-color: transparent;
+  background: var(--danger);
+  color: var(--surface);
+}
+.requirement-list li.done .req-text {
+  color: var(--text-2);
+}
+.req-text {
+  display: block;
+}
+.req-detail {
+  display: block;
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.req-detail.fail {
+  color: var(--danger);
+}
+
+/* 代码编辑器：始终深色（代码区不随主题变浅，避免浅底浅字）
+   ⚠️ 必须带 .learning-workspace-page 前缀（特异性 0,2,0）：
+   全局 theme.css 的 `.content textarea { min-height: 42px }` 是 0,1,1，
+   会压过裸 `.learning-code-editor`（0,1,0），导致输入区被压成单行高度。
+   同时显式给 height（而非只给 min-height），保证任何祖先布局下都有实体高度。 */
+.learning-workspace-page .learning-code-editor {
+  display: block;
+  width: 100%;
+  height: 520px;
+  min-height: 320px;
+  max-height: 78vh;
+  box-sizing: border-box;
+  resize: vertical;
+  overflow: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 16px 18px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font: 13px/1.75 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  outline: none;
+  tab-size: 4;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.learning-workspace-page .learning-code-editor:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+.code-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.code-hint {
+  margin-left: auto;
+}
+
+/* 检查结果面板 */
+.review-panel .learning-score {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warning);
+}
+.review-panel .learning-score.pass {
+  color: var(--success);
+}
+.check-list {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+.check-row {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+}
+.check-row:first-child {
+  border-top: none;
+}
+.check-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: 700;
+}
+.check-row.pass .check-icon {
+  background: var(--success-weak);
+  color: var(--success);
+}
+.check-row.fail .check-icon {
+  background: var(--danger-weak);
+  color: var(--danger);
+}
+.check-row.unverified .check-icon {
+  background: var(--surface-muted);
+  color: var(--muted);
+}
+.check-body {
+  min-width: 0;
+}
+.check-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  flex-wrap: wrap;
+}
+.check-kind {
+  font-style: normal;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--surface-muted);
+  color: var(--muted);
+}
+.check-detail {
+  display: block;
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.check-row.fail .check-detail {
+  color: var(--danger);
+}
+
+.next-steps {
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--warning-weak);
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+  font-size: 12.5px;
+}
+.next-steps.done {
+  background: var(--success-weak);
+  border-color: color-mix(in srgb, var(--success) 30%, transparent);
+}
+.next-steps strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text);
+}
+.next-steps ul {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.8;
+  color: var(--text-2);
+}
+.next-steps.done p {
+  margin: 0;
+  color: var(--text-2);
+  line-height: 1.7;
+}
+
+/* 数据体检面板 */
+.context-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+.context-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+.context-summary strong {
+  font-size: 13px;
+  color: var(--text);
+}
+.context-summary .warn {
+  color: var(--warning);
+}
+.context-summary .ok {
+  color: var(--success);
+}
+.context-candidate {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+.candidate-tag {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--primary-weak);
+  color: var(--primary);
+  font-size: 10.5px;
+}
+.context-columns {
+  display: grid;
+  gap: 1px;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.context-column {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+  padding: 7px 10px;
+  background: var(--surface);
+  font-size: 11.5px;
+}
+.context-column .col-name {
+  color: var(--text);
+  font-weight: 600;
+  word-break: break-all;
+}
+.context-column .col-dtype {
+  color: var(--primary);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+}
+.context-column .col-meta {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.learning-inline-error {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-weak);
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* AI 辅导 */
+.ai-panel {
+  border-color: var(--primary-border);
+}
+.ai-status {
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 600;
+}
+.ai-intro {
+  margin: -2px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+.ai-mode-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+.ai-mode {
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.ai-mode:hover:not(:disabled),
+.ai-mode.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+.ai-mode:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.ai-feedback {
+  max-height: 380px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  line-height: 1.8;
+  font-size: 12.5px;
+  color: var(--text);
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.ai-feedback.empty {
+  color: var(--muted);
+  min-height: 60px;
+}
+
+/* 概念 / 资料 */
+.concept-list {
+  display: grid;
+  gap: 1px;
+}
+.concept-item {
+  border-top: 1px solid var(--border);
+}
+.concept-item:first-child {
+  border-top: none;
+}
+.concept-item summary {
+  padding: 9px 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.concept-item p {
+  margin: 0 0 10px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.8;
+}
+.reference-list {
+  display: grid;
+}
+.reference-list a {
+  display: block;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  color: var(--primary);
+  font-size: 12.5px;
+  text-decoration: none;
+}
+.reference-list a:first-child {
+  border-top: none;
+}
+
+/* 提交曲线 */
+.attempt-history {
+  display: grid;
+  gap: 8px;
+}
+.attempt-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 64px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.attempt-bar {
+  flex: 1 1 auto;
+  min-width: 4px;
+  max-width: 18px;
+  border-radius: 2px 2px 0 0;
+  background: var(--warning);
+  transition: height 0.3s ease;
+}
+.attempt-bar.pass {
+  background: var(--success);
+}
+.attempt-legend {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* 错误块（页面级 / 面板级共用） */
+.learning-error-block {
+  display: grid;
+  gap: 8px;
+  padding: 4px 0;
+}
+.learning-error-block strong {
+  font-size: 14px;
+  color: var(--text);
+}
+.learning-error-block p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.75;
+}
+.learning-error-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.loading-block {
+  padding: 40px 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ==========================================================================
+   学习记录页
+   ========================================================================== */
+
+.recent-list {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.recent-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) auto auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+}
+.recent-list li:first-child {
+  border-top: none;
+}
+.recent-list a {
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-list a:hover {
+  color: var(--primary);
+}
+
+.history-list {
+  display: grid;
+  gap: 12px;
+}
+.history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 0;
+  padding: 18px 20px;
+}
+.history-item.completed {
+  border-color: color-mix(in srgb, var(--success) 28%, var(--border));
+}
+.history-main {
+  min-width: 0;
+}
+.history-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.history-main h3 {
+  margin: 10px 0 6px;
+  font-size: 15px;
+}
+.history-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+.history-meta .score-ok {
+  color: var(--success);
+  font-weight: 600;
+}
+
+/* ==========================================================================
+   我的卡片（自建学习卡片）
+   ========================================================================== */
+
+/* 虚线「新建卡片」空卡 */
+.learning-card-new {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 200px;
+  padding: 20px;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.learning-card-new:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+.learning-card-new-plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: var(--surface-muted);
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 400;
+}
+.learning-card-new:hover .learning-card-new-plus {
+  background: var(--primary-weak);
+}
+.learning-card-new-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.learning-card-new:hover .learning-card-new-title {
+  color: var(--primary);
+}
+.learning-card-new-sub {
+  font-size: 11.5px;
+  line-height: 1.6;
+  max-width: 220px;
+}
+
+/* 自建卡片瓦片 */
+.learning-card-custom .learning-card-del {
+  color: var(--muted);
+}
+.learning-card-custom .learning-card-del:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* 新建卡片对话框 */
+.learning-new-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  display: grid;
+  gap: 14px;
+}
+.learning-new-dialog h3 {
+  margin: 0;
+}
+.learning-new-dialog-intro {
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.learning-kind-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.learning-kind-option {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.learning-kind-option span {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.learning-kind-option.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.learning-kind-option.active span {
+  color: var(--primary);
+}
+.learning-new-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* 新建对话框里的要点编辑器 */
+.learning-items-editor {
+  display: grid;
+  gap: 8px;
+}
+.learning-items-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.learning-items-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+}
+.learning-items-list li button {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+.learning-items-list li button:hover {
+  color: var(--danger);
+}
+.learning-items-add {
+  display: flex;
+  gap: 8px;
+}
+.learning-items-add input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 清单卡工作台 */
+.learning-card-checklist {
+  max-width: 720px;
+}
+.checklist-list {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+.checklist-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 4px;
+  border-top: 1px solid var(--border);
+}
+.checklist-list li:first-child {
+  border-top: none;
+}
+.checklist-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+.checklist-row input[type="checkbox"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.checklist-text {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text);
+  word-break: break-word;
+}
+.checklist-list li.done .checklist-text {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.checklist-del {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 4px 6px;
+  flex-shrink: 0;
+}
+.checklist-del:hover {
+  color: var(--danger);
+}
+.checklist-add {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.checklist-add input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ==========================================================================
+   响应式
+   ========================================================================== */
+
+@media (max-width: 1280px) {
+  .learning-ws-grid {
+    grid-template-columns: minmax(0, 1fr) 330px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .learning-ws-grid {
+    grid-template-columns: 1fr;
+  }
+  .learning-ws-side {
+    position: static;
+  }
+}
+
+@media (max-width: 900px) {
+  .learning-grid {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  }
+  .history-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .recent-list li {
+    grid-template-columns: 1fr auto;
+  }
+  .recent-list li > .learning-muted:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .learning-ws-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .learning-ws-actions {
+    justify-content: flex-start;
+  }
+  .learning-next {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .learning-grid {
+    grid-template-columns: 1fr;
+  }
+  .learning-search {
+    max-width: none;
+  }
+  .learning-workspace-page .learning-code-editor {
+    height: 380px;
+    min-height: 280px;
+    max-height: 70vh;
+  }
+  .ai-mode-list {
+    grid-template-columns: 1fr;
+  }
+  .code-hint {
+    margin-left: 0;
+  }
+  .learning-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 520px) {
+  .learning-overview {
+    grid-template-columns: 1fr 1fr;
+  }
+  .learning-ws-title h1 {
+    font-size: 19px;
+  }
+  .learning-filter-tabs {
+    gap: 4px;
+  }
+  .learning-filter-tab {
+    padding: 6px 10px;
+    font-size: 11.5px;
+  }
+}

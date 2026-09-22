@@ -1,0 +1,65 @@
+{
+ "sample_total": 844,
+ "files": {
+  "samples.jsonl": 844,
+  "holdout.jsonl": 132,
+  "hard_negatives.jsonl": 73,
+  "boundary.jsonl": 8,
+  "combo_violations.jsonl": 6
+ },
+ "by_category": {
+  "chat": 30,
+  "escalate": 29,
+  "follow_up": 12,
+  "implicit": 16,
+  "routing": 719,
+  "slot_missing": 38
+ },
+ "by_split": {
+  "eval": 74,
+  "holdout": 132,
+  "train": 638
+ },
+ "holdout_ids_sha1": "e5fcbb2356ea898d7fcec70a0f57311e7e4c4b27",
+ "coverage": {
+  "tools_total": 30,
+  "tools_with_samples": 30,
+  "tools_without_samples": [],
+  "tools_without_templates": [],
+  "templates_total": 336,
+  "required_params_total": 40,
+  "boundary_passed": 8,
+  "boundary_total": 8,
+  "required_param_coverage": {
+   "total": 40,
+   "covered": 40,
+   "missing": []
+  },
+  "optional_param_coverage": {
+   "total": 68,
+   "covered": 1,
+   "note": "可选参数未覆盖属预期：本阶段只教工具选择与必填槽位"
+  }
+ },
+ "escalation": {
+  "positive": 29,
+  "negative": 815,
+  "reasons_covered": [
+   "ambiguous",
+   "conflict",
+   "multi_step",
+   "out_of_scope",
+   "param_dependency"
+  ]
+ },
+ "known_gaps": [
+  "多轮上下文样本仅 8 条 —— 真实会话接入后需大幅扩充",
+  "多意图（一句话里含两个任务）尚无样本",
+  "可选参数（bins / top_n / test_size / params 等）未覆盖：本阶段只教必填槽位",
+  "hard negative 目前只有混淆对诊断，尚未生成对应的判别样本",
+  "真实会话轨迹（AgentStore）尚未接入，当前全部为模板合成",
+  "参数越界值（超出声明 range）样本未生成"
+ ],
+ "rejected": [],
+ "rejected_total": 0
+}

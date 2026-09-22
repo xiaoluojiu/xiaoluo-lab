@@ -1,0 +1,48 @@
+# 小洛实验室 docker-compose（Prompt 233）
+# 一键启动：backend + frontend，本地 volume 持久化
+# 用法：
+#   docker compose up -d --build
+#   浏览器打开 http://localhost:5173 （或 8080）
+# API Key 严禁写入此文件，从 .env 或环境变量读取
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: xiaoluo-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # 仅传非敏感配置；API Key 请用 .env 或 -e LLM_API_KEY=xxx
+      APP_ENV: dev
+      LOG_LEVEL: INFO
+      DATA_ROOT: /app/data
+      MODEL_ROOT: /app/models
+      DATABASE_URL: sqlite:////app/data/xiaoluo.db
+    volumes:
+      - backend-data:/app/data
+      - backend-models:/app/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: xiaoluo-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  backend-data:
+  backend-models:

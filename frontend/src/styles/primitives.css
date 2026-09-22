@@ -1,0 +1,281 @@
+/* =============================================================
+   primitives.css —— 跨页面复用的原子样式
+   -------------------------------------------------------------
+   历史问题：
+   - components/ 目录几乎被架空：DataTable 只被 1 处引用、Loading 2 处、
+     ConfirmDialog 1 处，其余 13 个页面各自手搓表格、卡片与加载文案，
+     空态/错误态/toast 更是每页一套写法。
+   - 大量结构性样式被写成内联 style（全站 336 处），例如
+     `style={{ padding: 16 }}`、`style={{ display:"flex", gap:8 }}`。
+
+   约定：
+   1. 凡重复出现两次以上的结构，一律抽成这里的 class，不再写内联样式。
+   2. 只用 tokens.css 的变量，不在此定义任何 Token。
+   3. 响应式断点严格使用 6 档阶梯：1440 / 1280 / 1100 / 900 / 760 / 520。
+   ============================================================= */
+
+/* ---------- 按钮尺寸变体（.btn 本体仍在 index.css） ---------- */
+.btn-sm {
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  font-size: 13px;
+  line-height: 1.2;
+}
+.btn-lg {
+  height: var(--control-height-lg);
+  padding: 0 var(--space-6);
+  font-size: 15px;
+  font-weight: 600;
+}
+.btn-block { width: 100%; }
+
+/* ---------- 栅格：全站统一，替代各处手写的 flex/grid ---------- */
+.grid { display: grid; gap: var(--space-4); min-width: 0; }
+.grid > * { min-width: 0; }
+.g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* 2026-09-22：三列一律等宽是模板站最典型的骨架。改为「首列占 1.35 份」的
+   非对称栅格——第一张卡是入口（数据集/主功能），宽度上就该先被看到。
+   纯按钮/表单等需要严格等宽的场景请用 .g3-even。 */
+.g3 { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1fr); }
+.g3-even { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.g-auto { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+
+/* ---------- 行内操作区 ---------- */
+.inline-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.control-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.inline-check { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-control); color: var(--text-2); }
+.inline-check input { width: auto; height: auto; }
+
+/* ---------- 统计卡 ---------- */
+.stat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-sm);
+  min-width: 0;
+}
+.stat-key { font-size: 13px; color: var(--muted); }
+.stat-value {
+  display: block;
+  font-size: 26px;
+  font-weight: 700;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* ---------- 卡片式链接 / 可点击项（替代 textDecoration:none 内联样式） ---------- */
+.link-card {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+.link-card:hover { text-decoration: none; border-color: color-mix(in srgb, var(--primary) 32%, var(--border)); box-shadow: var(--shadow-hover); transform: translateY(-1px); }
+
+/* ---------- 筛选标签 ---------- */
+.pill-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.pill:hover { border-color: var(--border-strong); }
+.pill.active { background: var(--primary-weak); border-color: var(--primary); color: var(--primary); font-weight: 600; }
+
+/* ---------- 状态：空态 ---------- */
+/* 2026-09-22：空态与空状态一律左对齐。居中大块空态是模板站标配，
+   而且居中的多行中文读起来没有起点，扫读效率更低。 */
+.empty {
+  border: 1px dashed var(--border-strong);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  padding: var(--space-6) var(--space-5);
+  text-align: left;
+  color: var(--muted);
+}
+.empty-title { display: block; color: var(--text); font-size: var(--fs-section); font-weight: 600; margin-bottom: var(--space-2); }
+.empty-action { margin-top: var(--space-4); }
+
+/* ---------- 状态：错误（带重试） ---------- */
+.error-box {
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, var(--border));
+  background: var(--danger-weak);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+}
+.error-title { font-weight: 600; color: var(--danger); font-size: var(--fs-control); }
+.error-detail { color: color-mix(in srgb, var(--danger) 72%, var(--text)); font-size: 13px; margin-top: 6px; }
+.error-action { margin-top: var(--space-3); }
+
+/* ---------- 状态：加载骨架 ---------- */
+.skeleton {
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--surface-hover) 25%, color-mix(in srgb, var(--surface-hover) 60%, var(--border)) 37%, var(--surface-hover) 63%);
+  background-size: 400% 100%;
+  animation: skeleton-sheen 1.4s ease infinite;
+}
+.skeleton-text { height: 14px; margin-bottom: var(--space-3); }
+.skeleton-card { height: 96px; border-radius: var(--radius-lg); }
+@keyframes skeleton-sheen {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
+/* ---------- 提示条 ---------- */
+.note-hint {
+  border-left: 3px solid var(--primary);
+  background: var(--primary-weak);
+  color: color-mix(in srgb, var(--primary) 70%, var(--text));
+  padding: 10px var(--space-4);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.note-hint.is-danger { border-left-color: var(--danger); background: var(--danger-weak); color: color-mix(in srgb, var(--danger) 70%, var(--text)); }
+
+/* ---------- 面包屑 ---------- */
+.crumbs { font-size: var(--fs-muted); color: var(--muted); margin-bottom: var(--space-2); }
+.crumbs a { color: var(--muted); }
+.crumbs a:hover { color: var(--primary); }
+.crumbs b { color: var(--text-2); font-weight: 600; }
+
+/* ---------- 表格增强 ---------- */
+.table-scroll { overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+.table-scroll > table { margin: 0; }
+.row-active > td, .row-active > * { background: var(--primary-weak); }
+
+/* ---------- 长内容区域（统一内部滚动策略） ---------- */
+.scroll-area { overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+
+/* ---------- 全局通知（ToastProvider） ---------- */
+.toast-stack {
+  position: fixed;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: min(380px, calc(100vw - var(--space-8)));
+}
+.toast-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: 11px var(--space-4);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--success);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  font-size: 13px;
+  line-height: 1.55;
+  animation: toast-in 180ms ease;
+}
+.toast-item.toast-success { border-left-color: var(--success); }
+.toast-item.toast-error { border-left-color: var(--danger); }
+.toast-item.toast-info { border-left-color: var(--info); }
+.toast-close {
+  margin-left: auto;
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+  height: auto;
+  width: auto;
+}
+.toast-close:hover { color: var(--text); }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast-item { animation: none; }
+}
+
+/* ---------- 无障碍 ---------- */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* ---------- 应用级错误页（ErrorBoundary / 白屏兜底） ---------- */
+.app-error-screen { min-height: 100vh; display: grid; place-items: center; padding: var(--space-6); background: var(--bg); }
+.app-error-card {
+  max-width: 620px; width: 100%;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); padding: var(--space-7);
+}
+.app-error-kicker { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--danger); font-weight: 700; }
+.app-error-card h1 { font-size: 24px; margin: var(--space-3) 0 var(--space-3); font-weight: 700; }
+.app-error-card p { color: var(--text-2); font-size: var(--fs-control); line-height: 1.75; }
+.app-error-detail {
+  margin: var(--space-4) 0; padding: var(--space-3) var(--space-4);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 12px; line-height: 1.6; color: var(--danger); overflow-x: auto; white-space: pre-wrap; word-break: break-all;
+}
+
+/* ---------- 操作目录描述与风险标记 ---------- */
+.op-catalog-desc { display: block; font-size: 13px; margin-top: 4px; }
+.op-risk { align-self: center; }
+.op-risk-low { background: var(--success-weak); color: var(--success); }
+.op-risk-medium { background: var(--warning-weak); color: var(--warning); }
+.op-risk-high { background: var(--danger-weak); color: var(--danger); }
+
+/* =============================================================
+   响应式：唯一 6 档阶梯
+   ============================================================= */
+@media (max-width: 1440px) {
+  .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 1280px) {
+  /* 降到两列时保留主次关系，不要退回等宽 */
+  .g3 { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
+  .g3-even { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 1100px) {
+  .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .g2, .g3, .g4 { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  .grid { gap: var(--space-3); }
+}
+@media (max-width: 520px) {
+  .stat { padding: var(--space-3); }
+  .stat-value { font-size: 22px; }
+}
+
+/* ---------- 链接型卡片与通用网格（替换散落各页的内联样式） ---------- */
+.card-link { text-decoration: none; color: inherit; }
+.recent-card { padding: 16px; }
+/* 列数随内容宽度自适应，而不是永远切成等宽三列：窄屏自然降到 2 列再降到 1 列 */
+.recent-dataset-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+@media (max-width: 760px) { .recent-dataset-grid { grid-template-columns: 1fr; } }

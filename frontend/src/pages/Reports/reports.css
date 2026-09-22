@@ -1,0 +1,36 @@
+/* 报告中心：已保存报告列表与报告预览都需要「固定可视高度 + 内部滚动」。
+   原因：报告条目与章节数量不可控，若跟随页面自然高度，一旦内容变多整页会被撑到
+   几万像素，表头和导出按钮全部滚出视野。这里给两个区域各自设定高度上限，
+   内部滚动条独立于页面滚动，表头用 sticky 常驻。 */
+.report-saved-scroll {
+  max-height: min(46vh, 460px);
+  min-height: 120px;
+  overflow-y: auto;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  border-radius: 8px;
+}
+.report-saved-table { margin-top: 0 !important; }
+.report-saved-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+.report-preview-card { display: flex; flex-direction: column; }
+.report-preview-scroll {
+  max-height: min(62vh, 720px);
+  min-height: 200px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-right: 4px;
+}
+.report-preview-scroll .data-table { max-width: 100%; }
+
+@media (max-width: 900px) {
+  .report-saved-scroll { max-height: 60vh; }
+  .report-preview-scroll { max-height: 70vh; }
+}

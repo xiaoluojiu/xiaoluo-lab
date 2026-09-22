@@ -1,0 +1,765 @@
+{
+ "intents": [
+  "chat",
+  "dataset",
+  "data_transform",
+  "eda",
+  "ml",
+  "workflow",
+  "report"
+ ],
+ "escalation_reasons": [
+  "multi_step",
+  "ambiguous",
+  "out_of_scope",
+  "param_dependency",
+  "conflict"
+ ],
+ "tool_count": 30,
+ "tools": [
+  {
+   "name": "data.aggregate",
+   "description": "分组聚合统计（count/sum/mean/median/min/max/std）。",
+   "intent": "data_transform",
+   "declared_category": "data",
+   "risk_level": "medium",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id",
+    "group_by",
+    "aggregations"
+   ],
+   "optional": [
+    "version"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer",
+    "group_by": "array",
+    "aggregations": "array"
+   }
+  },
+  {
+   "name": "data.clean",
+   "description": "清洗数据：先处理缺失值（mean/median/mode/constant/drop），再按需去重。",
+   "intent": "data_transform",
+   "declared_category": "data",
+   "risk_level": "high",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id"
+   ],
+   "optional": [
+    "version",
+    "missing",
+    "deduplicate"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer",
+    "missing": "object",
+    "deduplicate": "object"
+   }
+  },
+  {
+   "name": "data.filter",
+   "description": "按条件过滤数据集行，生成新版本。",
+   "intent": "data_transform",
+   "declared_category": "data",
+   "risk_level": "medium",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id",
+    "conditions"
+   ],
+   "optional": [
+    "version",
+    "logic"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer",
+    "conditions": "array",
+    "logic": "string"
+   }
+  },
+  {
+   "name": "data.merge",
+   "description": "将两个数据集按 Key 合并：自动建议字段映射（Plan），校验合并计划（Validate），权限通过后执行（Execute）并产生新版本。未指定 keys 时按同名列自动推断 Join Key（推断结果会写入返回的 plan）。",
+   "intent": "data_transform",
+   "declared_category": "data",
+   "risk_level": "high",
+   "requires_confirmation": false,
+   "required": [
+    "left_dataset_id",
+    "right_dataset_id"
+   ],
+   "optional": [
+    "keys",
+    "join_type",
+    "mappings"
+   ],
+   "param_types": {
+    "left_dataset_id": "integer",
+    "right_dataset_id": "integer",
+    "keys": "array",
+    "join_type": "string",
+    "mappings": "array"
+   }
+  },
+  {
+   "name": "data.transform",
+   "description": "新增/覆盖派生列（数值运算、日期部分、常量）。",
+   "intent": "data_transform",
+   "declared_category": "data",
+   "risk_level": "medium",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id",
+    "name",
+    "expression"
+   ],
+   "optional": [
+    "version",
+    "overwrite"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer",
+    "name": "string",
+    "expression": "object",
+    "overwrite": "boolean"
+   }
+  },
+  {
+   "name": "dataset.inspect",
+   "description": "查看数据集元信息、版本列表与最新版本规模。",
+   "intent": "dataset",
+   "declared_category": "dataset",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id"
+   ],
+   "optional": [],
+   "param_types": {
+    "dataset_id": "integer"
+   }
+  },
+  {
+   "name": "dataset.list",
+   "description": "列出当前用户可见的数据集（分页），仅读取元信息。",
+   "intent": "dataset",
+   "declared_category": "dataset",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [],
+   "optional": [
+    "page",
+    "page_size"
+   ],
+   "param_types": {
+    "page": "integer",
+    "page_size": "integer"
+   }
+  },
+  {
+   "name": "dataset.preview",
+   "description": "预览数据集内容（分页，可筛选列与行条件）。",
+   "intent": "dataset",
+   "declared_category": "dataset",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id"
+   ],
+   "optional": [
+    "version",
+    "page",
+    "page_size",
+    "columns",
+    "filters"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer",
+    "page": "integer",
+    "page_size": "integer",
+    "columns": "array",
+    "filters": "array"
+   }
+  },
+  {
+   "name": "dataset.profile",
+   "description": "生成数据集统计画像（数值分布、缺失、类别 Top 等）。",
+   "intent": "dataset",
+   "declared_category": "dataset",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id"
+   ],
+   "optional": [
+    "version"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer"
+   }
+  },
+  {
+   "name": "dataset.quality",
+   "description": "数据质量检查（缺失、重复、异常值、Schema）。",
+   "intent": "dataset",
+   "declared_category": "dataset",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id"
+   ],
+   "optional": [
+    "version"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer"
+   }
+  },
+  {
+   "name": "dataset.schema",
+   "description": "查看数据集列结构（列名、类型、空值、唯一值、样本值）。",
+   "intent": "dataset",
+   "declared_category": "dataset",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id"
+   ],
+   "optional": [
+    "version"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer"
+   }
+  },
+  {
+   "name": "eda.correlation",
+   "description": "数值列相关性矩阵（Pearson/Spearman 自动选择）。",
+   "intent": "eda",
+   "declared_category": "eda",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id"
+   ],
+   "optional": [
+    "version",
+    "columns",
+    "method"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer",
+    "columns": "array",
+    "method": "string"
+   }
+  },
+  {
+   "name": "eda.describe",
+   "description": "描述性统计：数值列均值/分位数、类别列频次 Top。",
+   "intent": "eda",
+   "declared_category": "eda",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id"
+   ],
+   "optional": [
+    "version",
+    "columns"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer",
+    "columns": "array"
+   }
+  },
+  {
+   "name": "eda.distribution",
+   "description": "单列分布：数值直方分桶 / 类别频次占比。",
+   "intent": "eda",
+   "declared_category": "eda",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id",
+    "column"
+   ],
+   "optional": [
+    "version",
+    "bins",
+    "top_n"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer",
+    "column": "string",
+    "bins": "integer",
+    "top_n": "integer"
+   }
+  },
+  {
+   "name": "eda.outlier",
+   "description": "数值列异常检测（IQR / Z-Score）。",
+   "intent": "eda",
+   "declared_category": "eda",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id"
+   ],
+   "optional": [
+    "version",
+    "columns",
+    "method"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer",
+    "columns": "array",
+    "method": "string"
+   }
+  },
+  {
+   "name": "eda.visualize",
+   "description": "生成图表数据：histogram/bar/area/qq 需要 column；line/scatter 需要 x,y；grouped_bar 需要 column(分类)+y(数值)+group_by(分类)；boxplot/heatmap 需要 column(s)。",
+   "intent": "eda",
+   "declared_category": "eda",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id",
+    "chart"
+   ],
+   "optional": [
+    "version",
+    "column",
+    "x",
+    "y",
+    "columns",
+    "group_by",
+    "agg",
+    "bins",
+    "top_n"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer",
+    "chart": "string",
+    "column": "string",
+    "x": "string",
+    "y": "string",
+    "columns": "array",
+    "group_by": "string",
+    "agg": "string",
+    "bins": "integer",
+    "top_n": "integer"
+   }
+  },
+  {
+   "name": "ml.compare",
+   "description": "比较多次训练运行：指标最优、参数差异、耗时排名。",
+   "intent": "ml",
+   "declared_category": "ml",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [],
+   "optional": [
+    "run_ids",
+    "experiment_ids"
+   ],
+   "param_types": {
+    "run_ids": "array",
+    "experiment_ids": "array"
+   }
+  },
+  {
+   "name": "ml.detect_task",
+   "description": "根据目标列类型与数据分布判断 ML 任务类型，并给出理由。",
+   "intent": "ml",
+   "declared_category": "ml",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id"
+   ],
+   "optional": [
+    "version",
+    "target",
+    "infer_target"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer",
+    "target": "string",
+    "infer_target": "boolean"
+   }
+  },
+  {
+   "name": "ml.evaluate",
+   "description": "查看一次训练运行的评估指标与解读。",
+   "intent": "ml",
+   "declared_category": "ml",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "run_id"
+   ],
+   "optional": [],
+   "param_types": {
+    "run_id": "integer"
+   }
+  },
+  {
+   "name": "ml.explain",
+   "description": "解释已训练模型：特征重要性（可扩展 SHAP）。",
+   "intent": "ml",
+   "declared_category": "ml",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "run_id"
+   ],
+   "optional": [],
+   "param_types": {
+    "run_id": "integer"
+   }
+  },
+  {
+   "name": "ml.explain_config",
+   "description": "解释机器学习流程与参数：可查询流程步骤、预处理参数、训练参数、某模型的可调参数、评估指标的含义与好坏判断、指标不理想时该调整哪些参数（调参手册），以及训练完成后不需重训即可生效的推理参数（如决策阈值）。",
+   "intent": "ml",
+   "declared_category": "ml",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "topic"
+   ],
+   "optional": [
+    "model",
+    "metric"
+   ],
+   "param_types": {
+    "topic": "string",
+    "model": "string",
+    "metric": "string"
+   }
+  },
+  {
+   "name": "ml.predict",
+   "description": "用一次成功训练的模型对新数据做推理，返回预测结果与概率预览。二分类可通过 threshold 调整决策阈值（训练后参数，改它不需要重新训练）。",
+   "intent": "ml",
+   "declared_category": "ml",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "run_id"
+   ],
+   "optional": [
+    "dataset_id",
+    "version",
+    "limit",
+    "threshold"
+   ],
+   "param_types": {
+    "run_id": "integer",
+    "dataset_id": "integer",
+    "version": "integer",
+    "limit": "integer",
+    "threshold": "number"
+   }
+  },
+  {
+   "name": "ml.prepare",
+   "description": "分析数据缺失/类别/数值列，生成防泄漏的预处理配置（missing/encoding/scaling）。",
+   "intent": "ml",
+   "declared_category": "ml",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id"
+   ],
+   "optional": [
+    "version",
+    "target"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer",
+    "target": "string"
+   }
+  },
+  {
+   "name": "ml.train",
+   "description": "在数据集版本上训练模型：创建 Experiment 并运行，返回评估指标。",
+   "intent": "ml",
+   "declared_category": "ml",
+   "risk_level": "high",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id",
+    "model"
+   ],
+   "optional": [
+    "version",
+    "target",
+    "params",
+    "preprocessing",
+    "test_size",
+    "seed",
+    "description"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer",
+    "target": "string",
+    "model": "string",
+    "params": "object",
+    "preprocessing": "object",
+    "test_size": "number",
+    "seed": "integer",
+    "description": "string"
+   }
+  },
+  {
+   "name": "report.generate",
+   "description": "基于真实数据质量、EDA 和相关分析结果生成并保存一份完整的结构化分析报告，报告自动嵌入多张图表（分布直方图、类别柱状图、相关系数热力图、相关性散点图、正态 Q-Q 图、累积分布图），并由大模型针对真实数值撰写章节正文与结论。request 参数建议填写用户的原始诉求，模型会据此组织正文侧重点。返回 report_key 用于在报告中心打开。",
+   "intent": "report",
+   "declared_category": "report",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id"
+   ],
+   "optional": [
+    "title",
+    "request",
+    "conclusions"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "title": "string",
+    "request": "string",
+    "conclusions": "array"
+   }
+  },
+  {
+   "name": "workflow.build_and_run",
+   "description": "一步完成「创建 Workflow + 执行 Workflow 」，是 Agent 跑流程的首选工具（比 workflow.create + workflow.run 更可靠，因为它不需要跨步骤传递 workflow_id）。nodes 为节点数组 [{id,type,config}]，edges 为 [{source,target}]。可用节点类型：dataset.read（或 data.load，config.dataset_id）、data.quality_check、data.statistics、report.summary、data.clean/data.filter/data.transform/data.aggregate/data.duplicate/data.pivot/data.melt、ml.train/ml.predict/ml.evaluate/ml.cluster/ml.pca、ai.analyze。dataset_id 从会话上下文或 dataset.inspect 结果获取。",
+   "intent": "workflow",
+   "declared_category": "workflow",
+   "risk_level": "high",
+   "requires_confirmation": true,
+   "required": [
+    "name",
+    "nodes",
+    "edges"
+   ],
+   "optional": [
+    "metadata",
+    "context"
+   ],
+   "param_types": {
+    "name": "string",
+    "nodes": "array",
+    "edges": "array",
+    "metadata": "object",
+    "context": "object"
+   }
+  },
+  {
+   "name": "workflow.create",
+   "description": "根据 Agent 设计创建并校验一个平台 Workflow；只创建不执行。Agent 可使用语义节点 dataset.read、data.quality_check、data.statistics、report.summary，以及平台原生 data.load/data.clean/data.filter/data.aggregate、ml.*、ai.analyze。返回 id 与 workflow_id 两个同义字段，后续 workflow.run 应使用 workflow_id。",
+   "intent": "workflow",
+   "declared_category": "workflow",
+   "risk_level": "low",
+   "requires_confirmation": true,
+   "required": [
+    "name",
+    "nodes",
+    "edges"
+   ],
+   "optional": [
+    "metadata"
+   ],
+   "param_types": {
+    "name": "string",
+    "nodes": "array",
+    "edges": "array",
+    "metadata": "object"
+   }
+  },
+  {
+   "name": "workflow.inspect",
+   "description": "查看指定 Workflow 的节点、边和元数据，用于 Agent 规划和校验。",
+   "intent": "workflow",
+   "declared_category": "workflow",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "workflow_id"
+   ],
+   "optional": [],
+   "param_types": {
+    "workflow_id": "integer"
+   }
+  },
+  {
+   "name": "workflow.list",
+   "description": "列出当前平台已有 Workflow，返回 ID、名称和节点数量。",
+   "intent": "workflow",
+   "declared_category": "workflow",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [],
+   "optional": [],
+   "param_types": {}
+  },
+  {
+   "name": "workflow.run",
+   "description": "执行指定 Workflow。workflow_id 必须是整数，通常来自前一步 workflow.create 的结构化输出。执行类操作需要 Agent 权限；高风险节点仍由 Workflow/工具权限规则控制。",
+   "intent": "workflow",
+   "declared_category": "workflow",
+   "risk_level": "low",
+   "requires_confirmation": true,
+   "required": [
+    "workflow_id"
+   ],
+   "optional": [
+    "context"
+   ],
+   "param_types": {
+    "workflow_id": "integer",
+    "context": "object"
+   }
+  }
+ ],
+ "category_inconsistency": [],
+ "decision_schema": {
+  "$defs": {
+   "EscalationReason": {
+    "description": "升级到上级模型的原因。\n\n封闭枚举的好处：可统计「为什么升级」，从而针对性补数据。\n例如升级原因长期集中在 `multi_step`，说明该补的是多步编排样本，\n而不是继续加大意图分类的数据量。",
+    "enum": [
+     "multi_step",
+     "ambiguous",
+     "out_of_scope",
+     "param_dependency",
+     "conflict"
+    ],
+    "title": "EscalationReason",
+    "type": "string"
+   },
+   "Intent": {
+    "description": "Router 判定的能力域（粗粒度）。\n\n刻意**不等同于工具名**：intent 说「用户想干什么」，tool 说「平台用哪个工具干」。\n两者必须自洽（见 `intent_of_tool`）—— 不自洽本身就是一次免费的置信度信号。",
+    "enum": [
+     "chat",
+     "dataset",
+     "data_transform",
+     "eda",
+     "ml",
+     "workflow",
+     "report"
+    ],
+    "title": "Intent",
+    "type": "string"
+   }
+  },
+  "description": "Router 的输出。字段全部受限，可直接约束解码。",
+  "properties": {
+   "intent": {
+    "$ref": "#/$defs/Intent"
+   },
+   "tool": {
+    "anyOf": [
+     {
+      "type": "string",
+      "enum": [
+       "data.aggregate",
+       "data.clean",
+       "data.filter",
+       "data.merge",
+       "data.transform",
+       "dataset.inspect",
+       "dataset.list",
+       "dataset.preview",
+       "dataset.profile",
+       "dataset.quality",
+       "dataset.schema",
+       "eda.correlation",
+       "eda.describe",
+       "eda.distribution",
+       "eda.outlier",
+       "eda.visualize",
+       "ml.compare",
+       "ml.detect_task",
+       "ml.evaluate",
+       "ml.explain",
+       "ml.explain_config",
+       "ml.predict",
+       "ml.prepare",
+       "ml.train",
+       "report.generate",
+       "workflow.build_and_run",
+       "workflow.create",
+       "workflow.inspect",
+       "workflow.list",
+       "workflow.run"
+      ]
+     },
+     {
+      "type": "null"
+     }
+    ]
+   },
+   "params": {
+    "additionalProperties": true,
+    "title": "Params",
+    "type": "object"
+   },
+   "missing": {
+    "items": {
+     "type": "string"
+    },
+    "title": "Missing",
+    "type": "array"
+   },
+   "escalate": {
+    "default": false,
+    "title": "Escalate",
+    "type": "boolean"
+   },
+   "escalate_reason": {
+    "anyOf": [
+     {
+      "$ref": "#/$defs/EscalationReason"
+     },
+     {
+      "type": "null"
+     }
+    ],
+    "default": null
+   },
+   "confidence": {
+    "default": 0.0,
+    "title": "Confidence",
+    "type": "number"
+   }
+  },
+  "required": [
+   "intent"
+  ],
+  "title": "RouterDecision",
+  "type": "object"
+ }
+}

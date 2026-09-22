@@ -1,0 +1,689 @@
+/* 小洛实验室统一 UI 覆盖层
+ * 目标：扩大有效工作区、建立稳定字号体系、统一深浅色主题。
+ * 不承载业务逻辑。
+ */
+
+/* 字阶与 :root 已上收敛至 styles/tokens.css（全站唯一事实源） */
+
+/* ---------- 全局工作区 ---------- */
+html,
+body,
+#root {
+  font-size: var(--ui-body-size);
+}
+
+.content {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 24px var(--content-gutter) 40px;
+}
+
+.page-header {
+  margin-bottom: 18px;
+}
+
+.page-header h1 {
+  font-size: var(--ui-title-size);
+  line-height: 1.25;
+  margin-bottom: 7px;
+}
+
+.page-header p,
+.content .muted {
+  font-size: var(--ui-muted-size) !important;
+  line-height: 1.65;
+}
+
+.content p,
+.content label,
+.content td,
+.content th,
+.content button,
+.content input,
+.content select,
+.content textarea,
+.content .btn {
+  font-size: var(--ui-control-size) !important;
+}
+
+.content .card {
+  padding: 20px;
+}
+
+.content .card h3 {
+  font-size: 19px;
+  line-height: 1.35;
+}
+
+.content .card h4 {
+  font-size: 17px;
+}
+
+.content .btn {
+  min-height: 40px;
+  padding: 8px 15px;
+}
+
+.content input[type="text"],
+.content input[type="number"],
+.content input[type="search"],
+.content select,
+.content textarea {
+  min-height: 42px;
+  padding: 9px 12px;
+}
+
+/* ---------- 侧边栏 ---------- */
+.sidebar {
+  width: 200px;
+}
+
+.sidebar .logo {
+  padding: 20px 20px;
+  font-size: 20px;
+}
+
+.sidebar nav {
+  padding: 10px 0;
+}
+
+.sidebar nav a {
+  padding: 11px 20px;
+  font-size: var(--ui-nav-size) !important;
+  line-height: 1.45;
+}
+
+.sidebar .nav-group-title {
+  padding: 12px 20px 7px;
+  font-size: var(--ui-nav-size) !important;
+  line-height: 1.45;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--sidebar-text);
+}
+
+.sidebar .nav-group-item {
+  padding-left: 36px !important;
+  padding-right: 20px !important;
+  font-size: calc(var(--ui-nav-size) - 1px) !important;
+}
+
+.sidebar .nav-group-title > span:last-child {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 0 !important;
+}
+
+.sidebar .nav-group-title > span:last-child::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform .15s ease;
+}
+
+.sidebar .nav-group-title > span:last-child[style*="rotate(90deg)"]::before {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+
+/* ---------- 数据分析 ---------- */
+.analysis-workspace {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.analysis-fields,
+.analysis-results {
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.analysis-fields {
+  padding: 18px;
+  position: sticky;
+  top: 20px;
+  align-self: start;
+}
+
+.analysis-fields-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.analysis-field-list {
+  max-height: 330px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.analysis-field-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.analysis-field-item:hover {
+  background: var(--surface-hover);
+}
+
+.analysis-field-item input {
+  min-height: auto !important;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.analysis-field-actions {
+  display: flex;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.analysis-field-actions .btn {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
+.analysis-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.analysis-task-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 0;
+}
+
+.analysis-task-option input {
+  min-height: auto !important;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+}
+
+.analysis-run {
+  width: 100%;
+  margin-top: 16px;
+}
+
+.analysis-results {
+  padding: 18px;
+  min-height: 620px;
+}
+
+.analysis-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+  margin-bottom: 16px;
+}
+
+.analysis-tab {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 8px 13px;
+  min-height: 38px;
+}
+
+.analysis-tab:hover {
+  background: var(--surface-hover);
+}
+
+.analysis-tab.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.analysis-result-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.analysis-preview-wrap {
+  overflow: auto;
+  max-height: 600px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.analysis-results .data-table {
+  min-width: 680px;
+}
+
+.analysis-empty {
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  text-align: left;
+  color: var(--muted);
+  padding: 32px;
+  gap: var(--space-2);
+}
+
+/* 空状态插画：圆角方块 + 弱化主色，代替正圆 + 纯主色（避免全站图标砖千篇一律） */
+.analysis-empty-illustration {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius);
+  background: var(--primary-weak);
+  border: 1px solid var(--primary-border);
+  color: var(--primary);
+}
+.analysis-empty-title {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+}
+.analysis-empty-hint {
+  max-width: 52ch;
+  line-height: 1.7;
+  font-size: 13px;
+}
+.analysis-empty-action { margin-top: var(--space-2); }
+
+/* ---------- 数据处理 ---------- */
+.processing-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.processing-sidebar {
+  padding: 12px;
+  position: sticky;
+  top: 20px;
+  max-height: calc(100vh - 44px);
+  overflow-y: auto;
+}
+
+.processing-sidebar-title {
+  padding: 8px 10px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.processing-op {
+  padding: 10px 11px;
+}
+
+.processing-op-title {
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.processing-op-desc {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.processing-operation-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 16px;
+  min-width: 0;
+}
+
+.processing-config,
+.processing-preview {
+  min-width: 0;
+  padding: 22px;
+}
+
+.processing-preview {
+  min-height: 480px;
+}
+
+.processing-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* ---------- AI 实验室 ---------- */
+.ai-workspace {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 300px;
+  gap: 16px;
+  align-items: stretch;
+  min-width: 0;
+  min-height: calc(100vh - 155px);
+}
+
+.ai-sidebar,
+.ai-chat-column,
+.ai-inspector {
+  min-width: 0;
+}
+
+.ai-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.ai-sidebar-section,
+.ai-inspector-card {
+  padding: 15px;
+}
+
+.ai-session-list {
+  max-height: none;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.ai-chat-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 18px;
+}
+
+.ai-chat-column .chat-panel {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+.ai-chat-column .chat-messages {
+  min-height: 0;
+  max-height: none;
+  flex: 1;
+  padding: 20px 8px;
+}
+
+.ai-chat-column .chat-msg {
+  max-width: min(78%, 820px);
+}
+
+.ai-chat-column .chat-bubble {
+  font-size: var(--ui-control-size) !important;
+  line-height: 1.7;
+  padding: 12px 16px;
+  border-radius: 15px;
+}
+
+.ai-chat-column .chat-input-row {
+  padding: 14px 0 0;
+}
+
+.ai-chat-column .chat-input-row textarea {
+  min-height: 50px;
+  border-radius: 15px;
+}
+
+.ai-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.ai-inspector-card {
+  overflow: hidden;
+}
+
+.ai-inspector-card .timeline {
+  max-height: 330px;
+  overflow-y: auto;
+}
+
+.ai-plan {
+  max-height: 240px;
+  overflow: auto;
+  background: var(--surface-muted) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border);
+}
+
+/* ---------- 机器学习 ---------- */
+.ml-compare-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ml-selected-runs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 10px 0 12px;
+}
+
+.ml-selected-run {
+  padding: 6px 10px;
+  font-size: 14px;
+}
+
+/* ---------- 学习中心 ---------- */
+.learning-hero {
+  grid-template-columns: minmax(0, 1.6fr) minmax(270px, .65fr);
+  gap: 16px;
+}
+
+.learning-hero-main,
+.learning-progress-card {
+  padding: 22px;
+}
+
+.learning-hero-title {
+  font-size: 32px;
+}
+
+.learning-hero-copy {
+  line-height: 1.7;
+}
+
+.learning-roadmap {
+  gap: 8px;
+}
+
+.learning-roadmap-item {
+  min-height: 82px;
+  padding: 11px;
+}
+
+.learning-grid {
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 16px;
+}
+
+.learning-lesson summary {
+  padding: 16px 18px;
+}
+
+.learning-lesson-body {
+  padding: 0 18px 20px;
+}
+
+.learning-lesson-grid {
+  grid-template-columns: minmax(0, 1.2fr) minmax(260px, .8fr);
+}
+
+/* 学习页历史硬编码浅色文字/背景：深色主题下统一回到主题变量。 */
+html[data-theme="dark"] .learning-lesson-body :not(pre):not(code)[style*="color"] {
+  color: var(--text) !important;
+}
+
+html[data-theme="dark"] .learning-lesson-body :not(pre):not(code)[style*="background"] {
+  background: var(--surface-hover) !important;
+}
+
+html[data-theme="dark"] .learning-lesson-body pre,
+html[data-theme="dark"] .learning-lesson-body code {
+  background: #020617 !important;
+  color: #e2e8f0 !important;
+}
+
+/* ---------- 设置 ---------- */
+/* ---------- 图表深色主题 ---------- */
+html[data-theme="dark"] .recharts-text,
+html[data-theme="dark"] .recharts-cartesian-axis-tick-value,
+html[data-theme="dark"] .recharts-polar-angle-axis-tick-value,
+html[data-theme="dark"] .recharts-polar-radius-axis-tick-value {
+  fill: var(--text) !important;
+}
+
+html[data-theme="dark"] .recharts-cartesian-grid line,
+html[data-theme="dark"] .recharts-polar-grid-concentric-polygon,
+html[data-theme="dark"] .recharts-polar-grid-angle line {
+  stroke: var(--border) !important;
+}
+
+html[data-theme="dark"] .recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: var(--surface) !important;
+  border-color: var(--border) !important;
+  color: var(--text) !important;
+}
+
+html[data-theme="dark"] .ai-plan {
+  color: var(--text);
+}
+
+/* ---------- 密度 ---------- */
+html[data-density="compact"] .content .card { padding: 17px; margin-bottom: 14px; }
+html[data-density="comfortable"] .content .card { padding: 24px; margin-bottom: 20px; }
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 1280px) {
+  .ai-workspace {
+    grid-template-columns: 220px minmax(0, 1fr) 280px;
+  }
+  .processing-layout {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+  .processing-operation-shell {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1100px) {
+  .analysis-workspace {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+  .ai-workspace {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+  .ai-inspector {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .learning-grid {
+    grid-template-columns: 1fr;
+  }
+  .learning-side {
+    position: static;
+  }
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    width: 190px;
+  }
+  .content {
+    padding: 22px 20px 34px;
+  }
+  .analysis-workspace,
+  .processing-layout,
+  .ai-workspace {
+    grid-template-columns: 1fr;
+  }
+  .analysis-fields,
+  .processing-sidebar {
+    position: static;
+    max-height: none;
+  }
+  .ai-sidebar,
+  .ai-chat-column {
+    min-height: 520px;
+  }
+  .ai-inspector {
+    grid-column: auto;
+    grid-template-columns: 1fr;
+  }
+  .learning-hero,
+  .learning-lesson-grid {
+    grid-template-columns: 1fr;
+  }
+  .learning-roadmap {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .content {
+    padding: 18px 14px 28px;
+  }
+  .page-header h1 {
+    font-size: 25px;
+  }
+  .sidebar {
+    width: 100%;
+    height: auto;
+    position: static;
+  }
+  .sidebar nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .sidebar .nav-group-title,
+  .sidebar nav a,
+  .sidebar .nav-group-item {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+  .analysis-results {
+    min-height: 480px;
+  }
+  .analysis-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+  .analysis-tab {
+    white-space: nowrap;
+  }
+  .learning-roadmap {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

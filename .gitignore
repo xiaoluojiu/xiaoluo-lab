@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environment
+.venv/
+venv/
+env/
+# L1 训练用的隔离环境（系统 Python + --system-site-packages，继承 torch 但单独装 transformers）
+.venv-l1/
+# HuggingFace 模型缓存（HF_HOME 指向项目内，便于查看与删除；模型体积数 MB~数 GB）
+.hf-cache/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Runtime data
+backend/data/
+backend/models/
+backend/logs/
+
+data/
+models/
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated files
+*.parquet
+*.csv
+*.xlsx
+*.jsonl
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+.coverage
+htmlcov/
+
+# Temporary
+*.tmp
+*.temp
+*.bak
+
+# 损坏的旧 git 历史备份（重建仓库时保留的对象，勿提交）
+.git.broken.bak/
+
+# 本地工作区数据（项目记忆 / 调试日志，不随仓库分发）
+.workbuddy/
+
+# 测试安装日志
+backend/tests/pip_install.log
