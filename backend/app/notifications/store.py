@@ -50,6 +50,10 @@ class NotificationStore:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._items: list[Notification] = []
+        # ★ 变更版本号：**任何**写操作都自增。
+        # 前端 SSE 靠它与上一次推送的版本号比对来判断要不要重新拉列表，
+        # 从而避免在浏览器里反复轮询完整列表（原先是固定 15s 一轮）。
+        self._version = 0
         # 通知偏好：email 占位 + 各类型开关。
         self._prefs: dict[str, Any] = {
             "email": "",
@@ -85,6 +89,7 @@ class NotificationStore:
             # 淘汰最旧
             if len(self._items) > _MAX_QUEUE:
                 self._items = self._items[-_MAX_QUEUE:]
+            self._version += 1
         return item
 
     def _is_enabled(self, type_: str) -> bool:
@@ -104,11 +109,28 @@ class NotificationStore:
         with self._lock:
             return sum(1 for n in self._items if not n.read)
 
+    def version(self) -> int:
+        """当前版本号；与上一次读到的不同即意味着需要重新拉取列表。"""
+        with self._lock:
+            return self._version
+
+    def snapshot(self) -> dict[str, Any]:
+        """一次加锁拿到「列表 + 未读数 + 版本号」，避免三者之间互相错位。"""
+        with self._lock:
+            items = sorted(self._items, key=lambda n: n.created_at, reverse=True)
+            unread = sum(1 for n in items if not n.read)
+            return {
+                "items": [n.to_dict() for n in items[:50]],
+                "unread": unread,
+                "version": self._version,
+            }
+
     def mark_read(self, notification_id: str) -> bool:
         with self._lock:
             for n in self._items:
                 if n.id == notification_id and not n.read:
                     n.read = True
+                    self._version += 1
                     return True
         return False
 
@@ -119,6 +141,8 @@ class NotificationStore:
                 if not n.read:
                     n.read = True
                     count += 1
+            if count:
+                self._version += 1
         return count
 
     # ---------- prefs ----------
