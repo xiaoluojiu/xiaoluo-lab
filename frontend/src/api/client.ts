@@ -84,7 +84,18 @@ client.interceptors.response.use(
       (axios.isCancel(error) ? "请求已取消" : undefined) ??
       error.message ??
       "网络错误";
-    return Promise.reject(new Error(String(message)));
+    // 把后端结构化错误的 code / details / status 一并挂到 Error 上：
+    // 之前只留 message，导致业务原因（缺哪些列、为什么不可用）在 UI 层全丢了
+    // —— 用户只看到「请求失败（HTTP 422）」。
+    const wrapped = new Error(String(message)) as Error & {
+      code?: string;
+      details?: unknown;
+      status?: number;
+    };
+    wrapped.code = body?.error?.code;
+    wrapped.details = body?.error?.details;
+    wrapped.status = status;
+    return Promise.reject(wrapped);
   },
 );
 

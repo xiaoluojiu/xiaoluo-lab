@@ -1141,6 +1141,32 @@ class EdaModule(ABC):
         cols = columns or [c for c, d in df.schema.items() if d.is_numeric()]
         return [c for c in cols if c in df.columns and df.schema[c].is_numeric()]
 
+    @staticmethod
+    def require_distinct_columns(**fields: str | None) -> None:
+        """校验多个字段参数指向不同的列。
+
+        同一列同时传给两个位置（如 ``line`` 的 x 与 y、``grouped_bar`` 的
+        column 与 y）会让后续 ``df.select([a, b])`` 产生重复输出名，Polars 直接抛
+        ``DuplicateError``。这属于「请求参数不可处理」，必须在进入 Polars 之前
+        拦成 422，而不是漏成 500。
+        """
+        seen: dict[str, str] = {}
+        for name, column in fields.items():
+            if not column:
+                continue
+            if column in seen:
+                label = _FIELD_LABELS.get(name, name)
+                other = _FIELD_LABELS.get(seen[column], seen[column])
+                raise ValidationException(
+                    f"{label}与{other}不能是同一列：{column}",
+                    details={
+                        "column": column,
+                        "fields": [seen[column], name],
+                        "hint": "请为每个位置选择不同的字段。",
+                    },
+                )
+            seen[column] = name
+
 
 class DescriptiveAnalyzer(EdaModule):
     name = "descriptive"
@@ -1148,6 +1174,8 @@ class DescriptiveAnalyzer(EdaModule):
     def analyze(self, df: pl.DataFrame, **options: Any) -> dict[str, Any]:
         columns: list[str] | None = options.get("columns")
         if columns:
+            # 去重且保持顺序：重复列名会让后续 df.select 抛 DuplicateError（500）。
+            columns = list(dict.fromkeys(columns))
             self.require_columns(df, columns)
         target = columns or list(df.columns)
         result: dict[str, Any] = {"row_count": df.height, "columns": []}
@@ -1206,6 +1234,85 @@ class DescriptiveAnalyzer(EdaModule):
 
 CORRELATION_METHODS = ("pearson", "spearman", "auto")
 
+# 折线图投影时给 y 列的别名：x 与 y 同名时避免 Polars 的重复输出名错误。
+_LINE_VALUE = "__line_value"
+
+
+def _correlation_shortfall(
+    df: pl.DataFrame,
+    requested: list[str] | None,
+    numeric_cols: list[str],
+) -> tuple[list[str], list[str]]:
+    """算出「请求的列里哪些被剔除、原因是什么」。
+
+    返回 ``(rejected_numeric, rejected_non_numeric)``：
+
+    - ``rejected_non_numeric``：请求的这些列根本不是数值类型；
+    - ``rejected_numeric``：数值列但因低基数被判定为分类编码列（如 Month、DayOfWeek），
+      不参与 Pearson/Spearman。
+
+    这两个列表是让 422 变得可操作的关键：仅说「至少需要 2 个数值字段」，
+    用户并不知道**是哪几列不可用、为什么**。
+    """
+    if not requested:
+        return [], []
+    non_numeric = [c for c in requested if c in df.columns and not df.schema[c].is_numeric()]
+    rejected = [c for c in requested if c in df.columns and c not in numeric_cols]
+    # rejected 去掉纯非数值列后剩下的就是「数值但被视为分类」的列。
+    categorical_numeric = [c for c in rejected if c not in non_numeric]
+    return categorical_numeric, non_numeric
+
+
+def _insufficient_numeric_message(
+    df: pl.DataFrame,
+    requested: list[str] | None,
+    numeric_cols: list[str],
+) -> str:
+    """构造带「具体是哪几列、为什么」的 422 提示。"""
+    categorical_numeric, non_numeric = _correlation_shortfall(df, requested, numeric_cols)
+    if not requested:
+        return "相关性分析至少需要 2 个数值字段"
+    parts: list[str] = []
+    if categorical_numeric:
+        parts.append(
+            "以下列虽为数值但取值种类过少（按分类编码处理），不参与相关性："
+            + "、".join(categorical_numeric)
+        )
+    if non_numeric:
+        parts.append("以下列不是数值类型：" + "、".join(non_numeric))
+    if not parts:
+        return "相关性分析至少需要 2 个数值字段"
+    tail = f"；当前可用数值列 {len(numeric_cols)} 个（需要至少 2 个）"
+    return "；".join(parts) + tail
+
+
+def _insufficient_numeric_details(
+    df: pl.DataFrame,
+    requested: list[str] | None,
+    numeric_cols: list[str],
+    *,
+    all_columns: list[str] | None = None,
+) -> dict[str, Any]:
+    """与提示配套的结构化 details，前端可据此逐列高亮。
+
+    ``all_columns`` 是该数据集**完整**的列名列表。为什么需要它：API 层会按图表
+    类型做 Parquet 列裁剪，传给本函数的 df 可能只含用户点名的那几列。此时用
+    ``continuous_columns(df)`` 去算「还有哪些可用列」会得到空集 —— 提示会让
+    用户以为这个数据集一个可用数值列都没有，反而更困惑。
+    """
+    categorical_numeric, non_numeric = _correlation_shortfall(df, requested, numeric_cols)
+    return {
+        "numeric_columns": numeric_cols,
+        "requested": list(requested or []),
+        "rejected_categorical_numeric": categorical_numeric,
+        "rejected_non_numeric": non_numeric,
+        "required": 2,
+        # 只列「可用的连续数值列」：若把 Month/DayOfWeek 这类分类编码列也算进来，
+        # 用户照着这份清单重选依然会失败 —— 那比不给清单更糟。
+        "available_numeric_columns": continuous_columns(df, all_columns),
+        "hint": "请选择 2 个以上取值连续的数值字段（如金额、时长、距离）。",
+    }
+
 
 class CorrelationAnalyzer(EdaModule):
     """相关性矩阵。
@@ -1233,15 +1340,22 @@ class CorrelationAnalyzer(EdaModule):
             )
         columns: list[str] | None = options.get("columns")
         if columns:
+            # 去重且保持顺序：重复列名会让下游 df.select 抛 DuplicateError（500）。
+            columns = list(dict.fromkeys(columns))
             self.require_columns(df, columns)
         # 只用「连续变量」做相关性：分类编码整型列（VendorID/ratecodeID/区域 ID 等）
         # 不该参与 Pearson/Spearman 相关，否则会得到无业务意义的伪相关（回归：报告热力图
         # 曾把 VendorID、PULocationID、DOLocationID 与金额字段混在一起算相关性）。
         numeric_cols = continuous_columns(df, columns)
         if len(numeric_cols) < 2:
+            # all_columns：API 层做 Parquet 列裁剪时带上的「该数据集全部列名」，
+            # 用于给出准确的「还有哪些可用列」提示（见 _insufficient_numeric_details）。
+            all_columns = options.get("all_columns") or None
             raise ValidationException(
-                "相关性分析至少需要 2 个数值字段",
-                details={"numeric_columns": numeric_cols},
+                _insufficient_numeric_message(df, columns, numeric_cols),
+                details=_insufficient_numeric_details(
+                    df, columns, numeric_cols, all_columns=all_columns
+                ),
             )
 
         # ---- 列上限：按方差取信息量最大的前 N 列 ----
@@ -1299,7 +1413,12 @@ class CorrelationAnalyzer(EdaModule):
 
         只在「任意被选列有空值」时才做行过滤，且只做一次，
         避免原实现按列对重复过滤的开销。
+
+        ``cols`` 先按顺序去重：调用方可能把同一列传了两次
+        （如 ``heatmap&columns=DepDelay,DepDelay``），
+        ``df.select`` 收到重复名会抛 DuplicateError（500），而去重后语义不变。
         """
+        cols = list(dict.fromkeys(cols))
         frame = df.select(cols)
 
         if frame.null_count().row(0).count(0) > 0:
@@ -1554,6 +1673,8 @@ class EdaOutlierAnalyzer(EdaModule):
         method = options.get("method", "iqr")
         columns: list[str] | None = options.get("columns")
         if columns:
+            # 去重且保持顺序：重复列名会让下游 df.select 抛 DuplicateError（500）。
+            columns = list(dict.fromkeys(columns))
             self.require_columns(df, columns)
         numeric_cols = self.pick_numeric(df, columns)
         if not numeric_cols:
@@ -1689,18 +1810,37 @@ class VisualizationBuilder(EdaModule):
     def line(self, df: pl.DataFrame, **options: Any) -> dict[str, Any]:
         x, y = _require_str(options.get("x"), "x"), _require_str(options.get("y"), "y")
         self.require_columns(df, [x, y])
+        self.require_distinct_columns(x=x, y=y)
         if not df.schema[y].is_numeric():
             raise ValidationException(
                 f"折线图的 y 列必须是数值列：{y}",
                 details={"column": y, "dtype": str(df.schema[y])},
             )
+        # x 与 y 同名时不能直接 select([x, y])：改用单列去重后再聚合，
+        # 避免 Polars 的 DuplicateError（回归：x=DepDelay&y=DepDelay 曾返回 500）。
         grouped = (
-            df.select([x, y])
+            df.select(x, pl.col(y).alias(_LINE_VALUE))
             .drop_nulls()
             .group_by(x)
-            .agg(pl.col(y).mean().alias("__mean"))
+            .agg(pl.col(_LINE_VALUE).mean().alias("__mean"))
             .sort(x)
         )
+        original_points = grouped.height
+        max_points = int(options.get("max_points", 1000))
+        downsampled = False
+        if max_points > 0 and grouped.height > max_points:
+            # 等间隔抽稀：gather_every 保证均匀取样（原先用 `col == col // step` 比较浮点，
+            # 会漏点且不保证首末点）。
+            step = max(1, grouped.height // max_points)
+            grouped = grouped.gather_every(step)
+            downsampled = True
+        return {
+            "chart": "line",
+            "x": [json_safe(v) for v in grouped[x].to_list()],
+            "y": [json_safe(v) for v in grouped["__mean"].to_list()],
+            "downsampled": downsampled,
+            "original_count": int(original_points),
+        }
         original_points = grouped.height
         max_points = int(options.get("max_points", 1000))
         downsampled = False
@@ -1722,6 +1862,7 @@ class VisualizationBuilder(EdaModule):
     def scatter(self, df: pl.DataFrame, **options: Any) -> dict[str, Any]:
         x, y = _require_str(options.get("x"), "x"), _require_str(options.get("y"), "y")
         self.require_columns(df, [x, y])
+        self.require_distinct_columns(x=x, y=y)
         for c in (x, y):
             if not df.schema[c].is_numeric():
                 raise ValidationException(
@@ -1729,14 +1870,14 @@ class VisualizationBuilder(EdaModule):
                     details={"column": c, "dtype": str(df.schema[c])},
                 )
         sample_limit = int(options.get("sample_limit", 1000))
-        data = df.select([x, y]).drop_nulls()
+        data = df.select(x, pl.col(y).alias("__scatter_y")).drop_nulls()
         original_count = data.height
         if data.height > sample_limit > 0:
             data = data.sample(n=sample_limit, seed=int(options.get("seed", 42)))
         return {
             "chart": "scatter",
             "x": [json_safe(v) for v in data[x].to_list()],
-            "y": [json_safe(v) for v in data[y].to_list()],
+            "y": [json_safe(v) for v in data["__scatter_y"].to_list()],
             # 复用已算出的行数，不再为这一个布尔值重复做一次投影 + drop_nulls。
             "sampled": data.height < original_count,
             "original_count": int(original_count),
@@ -1792,11 +1933,21 @@ class VisualizationBuilder(EdaModule):
 
     # ---- 热力图（相关性矩阵）----
     def heatmap(self, df: pl.DataFrame, **options: Any) -> dict[str, Any]:
-        corr = CorrelationAnalyzer().analyze(
-            df,
-            method=options.get("method", "auto"),
-            columns=options.get("columns"),
-        )
+        try:
+            corr = CorrelationAnalyzer().analyze(
+                df,
+                method=options.get("method", "auto"),
+                columns=options.get("columns"),
+            )
+        except ValidationException as exc:
+            # 热力图本质是相关性矩阵，但直接抛出「相关性分析…」会让前端把错误
+            # 归到「相关性」标签下，用户看到的图表名与提示对不上。这里补上
+            # 图表类型，保留原始 details 供前端逐列高亮。
+            details = exc.details if isinstance(exc.details, dict) else {}
+            raise ValidationException(
+                f"热力图：{exc.message}",
+                details={**details, "chart": "heatmap"},
+            ) from exc
         return {
             "chart": "heatmap",
             "method": corr["method"],
@@ -1876,6 +2027,7 @@ class VisualizationBuilder(EdaModule):
         y = _require_str(options.get("y"), "y")
         group_by = _require_str(options.get("group_by"), "group_by")
         self.require_columns(df, [column, y, group_by])
+        self.require_distinct_columns(column=column, y=y, group_by=group_by)
         if not df.schema[y].is_numeric():
             raise ValidationException(
                 f"分组柱状图的 y 列必须是数值列：{y}",
@@ -1888,15 +2040,20 @@ class VisualizationBuilder(EdaModule):
                 details={"allowed": ["mean", "sum", "count", "median"]},
             )
         agg_expr = {
-            "mean": pl.col(y).mean(),
-            "sum": pl.col(y).sum(),
-            "median": pl.col(y).median(),
-            "count": pl.col(y).count(),
+            "mean": pl.col("__val").mean(),
+            "sum": pl.col("__val").sum(),
+            "median": pl.col("__val").median(),
+            "count": pl.col("__val").count(),
         }[agg].alias("__v")
+        # 三列各自 alias 后再投影：column / y 同名时不会撞成重复输出名。
         grouped = (
-            df.select([column, y, group_by])
+            df.select(
+                pl.col(column).alias("__cat"),
+                pl.col(y).alias("__val"),
+                pl.col(group_by).alias("__grp"),
+            )
             .drop_nulls()
-            .group_by(column, group_by)
+            .group_by("__cat", "__grp")
             .agg(agg_expr)
         )
 
@@ -1920,8 +2077,9 @@ class VisualizationBuilder(EdaModule):
             dropped_categories = 0
 
         groups = [str(g) for g in sorted(df[group_by].drop_nulls().unique().to_list())]
+        # lookup 的键跟随上面的投影别名（__cat / __grp），不再依赖原列名。
         lookup = {
-            (str(r[column]), str(r[group_by])): float(r["__v"])
+            (str(r["__cat"]), str(r["__grp"])): float(r["__v"])
             for r in grouped.iter_rows(named=True)
         }
         series = {

@@ -25,6 +25,7 @@ import {
   YAxis,
 } from "recharts";
 import { edaVisualize, type VisualizeChart } from "../../api/analysis";
+import { describeAnalysisError } from "../../lib/analysisError";
 import type { SchemaColumn } from "../../types/dataset";
 import { Icon } from "../../components/icons/Icon";
 
@@ -113,13 +114,18 @@ export function VisualizationPanel({
     }
     if (chart === "scatter") {
       if (effectiveNumeric.length < 2) return null;
-      return { chart, x: effectiveNumeric[0], y: effectiveNumeric[1], sample_limit: 1000 };
+      // 必须取两个不同字段：后端对 x==y 会返回 422（同一列做不了散点）。
+      const x = effectiveNumeric[0];
+      const y = effectiveNumeric.find((name) => name !== x);
+      if (!x || !y) return null;
+      return { chart, x, y, sample_limit: 1000 };
     }
     if (chart === "line") {
       const x = selectedColumns.length && temporalCols.some((name) => selectedSet.has(name))
         ? temporalCols.find((name) => selectedSet.has(name))
         : temporalCols[0] ?? effectiveNumeric[0];
-      const y = effectiveNumeric.find((name) => name !== x) ?? effectiveNumeric[0];
+      // y 必须与 x 不同列，否则后端 422；找不到第二列时返回 null 走空状态提示。
+      const y = effectiveNumeric.find((name) => name !== x);
       if (!x || !y) return null;
       return { chart, x, y, sample_limit: 1000 };
     }
@@ -141,9 +147,11 @@ export function VisualizationPanel({
     }
     if (chart === "grouped_bar") {
       const column = selectedCategorical[0] ?? categoricalCols[0];
-      const groupBy = selectedCategorical[1] ?? categoricalCols[0];
       const y = effectiveNumeric[0];
       if (!column || !y) return null;
+      // 分组列必须与分类列不同（后端对同列会返回 422）。
+      const groupBy = selectedCategorical[1] ?? categoricalCols.find((name) => name !== column);
+      if (!groupBy || groupBy === column) return null;
       return { chart, column, y, group_by: groupBy, agg: "mean" };
     }
     return null;
@@ -160,7 +168,8 @@ export function VisualizationPanel({
     try {
       setData(await edaVisualize(datasetId, params));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "图表生成失败");
+      // 展示后端业务原因（缺哪列 / 为什么这列不可用），而不是只给 HTTP 状态码。
+      setError(describeAnalysisError(e));
     } finally {
       setLoading(false);
     }

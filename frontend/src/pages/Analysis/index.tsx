@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "../../components/PageHeader";
 import { DatasetSelector } from "../../features/merge/DatasetSelector";
 import { edaCorrelation, edaDescriptive, edaDistribution, edaOutlier, type VisualizeChart } from "../../api/analysis";
 import { getSchema, previewDataset } from "../../api/datasets";
+import { describeAnalysisError as describeError } from "../../lib/analysisError";
 import type { SchemaColumn } from "../../types/dataset";
 import { ProfilePanel } from "../../features/eda/ProfilePanel";
 import { CorrelationPanel } from "../../features/eda/CorrelationPanel";
@@ -50,13 +51,28 @@ export default function Analysis() {
   const [outlier, setOutlier] = useState<Parameters<typeof OutlierPanel>[0]["data"]>(null);
   const [sampleRows, setSampleRows] = useState<Record<string, unknown>[]>([]);
 
+  // 当前 datasetId 的镜像：runAll 里 await 结束后用它判断响应是否已过期。
+  const datasetIdRef = useRef<number | undefined>(undefined);
+  datasetIdRef.current = datasetIds[0];
+
   const datasetId = datasetIds[0];
   const colNames = useMemo(() => columns.map((c) => c.column), [columns]);
   const numericNames = useMemo(() => columns.filter(isNumericColumn).map((c) => c.column), [columns]);
   const temporalNames = useMemo(() => columns.filter(isTemporalColumn).map((c) => c.column), [columns]);
   const categoricalNames = useMemo(() => columns.filter((c) => !isNumericColumn(c) && !isTemporalColumn(c)).map((c) => c.column), [columns]);
-  const selectedColsParam = selectedColumns.length ? selectedColumns : undefined;
-  const selectedNumericCount = selectedColumns.length ? selectedColumns.filter((name) => numericNames.includes(name)).length : numericNames.length;
+  // 只保留仍存在于当前数据集 schema 中的已选列。
+  // 切换数据集后 setSelectedColumns([]) 虽然是同步的，但 columns 要到 getSchema
+  // 返回才更新；若此刻仍带着旧数据集的列名发请求，后端会回 422「指定的字段不存在」。
+  // 这里以「当前 schema」为准做一次过滤，保证任何请求都不携带失效列名。
+  const validSelectedColumns = useMemo(
+    () => {
+      const known = new Set(colNames);
+      return selectedColumns.filter((name) => known.has(name));
+    },
+    [colNames, selectedColumns],
+  );
+  const selectedColsParam = validSelectedColumns.length ? validSelectedColumns : undefined;
+  const selectedNumericCount = validSelectedColumns.length ? validSelectedColumns.filter((name) => numericNames.includes(name)).length : numericNames.length;
 
   useEffect(() => {
     if (!datasetId) {
@@ -80,6 +96,12 @@ export default function Analysis() {
     previewDataset(datasetId, { page: 1, page_size: 50 }).then((data) => setSampleRows(data.items)).catch(() => setSampleRows([]));
   }, [datasetId]);
 
+  // 切换数据集时，若旧的分布字段不在新 schema 中则清空，避免继续用失效列名请求。
+  useEffect(() => {
+    if (!columns.length) return;
+    setDistributionColumn((current) => (current && !colNames.includes(current) ? "" : current));
+  }, [colNames, columns.length]);
+
   function toggleColumn(name: string) { setSelectedColumns((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name]); }
   function selectAllColumns() { setSelectedColumns(colNames); }
   function clearColumns() { setSelectedColumns([]); }
@@ -87,13 +109,20 @@ export default function Analysis() {
   async function runAll() {
     if (!datasetId) return;
     setError(null); setProfile(null); setCorr(null); setDist(null); setOutlier(null);
+    // 冻结本次运行的目标数据集：await 期间用户可能切换数据集，
+    // 若不加这个守卫，切回时会用新 datasetId 去解释旧响应，或把旧错误写进新数据集的界面。
+    const targetDatasetId = datasetId;
+    const stale = () => targetDatasetId !== datasetIdRef.current;
     const errors: string[] = [];
-    try { setBusy("描述性统计"); setProfile((await edaDescriptive(datasetId, { columns: selectedColsParam })) as never); }
-    catch (e) { errors.push(`描述性统计：${e instanceof Error ? e.message : "失败"}`); }
-    const count = selectedColumns.length ? selectedColumns.filter((name) => numericNames.includes(name)).length : numericNames.length;
-    if (count >= 2) { try { setBusy("相关性分析"); setCorr((await edaCorrelation(datasetId, { columns: selectedColsParam, method: "pearson" })) as never); } catch (e) { errors.push(`相关性：${e instanceof Error ? e.message : "失败"}`); } }
-    if (distributionColumn.trim()) { try { setBusy("分布分析"); setDist((await edaDistribution(datasetId, distributionColumn.trim())) as never); } catch (e) { errors.push(`分布分析：${e instanceof Error ? e.message : "失败"}`); } }
-    if (count >= 1) { try { setBusy("异常值分析"); setOutlier((await edaOutlier(datasetId, { columns: selectedColsParam })) as never); } catch (e) { errors.push(`异常值：${e instanceof Error ? e.message : "失败"}`); } }
+    const cols = selectedColsParam;
+    const distColumn = distributionColumn.trim();
+    const count = validSelectedColumns.length ? validSelectedColumns.filter((name) => numericNames.includes(name)).length : numericNames.length;
+    try { setBusy("描述性统计"); const data = await edaDescriptive(targetDatasetId, { columns: cols }); if (!stale()) setProfile(data as never); }
+    catch (e) { if (!stale()) errors.push(`描述性统计：${describeError(e)}`); }
+    if (count >= 2) { try { setBusy("相关性分析"); const data = await edaCorrelation(targetDatasetId, { columns: cols, method: "pearson" }); if (!stale()) setCorr(data as never); } catch (e) { if (!stale()) errors.push(`相关性：${describeError(e)}`); } }
+    if (distColumn) { try { setBusy("分布分析"); const data = await edaDistribution(targetDatasetId, distColumn); if (!stale()) setDist(data as never); } catch (e) { if (!stale()) errors.push(`分布分析：${describeError(e)}`); } }
+    if (count >= 1) { try { setBusy("异常值分析"); const data = await edaOutlier(targetDatasetId, { columns: cols }); if (!stale()) setOutlier(data as never); } catch (e) { if (!stale()) errors.push(`异常值：${describeError(e)}`); } }
+    if (stale()) return;
     setBusy(null); if (errors.length) setError(errors.join("；")); else if (activeTab === "preview") setActiveTab("profile");
   }
 
@@ -102,10 +131,10 @@ export default function Analysis() {
     switch (activeTab) {
       case "preview": return <><div className="analysis-result-header"><div><h3 style={{ margin: 0 }}>数据预览</h3><div className="muted">快速检查样本与字段，不修改数据版本。</div></div></div><div className="analysis-preview-wrap"><PreviewTable datasetId={datasetId} pageSize={20} /></div></>;
       case "profile": return busy === "描述性统计" ? <Loading /> : <ProfilePanel data={profile} />;
-      case "correlation": return selectedNumericCountForView(columns, selectedColumns) < 2 ? <AnalysisEmpty icon="chart" title="还差一个数值字段" hint="相关性分析需要至少 2 个数值字段。当前数据集里的数值字段不够，去左侧勾选更多字段，或换个数据更完整的数据集。" /> : busy === "相关性分析" ? <Loading /> : <CorrelationPanel data={corr} scatterPoints={sampleRows} />;
+      case "correlation": return selectedNumericCountForView(columns, validSelectedColumns) < 2 ? <AnalysisEmpty icon="chart" title="还差一个数值字段" hint="相关性分析需要至少 2 个数值字段。当前数据集里的数值字段不够，去左侧勾选更多字段，或换个数据更完整的数据集。" /> : busy === "相关性分析" ? <Loading /> : <CorrelationPanel data={corr} scatterPoints={sampleRows} />;;
       case "distribution": return busy === "分布分析" ? <Loading /> : <DistributionChart data={dist} />;
       case "outlier": return busy === "异常值分析" ? <Loading /> : <OutlierPanel data={outlier} />;
-      case "visualization": return <VisualizationPanel datasetId={datasetId} columns={columns} selectedColumns={selectedColumns} chart={chart} onChartChange={setChart} />;
+      case "visualization": return <VisualizationPanel datasetId={datasetId} columns={columns} selectedColumns={validSelectedColumns} chart={chart} onChartChange={setChart} />;
     }
   }
 
