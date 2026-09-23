@@ -23,6 +23,7 @@ class ContextBuilder:
         self.max_chars = max_chars or settings.AGENT_CONTEXT_MAX_CHARS
         self.budget = budget or ContextBudget(
             max_chars=self.max_chars,
+            max_tokens=settings.AGENT_CONTEXT_MAX_TOKENS,
             user_request=settings.AGENT_CONTEXT_USER_REQUEST_CHARS,
             dataset=settings.AGENT_CONTEXT_DATASET_CHARS,
             task=settings.AGENT_CONTEXT_TASK_CHARS,

@@ -7,24 +7,34 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.agent.context.budget import ContextBudget
+from app.agent.context.tokens import clip_by_tokens, estimate_tokens
 
 TRUNCATION_MARK = "…【已截断】"
+TOKEN_TRUNCATION_MARK = "…【已达 token 上限】"
 
 
-def clip_text(text: str, max_chars: int) -> str:
-    """按字符数截断文本并附加标记。"""
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars] + TRUNCATION_MARK
+def clip_text(text: str, max_chars: int, max_tokens: int = 0) -> str:
+    """按字符数截断文本并附加标记；``max_tokens > 0`` 时再套一层 token 上限。
+
+    顺序刻意是「先字符后 token」：字符截断最便宜，
+    多数内容在这一步就结束了，不必为纯英文文案付二分查找的代价。
+    """
+    if len(text) > max_chars:
+        text = text[:max_chars] + TRUNCATION_MARK
+    if max_tokens > 0:
+        clipped = clip_by_tokens(text, max_tokens)
+        if len(clipped) < len(text):
+            text = clipped + TOKEN_TRUNCATION_MARK
+    return text
 
 
-def clip_obj(obj: Any, max_chars: int) -> Any:
+def clip_obj(obj: Any, max_chars: int, max_tokens: int = 0) -> Any:
     """把对象序列化为 JSON 并截断；失败时退回 str 截断。"""
     try:
         text = json.dumps(obj, ensure_ascii=False, default=str)
     except (TypeError, ValueError):
         text = str(obj)
-    return clip_text(text, max_chars)
+    return clip_text(text, max_chars, max_tokens)
 
 
 @dataclass
@@ -94,21 +104,47 @@ class AgentContext:
                 overflow -= delta
             sections = allocated
 
+        # token 预算：按各分区的字符占比等比分配。
+        # 中文场景这一步才真正生效（1 字≈1 token），纯英文几乎不会触发。
+        token_caps = _distribute_tokens(sections, budget.max_tokens)
+
         history = self.conversation_history[-budget.history_messages :]
         parts = [
-            f"[用户请求]\n{clip_text(self.user_request, sections['user_request'])}",
-            f"[数据集]\n{clip_obj(self.dataset_context, sections['dataset'])}",
-            f"[任务]\n{clip_obj(self.task_context, sections['task'])}",
-            f"[权限]\n{clip_obj(self.permission_context, sections['permissions'])}",
-            f"[可用工具]\n{clip_obj({'tools': self.tool_context.get('tools', [])}, sections['tools'])}",
+            f"[用户请求]\n{clip_text(self.user_request, sections['user_request'], token_caps['user_request'])}",
+            f"[数据集]\n{clip_obj(self.dataset_context, sections['dataset'], token_caps['dataset'])}",
+            f"[任务]\n{clip_obj(self.task_context, sections['task'], token_caps['task'])}",
+            f"[权限]\n{clip_obj(self.permission_context, sections['permissions'], token_caps['permissions'])}",
+            f"[可用工具]\n{clip_obj({'tools': self.tool_context.get('tools', [])}, sections['tools'], token_caps['tools'])}",
         ]
         if history and budget.history_messages > 0:
             history_text = "\n".join(
                 f"{m.get('role', 'user')}: {clip_text(m.get('content', ''), 300)}"
                 for m in history
             )
-            parts.append(f"[历史对话]\n{clip_text(history_text, sections['history'])}")
+            parts.append(f"[历史对话]\n{clip_text(history_text, sections['history'], token_caps['history'])}")
         return "\n\n".join(parts)
+
+
+def _distribute_tokens(sections: dict[str, int], total_tokens: int) -> dict[str, int]:
+    """把 token 总预算按各分区的字符额度等比摊分。
+
+    返回值可能为 0（表示不启用 token 约束），调用方按 ``>0`` 判定即可。
+    """
+    if total_tokens <= 0:
+        return dict.fromkeys(sections, 0)
+    char_total = sum(sections.values()) or 1
+    caps = {key: max(int(total_tokens * chars / char_total), 1) for key, chars in sections.items()}
+    # 舍入误差补回：多出来的部分从最大的分区扣，保证总和不超过上限
+    overflow = sum(caps.values()) - total_tokens
+    if overflow > 0:
+        for key in sorted(caps, key=lambda k: -caps[k]):
+            if overflow <= 0:
+                break
+            reducible = max(caps[key] - 1, 0)
+            delta = min(reducible, overflow)
+            caps[key] -= delta
+            overflow -= delta
+    return caps
 
     def dataset_ids(self) -> list[int]:
         """上下文中出现过的数据集 id。"""

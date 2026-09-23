@@ -11,9 +11,16 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ContextBudget:
-    """一次 Agent Prompt 的分区预算（字符数）。"""
+    """一次 Agent Prompt 的分区预算。
+
+    同时用**字符**与**token**双限：中文 1 字≈1 token、英文 4 字符≈1 token，
+    只按字符卡会导致中文场景悄悄吃满 LLM 输入窗口。二者谁先到就按谁截断，
+    见 :mod:`app.agent.context.tokens` 的估算口径。
+    """
 
     max_chars: int = 6000
+    # token 上限为 0 表示关闭 token 约束（退回纯字符行为）
+    max_tokens: int = 6000
     user_request: int = 800
     dataset: int = 1600
     task: int = 600
@@ -26,6 +33,7 @@ class ContextBudget:
         """保证外部配置异常时仍得到安全、正数的预算。"""
         return ContextBudget(
             max_chars=max(int(self.max_chars), 1000),
+            max_tokens=max(int(self.max_tokens), 0),
             user_request=max(int(self.user_request), 100),
             dataset=max(int(self.dataset), 200),
             task=max(int(self.task), 100),

@@ -37,6 +37,29 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     PDF_FONT_PATH: str | None = None
 
+    # =========================================================
+    # HTTP 边车能力（跨域 / 压缩 / 限流）
+    # =========================================================
+    # 允许的跨域来源，逗号分隔。留空 ⇒ **不放松同源策略**
+    # （开发时前端走 Vite proxy 同源；容器部署才需要显式放开前端域名）。
+    # 生产示例：CORS_ALLOW_ORIGINS=https://lab.example.com
+    CORS_ALLOW_ORIGINS: str = ""
+    # 跨域是否携带凭据（Cookie）。放开前 Web 前端必须有可信的抗 CSRF 措施。
+    # 本项目用 Bearer-less 的本地单租户模型，默认 False。
+    CORS_ALLOW_CREDENTIALS: bool = False
+    # 响应体压缩。报告 / 数据集列表这类 JSON 动辄几百 KB，压缩收益明显；
+    # SSE 流式响应在中间件里自动跳过（见 core/middleware.py）。
+    GZIP_ENABLED: bool = True
+    GZIP_MINIMUM_SIZE: int = 1024
+    # 轻量限流：只保护「会消耗 LLM token / 触发重任务」的端点（见 RATE_LIMITED_PATHS
+    # 常量），不限制静态浏览。按客户端 IP + 路径的滑动窗口计数。
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_WINDOW_SECONDS: int = 60
+    RATE_LIMIT_MAX_REQUESTS: int = 60
+    # 被判定为同一客户端时是否信任 X-Forwarded-For 的最左一跳。
+    # 反向代理后才可打开；直接暴露端口时打开等于可被伪造绕过。
+    RATE_LIMIT_TRUST_X_FORWARDED_FOR: bool = False
+
     # LLM：默认走 OpenAI-compatible 协议，不绑定具体厂商。
     # 一次 Agent Run 只使用当前选定的一个 Provider + Model；切换通过设置完成。
     LLM_PROVIDER: str = "openai_compatible"
@@ -68,6 +91,13 @@ class Settings(BaseSettings):
 
     # Agent / Token-aware 上下文控制
     AGENT_CONTEXT_MAX_CHARS: int = 12000
+    # ★ token 上限（0 = 关闭，退回纯字符口径）。
+    # 字符预算表达不了真实开销：中文约 1 字≈1 token，英文约 4 字符≈1 token。
+    # 只按字符卡，中文场景会把 LLM 输入窗口悄悄吃满；加上这一档之后
+    # 「字符」与「token」双重约束，谁先到按谁截断。
+    # 默认 6000 约为 AGENT_LLM_MAX_INPUT_TOKENS(24000) 的四分之一，
+    # 给系统提示词与工具清单留出足够空间。
+    AGENT_CONTEXT_MAX_TOKENS: int = 6000
     AGENT_CONTEXT_USER_REQUEST_CHARS: int = 1200
     AGENT_CONTEXT_DATASET_CHARS: int = 1600
     AGENT_CONTEXT_TASK_CHARS: int = 1200
@@ -196,6 +226,12 @@ class Settings(BaseSettings):
     AGENT_REPORT_NARRATION_MAX_CHARS: int = 24000  # 喂给 LLM 的事实摘要上限
     # SSE 在「等待用户确认」期间保持连接的最长时间（秒）
     AGENT_SSE_CONFIRM_WAIT_SECONDS: float = 900.0
+    # 通知 SSE：连接最长存活时间（秒）。到点主动断开，由 EventSource 自动重连，
+    # 避免长连接的 goroutine/任务在服务端无限堆积。
+    NOTIFICATION_SSE_MAX_SECONDS: float = 1800.0
+    # 通知 SSE：服务端检查版本号变化的间隔（秒）。
+    # 这是「一次进程内整数比较」，成本远低于让每个客户端各自拉一遍完整列表。
+    NOTIFICATION_SSE_INTERVAL_SECONDS: float = 3.0
 
     @property
     def data_root_path(self) -> Path:
@@ -253,6 +289,7 @@ class Settings(BaseSettings):
     def agent_context_summary(self) -> dict[str, Any]:
         return {
             "context_max_chars": self.AGENT_CONTEXT_MAX_CHARS,
+            "context_max_tokens": self.AGENT_CONTEXT_MAX_TOKENS,
             "context_sections": {
                 "user_request": self.AGENT_CONTEXT_USER_REQUEST_CHARS,
                 "dataset": self.AGENT_CONTEXT_DATASET_CHARS,
@@ -334,6 +371,20 @@ class Settings(BaseSettings):
             "local_router": self.local_router_summary(),
         }
 
+    @property
+    def cors_allowed_origins(self) -> list[str]:
+        """跨域白名单（去空去重，保留声明顺序）。
+
+        留空返回空列表 ⇒ 调用方不加 CORSMiddleware，等价于「只接受同源请求」。
+        这样默认部署不会因为手滑配了 ``*`` 而把写接口暴露给任意站点。
+        """
+        raw = [item.strip() for item in (self.CORS_ALLOW_ORIGINS or "").split(",")]
+        seen: dict[str, None] = {}
+        for item in raw:
+            if item:
+                seen.setdefault(item, None)
+        return list(seen)
+
     @staticmethod
     def _mask_url(url: str) -> str:
         if "://" not in url or "@" not in url:
@@ -344,6 +395,58 @@ class Settings(BaseSettings):
             return url
         username = credentials.split(":", 1)[0]
         return f"{scheme}://{username}:***@{host}"
+
+
+# =====================================================================
+# 工具召回的类目关键词表（ToolRegistry 语义检索用）
+# =====================================================================
+# 放在配置里而不是塞进检索函数体，是为了让「补一个关键词」不需要改
+# retrieve_with_scores 的逻辑，也便于对不同语种分别维护。
+#
+# category -> 关键词列表。匹配时对 query 做子串包含判断，因此
+#   - 中文词尽量写完整说法（"相关性"、"外部数据源"），不要写单字（会误命中很广）；
+#   - 英文词写小写形式（query 进入检索前已 lower）。
+# 注意：工具的 name / description / category 本身也参与匹配（见 registry.py），
+# 这里只是给「描述里没写到、但用户会这么说」的说法兜底。
+TOOL_CATEGORY_HINTS: dict[str, tuple[str, ...]] = {
+    "data": (
+        # 中文
+        "清洗", "过滤", "筛选", "转换", "聚合", "合并", "去重", "排序", "填充", "处理", "修改",
+        # 英文
+        "filter rows", "filter row", "filtering", "clean data", "cleaning", "transform",
+        "aggregate", "aggregation", "group by", "groupby", "deduplicate", "dedupe",
+        "drop duplicates", "fill missing", "impute", "sort by", "reshape",
+    ),
+    "dataset": (
+        "数据集", "数据集列表", "预览", "查看数据", "字段", "结构", "质量", "缺失",
+        "重复", "版本", "样本", "画像", "统计",
+        "dataset list", "datasets", "preview", "schema", "column names", "head rows",
+        "profile", "missing values", "null count", "column types", "dtypes",
+    ),
+    "eda": (
+        "分析", "探索", "分布", "相关", "相关性", "异常", "离群", "可视化", "图表", "趋势", "统计",
+        "eda", "exploratory", "distribution", "histogram", "correlation", "outlier",
+        "scatter", "describe", "plot", "chart", "summary stats",
+    ),
+    "ml": (
+        "训练", "模型", "预测", "分类", "回归", "评估", "特征", "机器学习", "解释", "对比",
+        "train", "training", "model", "predict", "prediction", "classify", "classification",
+        "regress", "regression", "evaluate", "evaluation", "feature importance", "compare models",
+    ),
+    "workflow": (
+        "workflow", "工作流", "流程", "编排", "节点", "运行流程", "流水线", "pipeline",
+        "dag", "orchestration", "run pipeline",
+    ),
+    "report": (
+        "报告", "导出报告", "实验报告", "pdf", "html", "markdown", "汇报", "结果文档",
+        "export", "write report", "summarize findings",
+    ),
+    "connector": (
+        "连接器", "数据库", "外部数据源", "导入数据", "mysql", "postgres", "postgresql", "sqlite",
+        "sql server", "oracle", "duckdb", "数据接入",
+        "import table", "external database", "connect to db", "read sql",
+    ),
+}
 
 
 @lru_cache

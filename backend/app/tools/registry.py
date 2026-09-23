@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from app.agent.permission.manager import PermissionManager
+from app.core.config import TOOL_CATEGORY_HINTS
 from app.core.exceptions import AppException
 from app.core.registry import Registry
 from app.tools.base import Tool, ToolConfirmationRequired, ToolPermissionError, ToolServices
@@ -77,16 +78,11 @@ class ToolRegistry(Registry[Tool]):
         if not query:
             return [{"tool": desc, "score": 0.0, "reason": "空查询，取前 top_k"} for desc in self.list()[:top_k]]
 
+        # 关键词表来自 app.core.config.TOOL_CATEGORY_HINTS（补关键词不需要改这里的
+        # 打分逻辑）。工具自身的 name/description/category 本来就参与匹配
+        # （已拼进 searchable），这里只是补「用户会这么说、描述里没写到」的说法。
+        category_hints = TOOL_CATEGORY_HINTS
         query_tokens = set(_TOKEN_RE.findall(query))
-        category_hints = {
-            "data": ("清洗", "过滤", "筛选", "转换", "聚合", "合并", "去重", "排序", "填充", "处理", "修改"),
-            "dataset": ("数据集", "数据集列表", "预览", "查看数据", "字段", "结构", "质量", "缺失", "重复", "版本", "样本", "画像", "统计"),
-            "eda": ("分析", "探索", "分布", "相关", "相关性", "异常", "离群", "可视化", "图表", "趋势", "统计"),
-            "ml": ("训练", "模型", "预测", "分类", "回归", "评估", "特征", "机器学习", "解释", "对比"),
-            "workflow": ("workflow", "工作流", "流程", "编排", "节点", "运行流程", "流水线", "pipeline"),
-            "report": ("报告", "导出报告", "实验报告", "pdf", "html", "markdown", "汇报", "结果文档"),
-            "connector": ("连接器", "数据库", "外部数据源", "导入数据", "mysql", "postgres", "postgresql", "sqlite", "sql server", "oracle", "数据接入"),
-        }
         scored: list[tuple[float, str, dict[str, Any], list[str]]] = []
         for tool in self.values():
             desc = tool.describe()
