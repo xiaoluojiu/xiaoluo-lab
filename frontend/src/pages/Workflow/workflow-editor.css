@@ -1,0 +1,691 @@
+/* =============================================================
+   沉浸式工作流编辑器（/workflow/editor/:id）
+   -------------------------------------------------------------
+   设计前提：本路由挂在 MainLayout 之外，页面根节点是 `#root > .wf-editor`，
+   拿不到 `.layout / .content` 的布局兜底（padding、max-width、控件样式），
+   因此这里必须自成闭环 —— 高度、溢出、控件样式都要自己声明。
+
+   「全屏」的含义：不是拆成多页，而是「画布独占整块视口」。
+   不属于「编辑当前工作流」的元素一律收起并改为按需出现：
+   全局导航 / 顶栏（路由层面绕过）、执行记录与流程检查（右侧抽屉）、
+   模板推荐（收进画布空状态）。三件套（画布 + 节点库 + 参数面板）始终同页。
+   ============================================================= */
+
+/* ---------------- 外壳：撑满视口，内部滚动，body 不滚 ---------------- */
+
+.wf-editor {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--app-font-family);
+  font-size: var(--fs-body);
+}
+
+/* ---------------- 顶栏：只留「离开 / 命名 / 保存 / 运行」一条主线 ---------------- */
+
+.wf-editor-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex: 0 0 auto;
+  height: 56px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.wf-editor-topbar-left,
+.wf-editor-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.wf-editor-topbar-left {
+  flex: 1 1 auto;
+}
+
+.wf-editor-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+/* 返回箭头借用 arrow-right 图标，翻转 180° 即为「回去」 */
+.wf-editor-back svg {
+  transform: rotate(180deg);
+}
+
+.wf-editor-back:hover {
+  border-color: var(--primary-border);
+  background: var(--surface-hover);
+  color: var(--primary);
+}
+
+.wf-editor-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 420px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  transition: all var(--transition-fast);
+}
+
+.wf-editor-name::placeholder {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.wf-editor-name:hover {
+  background: var(--surface-hover);
+}
+
+.wf-editor-name:focus {
+  outline: none;
+  border-color: var(--primary);
+  background: var(--surface);
+  box-shadow: var(--focus-ring);
+}
+
+.wf-editor-save-state {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.wf-editor-save-state em {
+  font-style: normal;
+  opacity: 0.75;
+}
+
+/* 有未保存修改才强调，避免常态化的红点喧宾夺主 */
+.wf-editor-save-state.dirty {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.wf-editor-history {
+  display: inline-flex;
+  gap: 2px;
+  padding-right: 6px;
+  margin-right: 2px;
+  border-right: 1px solid var(--border);
+}
+
+.wf-editor-icon-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.wf-editor-icon-btn:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--surface-hover);
+  color: var(--primary);
+}
+
+.wf-editor-icon-btn.active {
+  border-color: var(--primary-border);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.wf-editor-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* 撤销图标翻转方向，与「重做」构成一对 */
+.wf-editor-history > button:first-child svg {
+  transform: scaleX(-1);
+}
+
+/* 执行状态小红点：只在有运行记录时出现 */
+.wf-editor-run-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c-running);
+}
+
+.wf-editor-run-dot.success {
+  background: var(--success);
+}
+.wf-editor-run-dot.failed {
+  background: var(--danger);
+}
+.wf-editor-run-dot.cancelled {
+  background: var(--c-skipped);
+}
+
+/* ---------------- 主体：画布独占剩余空间 ---------------- */
+
+.wf-editor-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+/*
+  覆写宿主高度：workflow.css 给 .workflow-workspace 定的是
+  `height: min(68vh, 720px)`（列表页内嵌），沉浸模式要撑满可用高度。
+*/
+.wf-editor .workflow-workspace {
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* 面板收起时把对应网格列让给画布 */
+.wf-editor .workflow-workspace:not(.explorer-open) {
+  grid-template-columns: 0 minmax(0, 1fr) 300px;
+}
+
+.wf-editor .workflow-workspace.inspector-closed {
+  grid-template-columns: 224px minmax(0, 1fr) 0;
+}
+
+.wf-editor .workflow-workspace:not(.explorer-open).inspector-closed {
+  grid-template-columns: 0 minmax(0, 1fr) 0;
+}
+
+.wf-editor .workflow-explorer,
+.wf-editor .workflow-inspector-panel {
+  overflow-y: auto;
+}
+
+/* 面板正在收起时不渲染内容，避免 0 宽容器里挤出残余布局 */
+.wf-editor .workflow-workspace:not(.explorer-open) .workflow-explorer {
+  overflow: hidden;
+  border-right-color: transparent;
+  padding-left: 0;
+  padding-right: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.wf-editor .workflow-workspace.inspector-closed .workflow-inspector-panel {
+  overflow: hidden;
+  border-left-color: transparent;
+  padding-left: 0;
+  padding-right: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.wf-editor .workflow-panel-title {
+  position: relative;
+}
+
+.wf-editor .workflow-panel-collapse,
+.wf-editor .workflow-inspector-collapse {
+  margin-left: auto;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.wf-editor .workflow-panel-collapse:hover,
+.wf-editor .workflow-inspector-collapse:hover {
+  background: var(--surface-hover);
+  color: var(--primary);
+}
+
+/* ---------------- 收起后的侧边轨道按钮 ---------------- */
+
+.wf-editor-rail {
+  position: absolute;
+  top: 14px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.wf-editor-rail:hover {
+  border-color: var(--primary-border);
+  color: var(--primary);
+  box-shadow: var(--shadow);
+}
+
+.wf-editor-rail.left {
+  left: 12px;
+}
+
+.wf-editor-rail.right {
+  right: 12px;
+}
+
+/* 参数面板收起 + 有选中节点时，底部给出一行「当前节点」摘要，避免信息断层 */
+.wf-editor-inspector-hint {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 320px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+/* ---------------- 画布空状态：模板 / 智能建议收在这里 ---------------- */
+
+.wf-editor-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 460px;
+  text-align: center;
+}
+
+.wf-editor-empty h3 {
+  margin: 0;
+  font-size: 17px;
+  color: var(--text);
+}
+
+.wf-editor-empty p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.wf-editor-empty-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.wf-editor-empty .workflow-template-select,
+.wf-editor-empty-suggest select {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.wf-editor-empty-suggest {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.wf-editor-empty-suggest > span {
+  font-size: 12px;
+}
+
+/* dataset-selector-compact 自带 label 布局，这里只需压掉横向间距 */
+.wf-editor-empty-suggest .dataset-selector-compact {
+  width: 100%;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* ---------------- 执行 / 体检抽屉 ---------------- */
+
+.wf-editor-drawer {
+  position: absolute;
+  top: 56px;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  width: min(420px, 92vw);
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-drawer);
+  animation: wf-drawer-in var(--transition-normal);
+}
+
+@keyframes wf-drawer-in {
+  from {
+    transform: translateX(12px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.wf-editor-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.wf-editor-drawer-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.wf-editor-drawer-tabs button {
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.wf-editor-drawer-tabs button:hover {
+  background: var(--surface-hover);
+}
+
+.wf-editor-drawer-tabs button.active {
+  border-color: var(--primary-border);
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.wf-editor-drawer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+/* 抽掉面板自带的卡片边框，抽屉本身已经是容器 */
+.wf-editor-drawer-body .workflow-run-panel,
+.wf-editor-drawer-body .workflow-health-panel {
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  padding: 0;
+}
+
+/* ---------------- 工作流切换浮层 ---------------- */
+
+.wf-editor-library {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+}
+
+.wf-editor-library-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--c-scrim);
+}
+
+.wf-editor-library-panel {
+  position: absolute;
+  top: 60px;
+  left: 12px;
+  width: min(360px, 90vw);
+  max-height: calc(100% - 72px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.wf-editor-library-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.wf-editor-library-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.wf-editor-library-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.wf-editor-library-row:hover {
+  background: var(--surface-hover);
+}
+
+.wf-editor-library-row.active {
+  border-color: var(--primary-border);
+  background: var(--primary-soft);
+}
+
+.wf-editor-library-row strong {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.wf-editor-library-row span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wf-editor-library-empty {
+  padding: 20px 12px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ---------------- 草稿恢复提示 ---------------- */
+
+.wf-editor-prompt {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  z-index: 9;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100% - 32px);
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.wf-editor-prompt p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.wf-editor-prompt-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* ---------------- 错误条 ---------------- */
+
+.wf-editor-error {
+  position: absolute;
+  left: 50%;
+  top: 66px;
+  z-index: 10;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(560px, calc(100% - 32px));
+  padding: 9px 12px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--danger-weak);
+  color: var(--danger);
+  font-size: 13px;
+  box-shadow: var(--shadow);
+}
+
+.wf-editor-error button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.wf-editor-error button:hover {
+  opacity: 1;
+}
+
+/* ---------------- 窄屏：面板改为覆盖式，画布不被挤扁 ---------------- */
+
+@media (max-width: 1100px) {
+  .wf-editor .workflow-workspace,
+  .wf-editor .workflow-workspace:not(.explorer-open),
+  .wf-editor .workflow-workspace.inspector-closed,
+  .wf-editor .workflow-workspace:not(.explorer-open).inspector-closed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wf-editor .workflow-explorer,
+  .wf-editor .workflow-inspector-panel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 4;
+    width: 260px;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .wf-editor .workflow-explorer {
+    left: 0;
+  }
+
+  .wf-editor .workflow-inspector-panel {
+    right: 0;
+  }
+
+  .wf-editor-body iframe,
+  .wf-editor-body .workflow-canvas-area {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .wf-editor-topbar {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 8px 10px;
+    gap: 8px;
+  }
+
+  .wf-editor-topbar-left,
+  .wf-editor-topbar-right {
+    width: 100%;
+  }
+
+  .wf-editor-topbar-right {
+    flex-wrap: wrap;
+  }
+
+  .wf-editor-drawer {
+    top: auto;
+    width: 100%;
+  }
+
+  .wf-editor-inspector-hint {
+    left: 12px;
+    max-width: none;
+  }
+}

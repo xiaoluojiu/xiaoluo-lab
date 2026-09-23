@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { WorkflowStudio } from "../../features/workflow/WorkflowStudio";
 import { WorkflowRunPanel } from "../../features/workflow/WorkflowRunPanel";
 import { WorkflowHealthPanel } from "../../features/workflow/WorkflowHealthPanel";
+import { metricsFromOutputs } from "../../features/workflow/nodeStatus";
 import { generateSuggestedWorkflow, WORKFLOW_TEMPLATES, applyTemplate } from "../../features/workflow/WorkflowCanvas";
 import { DatasetSelector } from "../../features/merge/DatasetSelector";
 import { getSchema } from "../../api/datasets";
@@ -12,6 +14,7 @@ import { PageHeader } from "../../components/PageHeader";
 import "./workflow.css";
 
 export default function WorkflowPage() {
+  const navigate = useNavigate();
   const [list, setList] = useState<WorkflowSummary[]>([]);
   const [currentId, setCurrentId] = useState<number | null>(null);
   const [name, setName] = useState("");
@@ -31,6 +34,8 @@ export default function WorkflowPage() {
   useEffect(() => { void refresh(); }, []);
   async function loadOne(id: number) { try { const w = await getWorkflow(id); setCurrentId(id); setName(w.name); setNodes(w.nodes); setEdges(w.edges); setRun(null); setSelectedNodeId(null); setShowLibrary(false); } catch (e) { setError(e instanceof Error ? e.message : "加载失败"); } }
   function newWorkflow() { setCurrentId(null); setName(""); setNodes([]); setEdges([]); setRun(null); setSelectedNodeId(null); setColumns([]); setSuggestDatasetId([]); setError(null); setShowLibrary(false); }
+  // 编辑动作统一交给沉浸式编辑器，列表页只保留「浏览 / 快速预览」职责。
+  function openEditor(id: number | "new") { setShowLibrary(false); navigate(`/workflow/editor/${id}`); }
   async function save() { if (!name.trim()) { setError("请填写工作流名称"); return; } setBusy(true); try { if (currentId != null) await updateWorkflow(currentId, { name: name.trim(), nodes, edges }); else { const w = await createWorkflow({ name: name.trim(), nodes, edges }); setCurrentId(w.id ?? null); } await refresh(); } catch (e) { setError(e instanceof Error ? e.message : "保存失败"); } finally { setBusy(false); } }
   async function doRun() { if (currentId == null) return; setBusy(true); setError(null); try { setRun(await runWorkflow(currentId)); setBottomTab("execution"); } catch (e) { setError(e instanceof Error ? e.message : "运行失败"); } finally { setBusy(false); } }
   async function cancelRun() { if (!run?.run_id) return; try { await cancelWorkflowRun(run.run_id); setRun((current) => current ? { ...current, status: "cancelled" } : current); } catch (e) { setError(e instanceof Error ? e.message : "取消运行失败"); } }
@@ -66,6 +71,8 @@ export default function WorkflowPage() {
   }
 
   const nodeStates = run?.result?.node_states ?? {};
+  // 节点卡片 / 连线上的规模标注：与沉浸式编辑器共用同一派生口径。
+  const nodeMetrics = metricsFromOutputs(run?.result?.outputs);
 
   return <div className="workflow-page">
     <PageHeader
@@ -73,11 +80,11 @@ export default function WorkflowPage() {
       description="可视化编排数据处理、分析、机器学习与 AI 节点，保存并运行端到端流程。"
       actions={<>
         <button className="btn" type="button" onClick={() => setShowLibrary(true)}>工作流 <span className="workflow-count">{list.length}</span></button>
-        <button className="btn" type="button" onClick={newWorkflow}>＋ 新建</button>
+        <button className="btn" type="button" onClick={() => openEditor("new")}>＋ 新建</button>
       </>}
     />
 
-    {showLibrary && <div className="workflow-library-popover"><div className="workflow-library-overlay" onClick={() => setShowLibrary(false)} /><section className="workflow-library-drawer"><div className="workflow-drawer-head"><div><h3>我的工作流</h3><p>选择一个流程继续编辑，或从已有流程克隆。</p></div><button className="btn" type="button" onClick={() => setShowLibrary(false)}>×</button></div>{!list.length ? <div className="workflow-library-empty">还没有工作流。点击右上角“新建”开始。</div> : <div className="workflow-library-list">{list.map((item) => <div className={`workflow-library-row ${item.id === currentId ? "active" : ""}`} key={item.id}><button type="button" className="workflow-library-main" onClick={() => void loadOne(item.id)}><strong>{item.name}</strong><span>#{item.id} · {item.nodes} 节点 · {item.edges} 连接</span></button><div className="workflow-row-actions"><button className="btn" type="button" onClick={() => void loadOne(item.id)}>编辑</button><button className="btn" type="button" onClick={() => void clone(item.id)}>克隆</button><button className="btn danger" type="button" onClick={() => void remove(item.id)}>删除</button></div></div>)}</div>}</section></div>}
+    {showLibrary && <div className="workflow-library-popover"><div className="workflow-library-overlay" onClick={() => setShowLibrary(false)} /><section className="workflow-library-drawer"><div className="workflow-drawer-head"><div><h3>我的工作流</h3><p>选择一个流程继续编辑，或从已有流程克隆。</p></div><button className="btn" type="button" onClick={() => setShowLibrary(false)}>×</button></div>{!list.length ? <div className="workflow-library-empty">还没有工作流。点击右上角“新建”开始。</div> : <div className="workflow-library-list">{list.map((item) => <div className={`workflow-library-row ${item.id === currentId ? "active" : ""}`} key={item.id}><button type="button" className="workflow-library-main" onClick={() => void loadOne(item.id)}><strong>{item.name}</strong><span>#{item.id} · {item.nodes} 节点 · {item.edges} 连接</span></button><div className="workflow-row-actions"><button className="btn primary" type="button" onClick={() => openEditor(item.id)}>沉浸编辑</button><button className="btn" type="button" onClick={() => void loadOne(item.id)}>预览</button><button className="btn" type="button" onClick={() => void clone(item.id)}>克隆</button><button className="btn danger" type="button" onClick={() => void remove(item.id)}>删除</button></div></div>)}</div>}</section></div>}
 
     <section className="workflow-studio-card card">
       <div className="workflow-studio-header">
@@ -94,7 +101,7 @@ export default function WorkflowPage() {
         <button className="btn" type="button" disabled={(!templateId && !suggestDatasetId.length) || busy} onClick={() => void suggest()}>{templateId ? "用模板生成" : "生成流程"}</button>
         {columns.length > 0 && <span className="muted">Schema {columns.length} 字段</span>}
       </div>
-      <WorkflowStudio nodes={nodes} edges={edges} nodeStates={nodeStates} selectedNodeId={selectedNodeId} onSelectNode={setSelectedNodeId} onChange={(nextNodes, nextEdges) => { setNodes(nextNodes); setEdges(nextEdges); }} columns={columns} />
+      <WorkflowStudio nodes={nodes} edges={edges} nodeStates={nodeStates} selectedNodeId={selectedNodeId} onSelectNode={setSelectedNodeId} onChange={(nextNodes, nextEdges) => { setNodes(nextNodes); setEdges(nextEdges); }} columns={columns} nodeMetrics={nodeMetrics} />
       <div className="workflow-bottom-panel">
         <div className="workflow-bottom-tabs"><button className={bottomTab === "execution" ? "active" : ""} type="button" onClick={() => setBottomTab("execution")}>执行 {run ? `· ${run.status}` : ""}</button><button className={bottomTab === "health" ? "active" : ""} type="button" onClick={() => setBottomTab("health")}>流程检查</button></div>
         <div className="workflow-bottom-content">{bottomTab === "execution" ? <WorkflowRunPanel run={run} onCancel={() => void cancelRun()} onSelectNode={setSelectedNodeId} /> : <WorkflowHealthPanel nodes={nodes} edges={edges} columns={columns} run={run} onSelectNode={setSelectedNodeId} />}</div>

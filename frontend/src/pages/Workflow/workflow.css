@@ -12,3 +12,13 @@
 .workflow-explorer{position:fixed;top:12px;left:12px;bottom:12px;z-index:35;width:min(300px,86vw);transform:translateX(calc(-100% - 24px));transition:transform .2s ease;border:1px solid var(--border);border-radius:var(--radius-lg,var(--radius));box-shadow:0 18px 50px rgba(15,23,42,.22)}
 .workflow-workspace.explorer-open .workflow-explorer{transform:none}.workflow-bottom-content{max-height:220px}.workflow-library-drawer{left:12px;right:12px;width:auto;top:12px;bottom:12px}.workflow-row-actions{flex-wrap:wrap}.workflow-page-actions{width:100%}}
 .workflow-template-select{flex:0 1 200px;min-width:150px;height:32px;padding:5px 28px 5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:11px;outline:none}.workflow-template-select:focus{border-color:var(--primary)}
+
+/* ---------- 2026-09-23：大纲上移后补的规则（本文件是压缩过的，往末尾追加最安全） ---------- */
+.workflow-current-outline button{justify-content:flex-start;gap:8px}
+.workflow-current-outline button .workflow-state-dot{flex:0 0 auto}
+.workflow-current-outline button span:not(.workflow-state-dot){flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.workflow-current-outline button small{margin-left:auto;flex:0 0 auto}
+.workflow-current-outline p{margin:0 0 8px;color:var(--muted);font-size:11px}
+.workflow-explorer>.workflow-panel-title{margin-bottom:9px}
+.workflow-explorer>.workflow-current-outline+.workflow-panel-title{margin-top:12px}
+.workflow-panel-collapse{flex:0 0 auto}

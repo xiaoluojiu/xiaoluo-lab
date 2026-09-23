@@ -14,6 +14,9 @@ const Analysis = lazy(() => import("../pages/Analysis"));
 const ML = lazy(() => import("../pages/ML"));
 const AI = lazy(() => import("../pages/AI"));
 const Workflow = lazy(() => import("../pages/Workflow"));
+// 沉浸式编辑器单独走一条路由，挂在 MainLayout 之外：
+// 编辑当前流程时不需要全局导航与顶栏，把它们收起来才是「全屏」的本意。
+const WorkflowEditor = lazy(() => import("../pages/Workflow/Editor"));
 const Experiments = lazy(() => import("../pages/Experiments"));
 const Reports = lazy(() => import("../pages/Reports"));
 const ReportDetail = lazy(() => import("../pages/Reports/Detail"));
@@ -32,6 +35,11 @@ function SuspensePage({ children }: { children: ReactNode }) {
 export function AppRouter() {
   return (
     <Routes>
+      {/* 沉浸式编辑器：不套 MainLayout，因此没有侧栏 / 顶栏，画布独占视口。 */}
+      <Route
+        path="/workflow/editor/:id"
+        element={<SuspensePage><WorkflowEditor /></SuspensePage>}
+      />
       <Route element={<MainLayout />}>
         <Route path="/" element={<SuspensePage><Home /></SuspensePage>} />
         <Route path="/datasets" element={<SuspensePage><Datasets /></SuspensePage>} />
