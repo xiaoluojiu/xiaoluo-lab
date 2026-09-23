@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { listNotifications, markAllNotificationsRead, markNotificationRead, type AppNotification } from "../api/notifications";
+import {
+  markAllNotificationsRead,
+  markNotificationRead,
+  type AppNotification,
+} from "../api/notifications";
+import { subscribeNotifications } from "../lib/notificationFeed";
 
 const TYPE_META: Record<AppNotification["type"], { label: string; tone: string }> = {
   training: { label: "训练", tone: "is-training" },
@@ -21,8 +26,10 @@ function fmtTime(ts: number): string {
 /**
  * 顶栏通知铃铛：未读角标 + 下拉通知面板。
  *
- * 数据来自后端进程内通知中心（GET /notifications）。采用轻量轮询（15s）
- * 而非常驻 SSE——通知是低频事件，长任务结束后的首次刷新即可触达。
+ * 数据来自后端进程内通知中心（GET /notifications）。取数策略已由
+ * 「固定 15s 轮询」改为 **SSE 推送 + 退避轮询兜底**，实现见
+ * `lib/notificationFeed.ts`：后台标签页不发请求，连续失败按
+ * 15s/30s/60s/120s 退避而不是原地重试。
  */
 export function NotificationBell() {
   const navigate = useNavigate();
@@ -31,23 +38,15 @@ export function NotificationBell() {
   const [unread, setUnread] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
 
-  const refresh = useCallback(async () => {
-    if (document.hidden) return; // 后台标签页不轮询，回到前台由 interval 自然恢复
-    try {
-      const data = await listNotifications();
-      setItems(data.items);
-      setUnread(data.unread);
-    } catch {
-      // 后端不可达时静默：不打断页面其他交互。
-    }
-  }, []);
-
-  // 首次挂载拉一次，之后每 15s 轮询。
   useEffect(() => {
-    void refresh();
-    const id = window.setInterval(() => void refresh(), 15_000);
-    return () => window.clearInterval(id);
-  }, [refresh]);
+    const feed = subscribeNotifications({
+      onSnapshot: (data) => {
+        setItems(data.items);
+        setUnread(data.unread);
+      },
+    });
+    return () => feed.close();
+  }, []);
 
   // 点击面板外关闭。
   useEffect(() => {

@@ -14,6 +14,8 @@ export interface AppNotification {
 export interface NotificationList {
   items: AppNotification[];
   unread: number;
+  /** 版本号：服务端任何写操作都会自增。客户端据此判断"要不要重新拉列表"。 */
+  version?: number;
 }
 
 export interface NotificationPrefs {
