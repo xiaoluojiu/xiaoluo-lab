@@ -26,6 +26,7 @@ from app.reports.markdown import export_markdown
 from app.reports.models import Report, ReportSection
 from app.reports.pdf import export_pdf
 from app.reports.report_charts import build_report_charts
+from app.reports.saved import invalidate_cache, list_metadata, meta_key, save_report
 from app.schemas.common import ApiResponse
 from app.storage.service import StorageService
 
@@ -150,12 +151,8 @@ def generate_report(
     report_key = f"reports/{uuid.uuid4().hex}.json"
     report_dict.setdefault("metadata", {})["report_key"] = report_key
 
-    # 把 key 写回持久化版本，保证历史报告打开后仍带有自身 ID。
-    body_bytes = json.dumps(report_dict, ensure_ascii=False, indent=2).encode("utf-8")
-    storage.save(report_key, body_bytes)
-    # 同步落一份轻量元数据（title/dataset/metadata），供列表接口只读元数据、
-    # 避免对每个报告完整 read + JSON 解析正文（正文含内联 SVG，体积可达数百 KB）。
-    _save_report_meta(storage, report_key, report_dict)
+    # 落正文 + 轻量元数据副本（列表接口只读后者），并使列表缓存失效。
+    save_report(storage, report_key, report_dict)
     notify(
         "report",
         "报告已生成",
@@ -192,75 +189,19 @@ def _validate_saved_key(key: str) -> str:
 
 def _meta_key(report_key: str) -> str:
     """报告正文 key -> 轻量元数据 key（reports/xxx.json -> reports/xxx.meta.json）。"""
-    return report_key[:-5] + ".meta.json"
-
-
-def _save_report_meta(storage: StorageService, report_key: str, report_dict: dict[str, Any]) -> None:
-    """落一份不含正文的元数据副本，供列表接口轻量读取。
-
-    只保留 title / dataset / metadata 三个列表展示需要的字段，
-    丢弃 sections/charts（含内联 SVG）等体积大头。
-    """
-    meta = {
-        "title": report_dict.get("title", ""),
-        "dataset": report_dict.get("dataset") or {},
-        "metadata": report_dict.get("metadata") or {},
-    }
-    storage.save(_meta_key(report_key), json.dumps(meta, ensure_ascii=False).encode("utf-8"))
+    return meta_key(report_key)
 
 
 @router.get("/saved", response_model=ApiResponse[list[dict[str, Any]]])
 def list_saved_reports(
     storage: StorageService = Depends(get_storage_service),
 ) -> ApiResponse[list[dict[str, Any]]]:
-    # 收集报告正文 key（过滤掉 .meta.json 辅助文件），并记录已具备元数据副本的 key。
-    report_keys: list[str] = []
-    meta_ready: set[str] = set()
-    for meta in storage.list("reports"):
-        if meta.key.endswith(".meta.json"):
-            meta_ready.add(meta.key[:-10] + ".json")
-        elif meta.key.endswith(".json"):
-            report_keys.append(meta.key)
+    """报告列表（**只返回元数据**，不读正文）。
 
-    items: list[dict[str, Any]] = []
-    for key in report_keys:
-        title = ""
-        dataset: dict[str, Any] = {}
-        report_meta: dict[str, Any] = {}
-        meta_obj = None
-        if key in meta_ready:
-            # 命中轻量元数据副本：只读小文件，避免解析含内联 SVG 的完整正文。
-            try:
-                meta_obj = storage.metadata(_meta_key(key))
-                payload = json.loads(storage.read(_meta_key(key)).decode("utf-8"))
-                title = str(payload.get("title", ""))
-                dataset = dict(payload.get("dataset") or {})
-                report_meta = dict(payload.get("metadata") or {})
-            except Exception:
-                # 元数据副本损坏/缺失时回退到完整正文读取（兼容历史报告）。
-                meta_obj = None
-        if meta_obj is None:
-            try:
-                body_meta = storage.metadata(key)
-                payload = json.loads(storage.read(key).decode("utf-8"))
-                title = str(payload.get("title", ""))
-                dataset = dict(payload.get("dataset") or {})
-                report_meta = dict(payload.get("metadata") or {})
-            except Exception:
-                body_meta = None
-            meta_obj = body_meta
-        items.append(
-            {
-                "key": key,
-                "title": title,
-                "dataset": dataset,
-                "metadata": report_meta,
-                "size": meta_obj.size if meta_obj is not None else 0,
-                "modified_at": meta_obj.modified_at.isoformat() if meta_obj is not None else "",
-            }
-        )
-    items.sort(key=lambda x: x["modified_at"], reverse=True)
-    return ApiResponse[list[dict[str, Any]]](data=items)
+    实现与缓存策略在 :mod:`app.reports.saved`；Agent 工具的写路径也走同一处，
+    避免两条入口各自优化一半。
+    """
+    return ApiResponse[list[dict[str, Any]]](data=list_metadata(storage))
 
 
 @router.get("/saved/detail", response_model=ApiResponse[dict])
@@ -296,4 +237,5 @@ def delete_saved_report(
         storage.delete(_meta_key(key))
     except Exception:
         pass
+    invalidate_cache()
     return ApiResponse[dict](data={"deleted": True, "key": key})

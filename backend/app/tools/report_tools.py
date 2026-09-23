@@ -16,6 +16,7 @@ import polars as pl
 
 from app.agent.permission.models import Permission
 from app.data_engine.json_utils import json_safe
+from app.reports.saved import save_report
 from app.tools.base import Tool, ToolServices
 from app.tools.context import ToolExecutionContext
 from app.tools.result import ToolResult
@@ -182,7 +183,9 @@ class ReportGenerateTool(Tool):
             data = report.to_dict()
 
         key = f"{_STORAGE_KEY_PREFIX}{uuid.uuid4().hex}.json"
-        get_storage().save(key, json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"))
+        # 与 POST /reports/generate 共用同一份落盘逻辑（正文 + 轻量元数据副本），
+        # 否则 Agent 生成的报告没有副本，列表接口会退回「读整篇正文」的慢路径。
+        save_report(get_storage(), key, data)
         data.setdefault("metadata", {})["report_key"] = key
 
         chart_types = sorted({c.get("type") for c in charts if isinstance(c, dict)})
