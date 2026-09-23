@@ -26,6 +26,7 @@ import {
 } from "recharts";
 import { edaVisualize, type VisualizeChart } from "../../api/analysis";
 import { describeAnalysisError } from "../../lib/analysisError";
+import { chartFieldAdvice, isContinuousNumeric } from "../../lib/edaColumns";
 import type { SchemaColumn } from "../../types/dataset";
 import { Icon } from "../../components/icons/Icon";
 
@@ -44,6 +45,8 @@ const CHART_TYPES: Array<{ value: VisualizeChart; label: string }> = [
 const PRIMARY = CHART_PRIMARY;
 // 统一比例：宽度 / 高度，防止宽屏下被拉扁（用户反馈的“自适应比例异常”）。
 const ASPECT = 1.8;
+// 失败后自动重试的次数上限：给「改字段/换数据集」留出自愈机会，又不至于空转。
+const RETRY_LIMIT = 2;
 
 interface Props {
   datasetId: number;
@@ -76,6 +79,13 @@ export function VisualizationPanel({
     () => columns.filter(isNumericColumn).map((c) => c.column),
     [columns],
   );
+  // 「取值连续的数值列」：排除 Month/DayofMonth/DayOfWeek 这类低基数编码列。
+  // 后端 continuous_columns 会把它们按分类处理并拒绝作相关性输入，
+  // 前端若直接按 dtype 当数值列提交，就会稳定拿到 422。
+  const continuousNumericCols = useMemo(
+    () => columns.filter((c) => isContinuousNumeric(c)).map((c) => c.column),
+    [columns],
+  );
   const temporalCols = useMemo(
     () => columns.filter(isTemporalColumn).map((c) => c.column),
     [columns],
@@ -89,19 +99,60 @@ export function VisualizationPanel({
   );
   const selectedSet = useMemo(() => new Set(selectedColumns), [selectedColumns]);
   const selectedNumeric = useMemo(
-    () => numericCols.filter((name) => selectedSet.has(name)),
-    [numericCols, selectedSet],
+    () => continuousNumericCols.filter((name) => selectedSet.has(name)),
+    [continuousNumericCols, selectedSet],
   );
   const selectedCategorical = useMemo(
     () => categoricalCols.filter((name) => selectedSet.has(name)),
     [categoricalCols, selectedSet],
   );
-  const effectiveNumeric = selectedNumeric.length ? selectedNumeric : numericCols;
+  // 热力图：优先用勾选的连续数值列；没有勾选时用数据集里全部连续数值列。
+  // 绝不把分类列混进来 —— 这正是日志里 columns=DepDelay,Month 的来源。
+  const effectiveNumeric = selectedNumeric.length ? selectedNumeric : continuousNumericCols;
+
+  // 用户勾选的列里，哪些会被后端按分类编码排除（用于给出精确提示）。
+  const rejectedByBackend = useMemo(() => {
+    const picked = selectedColumns.filter(
+      (name) => !continuousNumericCols.includes(name) && !categoricalCols.includes(name),
+    );
+    return picked.filter((name) => numericCols.includes(name));
+  }, [selectedColumns, continuousNumericCols, categoricalCols, numericCols]);
+
+  const advice = useMemo(() => chartFieldAdvice(chart, columns), [chart, columns]);
 
   useEffect(() => {
     setData(null);
     setError(null);
   }, [datasetId, selectedColumns.join("\u0001")]);
+
+  // 自动生成：失败后必须能重跑，否则用户改完字段仍停在报错页（回归：改字段后
+  // 报错文案不消失、图表要手动点「生成图表」才恢复，看起来像功能坏了）。
+  // retryKey 自增以重新触发请求；次数设上限，避免与后端校验死磕时反复打接口。
+  const [retryKey, setRetryKey] = useState(0);
+  const retryBudgetRef = useRef(RETRY_LIMIT);
+
+  useEffect(() => {
+    if (data || loading || !error) return undefined;
+    if (retryBudgetRef.current <= 0) return undefined;
+    const timer = setTimeout(() => {
+      retryBudgetRef.current -= 1;
+      setRetryKey((k) => k + 1);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [error, data, loading, retryKey]);
+
+  // 勾选字段 / 数据集 / 图表类型变化 → 重置重试预算并清空错误，重新自动生成。
+  useEffect(() => {
+    retryBudgetRef.current = RETRY_LIMIT;
+    setError(null);
+    setRetryKey((k) => k + 1);
+  }, [datasetId, chart, selectedColumns.join("\u0001")]);
+
+  useEffect(() => {
+    void run();
+    // run 依赖的 params 由 chart/columns/selection 派生，这里用显式依赖表达意图。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasetId, chart, selectedColumns.join("\u0001"), retryKey]);
 
   const selectionNote = selectedColumns.length
     ? `使用左侧已选字段（${selectedColumns.length} 个）`
@@ -166,7 +217,10 @@ export function VisualizationPanel({
     setError(null);
     setData(null);
     try {
-      setData(await edaVisualize(datasetId, params));
+      const result = await edaVisualize(datasetId, params);
+      setData(result);
+      // 若后端补齐了空数据，清掉本地「重试」状态，避免无意义的自动重跑。
+      setError(null);
     } catch (e) {
       // 展示后端业务原因（缺哪列 / 为什么这列不可用），而不是只给 HTTP 状态码。
       setError(describeAnalysisError(e));
@@ -207,21 +261,44 @@ export function VisualizationPanel({
           <strong className="analysis-empty-title">
             {chart === "heatmap" || chart === "scatter" || chart === "grouped_bar" ? "还需要更多字段" : "当前字段不足以生成此图表"}
           </strong>
-          <span className="analysis-empty-hint">
-            {chart === "heatmap" || chart === "scatter" || chart === "grouped_bar"
-              ? "这张图需要至少 2 个数值字段（分组柱状图还需要一个分类字段）。去左侧勾选字段，或切换到直方图、折线图等单字段图表。"
-              : "当前数据没有足够字段。请先在左侧选择数据集与字段，或换一种对字段要求更低的图表类型。"}
-          </span>
+          <span className="analysis-empty-hint">{advice.message}</span>
         </div>
       )}
 
       {ready && (
-        <button className="btn primary" type="button" disabled={loading} onClick={() => void run()}>
-          {loading ? "生成中..." : "生成图表"}
+        <button className="btn primary" type="button" disabled={loading} onClick={() => setRetryKey((k) => k + 1)}>
+          {loading ? "生成中..." : "重新生成"}
         </button>
       )}
 
-      {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
+      {/* 失败原因必须说清「哪一列、为什么、怎么办」：
+          后端已经返回了业务 message，这里再补上「依据当前数据集该怎么选」的建议。
+          回归：原先只渲染一行 <p>，用户看不到是哪个字段的问题。 */}
+      {error && (
+        <div className="analysis-error" role="alert" style={{ marginTop: "var(--space-3)" }}>
+          <span className="analysis-error-icon" aria-hidden="true">
+            <Icon name="alert" size={18} />
+          </span>
+          <div className="analysis-error-body">
+            <strong className="analysis-error-title">这张图暂时生成不了</strong>
+            <span className="analysis-error-message">{error}</span>
+            {rejectedByBackend.length > 0 && (
+              <span className="analysis-error-message">
+                你勾选的 {rejectedByBackend.join("、")} 属于低基数编码列（取值种类过少），
+                后端按分类字段处理，不能参与相关性计算。
+              </span>
+            )}
+            {advice.message && (
+              <span className="analysis-error-hint">建议：{advice.message}</span>
+            )}
+            {advice.suggested.length > 0 && (
+              <span className="analysis-error-hint">
+                可直接使用：<strong>{advice.suggested.join("、")}</strong>
+              </span>
+            )}
+          </div>
+        </div>
+      )}
       {loading && <div className="muted" style={{ marginTop: "var(--space-3)" }}>正在生成...</div>}
       {data && <ChartRender chart={chart} data={data} />}
     </div>

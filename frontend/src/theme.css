@@ -319,6 +319,51 @@ body,
 }
 .analysis-empty-action { margin-top: var(--space-2); }
 
+/* 失败状态：必须把「哪一列、为什么、怎么办」分行说清，而不是一行红字。
+   与 .analysis-empty 同构（左侧色条 + 圆角），配色切到 danger。 */
+.analysis-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-4);
+  border: 1px dashed var(--danger-border, var(--danger));
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius-lg);
+  background: var(--danger-weak, var(--surface));
+}
+.analysis-error-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  background: var(--danger-weak, transparent);
+  color: var(--danger);
+}
+.analysis-error-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.analysis-error-title {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.analysis-error-message {
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.7;
+  word-break: break-word;
+}
+.analysis-error-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
 /* ---------- 数据处理 ---------- */
 .processing-layout {
   display: grid;
