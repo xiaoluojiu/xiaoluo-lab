@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.agent.context.budget import ContextBudget
-from app.agent.context.tokens import clip_by_tokens, estimate_tokens
+from app.agent.context.tokens import clip_by_tokens
 
 TRUNCATION_MARK = "…【已截断】"
 TOKEN_TRUNCATION_MARK = "…【已达 token 上限】"
@@ -109,20 +109,42 @@ class AgentContext:
         token_caps = _distribute_tokens(sections, budget.max_tokens)
 
         history = self.conversation_history[-budget.history_messages :]
+        request_cap = token_caps["user_request"]
+        tools_payload = {"tools": self.tool_context.get("tools", [])}
+        request_budget = sections["user_request"]
+        dataset_budget = sections["dataset"]
         parts = [
-            f"[用户请求]\n{clip_text(self.user_request, sections['user_request'], token_caps['user_request'])}",
-            f"[数据集]\n{clip_obj(self.dataset_context, sections['dataset'], token_caps['dataset'])}",
+            f"[用户请求]\n{clip_text(self.user_request, request_budget, request_cap)}",
+            "[数据集]\n"
+            + clip_obj(self.dataset_context, dataset_budget, token_caps["dataset"]),
             f"[任务]\n{clip_obj(self.task_context, sections['task'], token_caps['task'])}",
-            f"[权限]\n{clip_obj(self.permission_context, sections['permissions'], token_caps['permissions'])}",
-            f"[可用工具]\n{clip_obj({'tools': self.tool_context.get('tools', [])}, sections['tools'], token_caps['tools'])}",
+            "[权限]\n"
+            + clip_obj(
+                self.permission_context, sections["permissions"], token_caps["permissions"]
+            ),
+            "[可用工具]\n"
+            + clip_obj(tools_payload, sections["tools"], token_caps["tools"]),
         ]
         if history and budget.history_messages > 0:
             history_text = "\n".join(
                 f"{m.get('role', 'user')}: {clip_text(m.get('content', ''), 300)}"
                 for m in history
             )
-            parts.append(f"[历史对话]\n{clip_text(history_text, sections['history'], token_caps['history'])}")
+            parts.append(
+                "[历史对话]\n"
+                f"{clip_text(history_text, sections['history'], token_caps['history'])}"
+            )
         return "\n\n".join(parts)
+
+    def dataset_ids(self) -> list[int]:
+        """上下文中出现过的数据集 id。"""
+        ids: list[int] = []
+        for key in self.dataset_context.keys():
+            try:
+                ids.append(int(key))
+            except (TypeError, ValueError):
+                continue
+        return ids
 
 
 def _distribute_tokens(sections: dict[str, int], total_tokens: int) -> dict[str, int]:
@@ -145,13 +167,3 @@ def _distribute_tokens(sections: dict[str, int], total_tokens: int) -> dict[str,
             caps[key] -= delta
             overflow -= delta
     return caps
-
-    def dataset_ids(self) -> list[int]:
-        """上下文中出现过的数据集 id。"""
-        ids: list[int] = []
-        for key in self.dataset_context.keys():
-            try:
-                ids.append(int(key))
-            except (TypeError, ValueError):
-                continue
-        return ids

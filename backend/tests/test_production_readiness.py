@@ -21,6 +21,7 @@ import time
 
 import pytest
 import sqlalchemy
+from app.agent.context.models import AgentContext
 from app.agent.context.tokens import estimate_tokens
 from app.agent.permission.rules import DEFAULT_TOOL_RISKS, RiskLevel
 from app.api.v1.reports import list_saved_reports
@@ -563,6 +564,42 @@ def test_context_token_budget_disabled_falls_back_to_chars():
 
     assert len(text) <= 4000 + 100, "关闭 token 约束后应按字符上限截断"
     assert "【已达 token 上限】" not in text
+
+
+def test_context_dataset_ids_is_a_public_method():
+    """回归：AgentContext.dataset_ids 必须是类方法，不能掉进别的函数体内。
+
+    曾因新增 _distribute_tokens 时把它挤到函数体里，导致它退化为嵌套函数，
+    类上彻底消失 —— planner/planner.py:127 与 runtime.py:420 一调用就抛
+    AttributeError('AgentContext' object has no attribute 'dataset_ids')。
+    这类错位不会被 ruff/tsc 发现（语法完全合法），只能靠行为断言。
+    """
+    import inspect
+
+    ctx = AgentContext(
+        dataset_context={"7": {"name": "sales"}, "9": {"name": "cust"}, "bad": {}},
+    )
+    # 1) 必须是类上的可调用属性，而不是实例的偶然属性
+    assert callable(getattr(AgentContext, "dataset_ids", None)), (
+        "AgentContext.dataset_ids 丢失——多半是被缩进进了其他函数体"
+    )
+    assert inspect.isfunction(AgentContext.dataset_ids), "dataset_ids 应是普通方法"
+    # 2) 行为：只回可解析为 int 的 key，非法 key 跳过而非抛异常
+    assert ctx.dataset_ids() == [7, 9]
+    # 3) 空上下文不得炸
+    assert AgentContext().dataset_ids() == []
+
+
+def test_context_public_methods_survive_module_reload():
+    """同源回归：模块级函数不得吞掉类方法（防止再次插错缩进位置）。"""
+    import importlib
+
+    from app.agent.context import models as models_module
+
+    reloaded = importlib.reload(models_module)
+    assert hasattr(reloaded.AgentContext, "dataset_ids")
+    assert hasattr(reloaded.AgentContext, "to_prompt_text")
+    assert callable(reloaded._distribute_tokens)
 
 
 def test_token_estimator_is_conservative():
