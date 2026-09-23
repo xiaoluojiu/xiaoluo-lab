@@ -13,7 +13,8 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.exceptions import AppException
-from app.reports.models import Report
+from app.reports.models import Report, describe_experiment
+from app.reports.numbering import chapter_heading, missing_chapters
 
 # 常见中文字体候选（按优先级；TTC 集合部分版本不支持，优先 TTF）
 FONT_CANDIDATES = (
@@ -188,24 +189,31 @@ def export_pdf(
             pdf.ln(1)
         pdf.ln(3)
 
+    # 未生成章节的显式说明（缺章不能静默跳号，见 app.reports.numbering）
+    missing = missing_chapters(report)
+    if missing:
+        pdf.set_font("cjk", size=11)
+        _mc(pdf, 7, "未生成章节说明")
+        pdf.ln(1)
+        for item in missing:
+            pdf.set_font("cjk", size=10)
+            _mc(pdf, 6, f"· {item['heading']}：{item['reason']}")
+            pdf.ln(1)
+        pdf.ln(3)
+
     # 关联实验
     if report.experiments:
         pdf.set_font("cjk", size=14)
-        _mc(pdf, 9, "五、关联实验")
+        _mc(pdf, 9, chapter_heading("experiments"))
         pdf.set_font("cjk", size=11)
         for exp in report.experiments:
-            exp_id = exp.get("experiment_id", "-")
-            _mc(
-                pdf,
-                7,
-                f"实验 #{exp_id}（{exp.get('task', '-')}/{exp.get('model', '-')}）",
-            )
+            _mc(pdf, 7, describe_experiment(exp))
         pdf.ln(3)
 
     # 结论
     if report.conclusions:
         pdf.set_font("cjk", size=14)
-        _mc(pdf, 9, "六、结论")
+        _mc(pdf, 9, chapter_heading("conclusions"))
         pdf.set_font("cjk", size=11)
         for c in report.conclusions:
             _mc(pdf, 7, f"· {c}")

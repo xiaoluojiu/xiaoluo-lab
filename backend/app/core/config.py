@@ -90,6 +90,93 @@ class Settings(BaseSettings):
     AGENT_ENABLE_RESULT_COMPRESSION: bool = True
     AGENT_ENABLE_PLAN_CACHE: bool = True
     AGENT_PLAN_CACHE_MAX_ITEMS: int = 64
+    # 第一层改造：规划前的 Pre-flight 检查。关闭后行为与改造前一致（直接规划）。
+    AGENT_PREFLIGHT_ENABLED: bool = True
+    # Pre-flight 是否读取列结构（只读 Parquet schema，不加载数据行）。
+    # 关掉后「目标列是否明确」「任务类型是否矛盾」两项检查会自动跳过。
+    AGENT_PREFLIGHT_READ_SCHEMA: bool = True
+
+    # =========================================================
+    # 数据规模与吞吐（大数据接入）
+    # =========================================================
+    # 单文件上传上限。默认 2 GiB；历史值曾是硬编码 100 MB，与「大数据平台」
+    # 定位不符。放在配置里是为了让部署方按磁盘/内存实际容量调整，
+    # 而不是改代码常量。
+    MAX_UPLOAD_SIZE_BYTES: int = 2 * 1024 * 1024 * 1024
+    # 上传时分块读取的块大小（流式，内存占用与块大小同阶）。
+    UPLOAD_CHUNK_SIZE_BYTES: int = 4 * 1024 * 1024
+    # 是否启用流式入库（scan_* + sink_parquet）。关闭后退回「整表物化再写」，
+    # 便于在排查 Polars 流式引擎差异时做 A/B。
+    INGEST_STREAMING_ENABLED: bool = True
+    # 流式入库的目标行组大小（Parquet row group，单位=行）。行组越小 →
+    # 后续投影/谓词下推的粒度和并发越好，但文件元数据开销越大。
+    INGEST_ROW_GROUP_ROWS: int = 262144
+    # CSV/NDJSON 的 schema 推断采样行数；推断失败时回退为全字符串列（不报错）。
+    INGEST_SCHEMA_INFER_ROWS: int = 50000
+    # 物化兜底路径（xlsx / arff / 标准 JSON）允许的最大体量：超过则明确拒绝，
+    # 而不是把进程 OOM 掉再报 500。
+    INGEST_MAX_MATERIALIZE_BYTES: int = 1024 * 1024 * 1024
+    # ★ 分块入库的单块字节数。这是「数据规模上限」的真正旋钮：
+    # 实测 Polars 的 scan_csv → sink_parquet 在 1.44 上并不真正流式（峰值 ≈ 全量物化，
+    # 见 docs/大数据规模优化与吞吐提升方案.md 的基准表），因此超大文本文件改走
+    # 「按字节切块 → 逐块解析 → 增量写行组」，内存 ≈ 块大小，与文件总体积无关。
+    # 实测：32 MB 块能把「数据翻倍时的内存倍率」压到 0.97×；调到 64 MB 反而升到 1.20×
+    # （pyarrow 行组缓冲放大），因此除非有明确实测依据，不要轻易调大。
+    INGEST_CHUNK_BYTES: int = 32 * 1024 * 1024
+    # ★ 自适应分界的文件大小。两条路径的实测取舍：
+    #   - sink（scan_csv → sink_parquet）：边际吞吐约 730 MB/s，但峰值内存 ≈ 3× 文件体积；
+    #   - chunked（分块）：内存恒定约 400 MB，但边际吞吐约 120 MB/s（少了 Polars 的并行压缩）。
+    # 因此「小到装得下就用快的，大到装不下就用有界的」。设为 0 表示一律分块
+    # （内存最省的部署），设为极大值表示一律走 sink（内存充裕的专用机）。
+    INGEST_STREAMING_THRESHOLD_BYTES: int = 256 * 1024 * 1024
+    # 版本快照是否用 scan_parquet（懒执行 + 投影/谓词下推）替代全量解码。
+    DATASET_LAZY_SCAN_ENABLED: bool = True
+
+    # =========================================================
+    # 机器学习：内存治理（大数据集训练的硬约束）
+    # =========================================================
+    # ★ 单次训练的最大样本数（0 = 不限制）。超过时**随机抽样**并在结果里
+    # 显式告警。原因：sklearn 的估计器几乎都要求稠密 numpy 矩阵，
+    # 10,000,000 行 × 767 列的 one-hot 结果 = 57.1 GiB，必然 OOM
+    # （实测 numpy._core._exceptions._ArrayMemoryError）。
+    # 抽样是有损的，所以绝不静默进行 —— 结果里会带 sampled 标记与原始行数。
+    ML_MAX_TRAIN_ROWS: int = 200_000
+    # ★ 稠密特征矩阵的内存预算（字节）。预处理输出超过它时，给出**可操作的
+    # 中文报错**（提示改用 ordinal 编码 / 调小 ML_MAX_TRAIN_ROWS / 关闭抽样前先扩内存），
+    # 而不是让 numpy 抛 "Unable to allocate 57.1 GiB"。这是抽样之外的兜底安全网：
+    # 即使调用方把 ML_MAX_TRAIN_ROWS 设为 0，也不会把进程打挂。
+    ML_MAX_DENSE_BYTES: int = 2 * 1024 * 1024 * 1024
+    # one-hot 单列的最大类别数。超过时把低频类别合并为一个「其他」列
+    # （sklearn 的 max_categories）。Origin/Dest 这类 300 量级的高基数列
+    # 会让特征数暴涨，既是内存问题也是统计问题。
+    # 设为 0 表示不合并（保留旧行为，仅建议在小基数数据上使用）。
+    ML_ONEHOT_MAX_CATEGORIES: int = 50
+    # 轮廓系数（silhouette）的采样上限。它的复杂度是 O(n²)，
+    # 在千万行上既算不完也算不下，必须采样。
+    ML_MAX_SILHOUETTE_SAMPLES: int = 20_000
+
+    # =========================================================
+    # 数据库连接器（拓展功能）
+    # =========================================================
+    # 连接器口令的加密密钥（Fernet，32 字节 urlsafe base64）。
+    # 留空 ⇒ 首次启动自动生成并写入 {MODEL_ROOT}/connector_secret.key（权限 0600）。
+    # 生产环境应显式注入，避免多实例各自生成不同密钥导致解不开。
+    CONNECTOR_SECRET_KEY: str = ""
+    # 单次连接/查询超时（秒）与连接池大小。
+    CONNECTOR_POOL_SIZE: int = 5
+    CONNECTOR_CONNECT_TIMEOUT_SECONDS: int = 10
+    CONNECTOR_STATEMENT_TIMEOUT_SECONDS: int = 300
+    # 抽取批次大小（行）。这是「常量内存」的关键旋钮：内存占用 ≈ 批大小 × 行宽。
+    CONNECTOR_BATCH_ROWS: int = 50000
+    # 单次抽取的最大行数上限（0 表示不限制）。防呆：避免误抽一张 10 亿行表
+    # 把磁盘写满。
+    CONNECTOR_MAX_ROWS: int = 0
+    # 预览行数上限与保存连接器数量上限（防呆）。
+    CONNECTOR_PREVIEW_ROWS: int = 200
+    CONNECTOR_MAX_CONNECTORS: int = 100
+    # 允许的方言白名单（逗号分隔）。默认只放开「零外部依赖」的方言，
+    # Postgres / MySQL 需先安装对应驱动再放开。
+    CONNECTOR_ALLOWED_DIALECTS: str = "sqlite,duckdb,postgresql,mysql"
 
     # 版本快照缓存（数据分析模块）。
     # DatasetVersion 不可变，因此缓存永不失效，只需 LRU 淘汰；
@@ -113,6 +200,24 @@ class Settings(BaseSettings):
     @property
     def data_root_path(self) -> Path:
         return self._resolve_path(self.DATA_ROOT)
+
+    @property
+    def allowed_connector_dialects(self) -> tuple[str, ...]:
+        """连接器允许的方言白名单（小写、去空、去重，保持声明顺序）。"""
+        raw = [item.strip().lower() for item in (self.CONNECTOR_ALLOWED_DIALECTS or "").split(",")]
+        seen: dict[str, None] = {}
+        for item in raw:
+            if item:
+                seen.setdefault(item, None)
+        return tuple(seen)
+
+    def upload_limits(self) -> dict[str, Any]:
+        """上传限额摘要（供前端展示，避免前端硬编码 100 MB）。"""
+        return {
+            "max_size_bytes": int(self.MAX_UPLOAD_SIZE_BYTES),
+            "chunk_size_bytes": int(self.UPLOAD_CHUNK_SIZE_BYTES),
+            "streaming_ingest": bool(self.INGEST_STREAMING_ENABLED),
+        }
 
     @property
     def model_root_path(self) -> Path:
@@ -173,6 +278,10 @@ class Settings(BaseSettings):
                 "enable_result_compression": self.AGENT_ENABLE_RESULT_COMPRESSION,
                 "enable_plan_cache": self.AGENT_ENABLE_PLAN_CACHE,
                 "plan_cache_max_items": self.AGENT_PLAN_CACHE_MAX_ITEMS,
+                "preflight": {
+                    "enabled": self.AGENT_PREFLIGHT_ENABLED,
+                    "read_schema": self.AGENT_PREFLIGHT_READ_SCHEMA,
+                },
             },
         }
 

@@ -63,6 +63,7 @@ class ContextBuilder:
         active_registry = registry or TOOL_REGISTRY
         selected_by_name: dict[str, dict[str, Any]] = {}
         retrieval_scores: dict[str, dict[str, Any]] = {}
+        retrieved: list[dict[str, Any]] = []
         if settings.AGENT_ENABLE_TOOL_RETRIEVAL and tool_describes:
             retrieved = active_registry.retrieve_with_scores(
                 context.user_request,
@@ -75,68 +76,40 @@ class ContextBuilder:
                 if tool_name:
                     selected_by_name[tool_name] = tool
                     retrieval_scores[tool_name] = {"score": item.get("score", 0.0), "reason": item.get("reason", "")}
-        else:
+        elif not settings.AGENT_ENABLE_TOOL_RETRIEVAL:
             selected_by_name.update({str(x.get("name")): x for x in tool_describes if x.get("name")})
 
-        # ---- 确定性注入 ------------------------------------------------
-        # 背景：纯检索式召回（top_k + min_score）会把 report.generate / eda.visualize /
-        # workflow.* 挡在候选集合外，Planner 一旦规划它们就触发 PlanInvalidError，
-        # 表现为「工具已注册但 Agent 不调用 / 调用失败」。
-        # 因此这里保证：任何数据分析任务都能看到一组「能力核心」工具，
-        # 再按请求关键词叠加工作流 / 建模 / 清洗能力。
-        _CORE_TOOLS = (
-            "dataset.inspect", "dataset.schema", "dataset.quality", "dataset.profile",
-            "eda.describe", "eda.correlation", "eda.visualize",
-            "report.generate",
-        )
-        _ML_TOOLS = ("ml.detect_task", "ml.prepare", "ml.train", "ml.evaluate", "ml.explain")
-        _WORKFLOW_TOOLS = ("workflow.build_and_run", "workflow.create", "workflow.run", "workflow.list", "workflow.inspect")
-        _DATA_TOOLS = ("data.clean", "data.filter", "data.aggregate", "data.transform")
-        _MERGE_TOOLS = ("data.merge",)
+        # 意图判定与关键词表统一走 app.agent.intent（唯一真源）。
+        # 改之前这里有一套自己的关键词，与运行时路由各写一份 ——
+        # 「路由放行了、候选集没注入」就是这么来的。
+        from app.agent.intent import CORE_TOOLS, hits, tool_domains_of
+
+        intent_hits = hits(context.user_request)
+        wanted_domains: set[str] = set()
+        for intent in intent_hits:
+            wanted_domains |= set(tool_domains_of(intent))
+        if not intent_hits:
+            # 意图完全没命中：仍补齐 EDA 与报告，保证最小可用能力面
+            wanted_domains |= {"eda", "report"}
 
         for item in tool_describes:
-            if item.get("name") in _CORE_TOOLS:
-                selected_by_name[item["name"]] = item
-
-        text = context.user_request.lower()
-        comprehensive = any(k in text for k in ("智能分析", "全面分析", "完整分析", "关键统计", "问题摘要", "综合"))
-        quality = any(k in text for k in ("质量", "缺失", "重复", "异常", "quality"))
-        train = any(k in text for k in ("训练", "模型", "预测", "分类", "回归", "聚类", "train", "model"))
-        eda = any(k in text for k in ("相关", "相关性", "correlation", "分布", "探索", "描述", "统计", "直方图", "散点", "热力图", "可视化", "图表"))
-        workflow = any(k in text for k in ("workflow", "工作流", "流程", "编排", "流水线", "pipeline", "节点"))
-        cleaning = any(k in text for k in ("清洗", "去重", "过滤", "筛选", "缺失值", "转换", "聚合"))
-        report = any(k in text for k in ("报告", "汇报", "导出", "结论", "总结", "report", "pdf"))
-        # 多表关联：说法很多（关联 / 拼接 / 宽表 / join / merge），缺一个词就会让
-        # data.merge 落选候选集，Planner 规划它时直接被判非法。
-        merge = any(k in text for k in ("合并", "关联", "拼接", "连接", "宽表", "join", "merge"))
-
-        wanted: set[str] = set()
-        if train:
-            wanted |= set(_ML_TOOLS)
-        if workflow:
-            wanted |= set(_WORKFLOW_TOOLS)
-        if cleaning:
-            wanted |= set(_DATA_TOOLS)
-        if merge:
-            wanted |= set(_MERGE_TOOLS)
-        # 「全面分析 / 生成报告」默认需要建模与图表能力，避免计划被判非法
-        if comprehensive:
-            wanted |= set(_ML_TOOLS) | set(_DATA_TOOLS)
-        if report:
-            wanted |= {"report.generate", "eda.visualize"}
-        # 兜底：若意图完全没命中，仍然补齐 EDA 与报告，保证最小可用能力面
-        if not (train or workflow or cleaning or eda or quality or comprehensive or report):
-            wanted |= {"eda.describe", "eda.correlation", "report.generate"}
-
-        for item in tool_describes:
-            if item.get("name") in wanted:
-                selected_by_name[item["name"]] = item
+            name = str(item.get("name") or "")
+            if not name:
+                continue
+            if name in CORE_TOOLS:
+                selected_by_name[name] = item
+                continue
+            # 工具名前缀（dataset / data / eda / ml / workflow / report）落在
+            # 命中的能力域里就注入 —— 由工具名决定归属，不再维护第二份工具名单。
+            if name.split(".", 1)[0] in wanted_domains:
+                selected_by_name[name] = item
 
         # ---- 候选集合封顶：保证 prompt 不会无限膨胀 --------------------
-        max_tools = max(int(settings.AGENT_TOOL_RETRIEVAL_TOP_K), len(_CORE_TOOLS))
+        max_tools = max(int(settings.AGENT_TOOL_RETRIEVAL_TOP_K), len(CORE_TOOLS))
         max_tools = min(max_tools + 8, len(tool_describes) or 1)
         if len(selected_by_name) > max_tools:
-            priority = list(_CORE_TOOLS) + sorted(wanted)
+            # 优先级：能力核心 → 按意图注入的域工具 → 检索分数补齐
+            priority = list(CORE_TOOLS) + [n for n in selected_by_name if n not in CORE_TOOLS]
             kept: dict[str, dict[str, Any]] = {}
             for name in priority:
                 if name in selected_by_name and len(kept) < max_tools:

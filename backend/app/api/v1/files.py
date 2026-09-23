@@ -5,9 +5,10 @@ from __future__ import annotations
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from app.api.deps import get_file_service
+from app.core.config import settings
 from app.schemas.common import ApiResponse, PageInfo, Pagination
 from app.schemas.file import FileResponse
 from app.services.file_service import FileService
@@ -28,6 +29,24 @@ def _content_disposition(filename: str) -> str:
         ch if ((ch.isascii() and ch.isalnum()) or ch in "._-") else "_" for ch in safe
     )
     return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(safe)}'
+
+
+@router.get(
+    "/limits",
+    response_model=ApiResponse[dict],
+)
+def get_upload_limits() -> ApiResponse[dict]:
+    """上传限额（前端不再硬编码 100 MB，避免前后端上限不一致）。
+
+    注意：本路由必须声明在 ``/{file_id}`` **之前**，否则 ``limits`` 会被
+    当作 ``file_id`` 去解析并返回 422。
+    """
+    return ApiResponse[dict](
+        data={
+            **settings.upload_limits(),
+            "allowed_extensions": [".csv", ".json", ".xlsx", ".xls", ".parquet", ".arff"],
+        }
+    )
 
 
 @router.post(
@@ -100,14 +119,19 @@ def get_file_content(
     file_id: int,
     service: FileService = Depends(get_file_service),
 ) -> Response:
-    """下载文件。"""
-    file = service.get(file_id)
+    """流式下载文件。
 
-    return Response(
-        content=service.read(file_id),
+    此前是 ``Response(content=service.read(...))``：整个文件先读成 bytes 再交给
+    框架，2 GiB 的文件会直接顶爆内存。改为分块迭代器后，内存占用恒为块大小。
+    """
+    file, chunks = service.open_stream(file_id)
+
+    return StreamingResponse(
+        chunks,
         media_type="application/octet-stream",
         headers={
-            "Content-Disposition": _content_disposition(file.original_name)
+            "Content-Disposition": _content_disposition(file.original_name),
+            "Content-Length": str(file.size),
         },
     )
 

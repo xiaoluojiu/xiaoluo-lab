@@ -15,14 +15,18 @@ from app.agent.answer_source import (
     REMOTE_LLM_SUMMARY,
     describe,
 )
+from app.agent.clarify import ANSWERS_KEY
 from app.agent.context.builder import ContextBuilder
 from app.agent.context.models import AgentContext
 from app.agent.executor.executor import AgentExecutor, ToolCallRecord
+from app.agent.intent import GREETINGS, INTENT_KEYWORDS, classify, explain as explain_intent
 from app.agent.llm.base import LLMMessage, LLMProvider
 from app.agent.permission.models import ROLE_PERMISSIONS
+from app.local_router.contract import Intent
 from app.agent.planner.models import AgentPlan, PlanStep
 from app.agent.planner.planner import AgentPlanner, PlanInvalidError
 from app.agent.planner.replanner import AgentLimitExceeded, ReplanLimits, Replanner
+from app.agent.preflight import PreflightInput, run_preflight
 from app.agent.runtime.models import AgentEvent, AgentRun, AgentSession, AgentStore, RunStatus
 from app.agent.validator.validator import AgentResultValidator
 from app.core.config import settings
@@ -72,55 +76,160 @@ class AgentRuntime:
         try:
             with self._usage_scope(run):
                 self._set_status(run, RunStatus.PLANNING)
-                mode, route_reason = self._route(
+                mode, route_reason, intent = self._route(
                     run.user_request, plan_override=plan_override, has_datasets=bool(session.dataset_ids)
                 )
-                self._emit(run,"route",{"mode":mode,"reason":route_reason},on_event)
+                self._emit(run,"route",{"mode":mode,"reason":route_reason,"intent":explain_intent(intent)},on_event)
                 # 开局就发一次账本快照：预算上限是「这次会不会被截断」的关键信息，
                 # 只在运行结束后才给出的话，用户无法在过程中判断还能不能继续问。
                 self._emit_usage(run,on_event)
                 if plan_override is None: self._trace_route(run, session, mode, route_reason)
                 if plan_override is None and mode == "chat":
                     self._emit(run,"chat",{"stage":"direct_chat"},on_event); self._direct_chat(run,session,on_event); return run
-                context=self._build_context(run,session); self._emit(run,"planning",{"stage":"context_ready","data_access":"metadata_only"},on_event)
-                all_tools=self.registry.list(); self._fill_tools(context,all_tools); candidate_tools=self._candidate_tools(context,all_tools)
-                retrieval=context.tool_context.get("retrieval_scores") or {}
-                self._emit(run,"planning",{"stage":"tools_retrieved","count":len(candidate_tools),"tools":[t.get("name") for t in candidate_tools],"retrieval":retrieval},on_event)
-                plan=plan_override or self.planner.build_plan_resilient(run.user_request, context, candidate_tools, all_tools=all_tools); run.plan=plan.to_dict(); self._emit(run,"planning",{"stage":"plan_ready","goal":plan.goal,"steps":len(plan.steps),"cache_hit":bool(getattr(plan,"cache_hit",False))},on_event)
-                # 规划器是本次运行的第一笔真实开销（除非命中 Plan Cache），这里立刻反映到账本上。
-                self._emit_usage(run,on_event)
-                if not plan.steps: self._direct_chat(run,session,on_event); return run
-                run.status=RunStatus.RUNNING; self._run_plan(run,session,context,role,plan,offset=0,attempts={},confirmed=confirmed,on_event=on_event)
+                self._agent_turn(run, session, intent, confirmed=confirmed, plan_override=plan_override, on_event=on_event)
         except AgentLimitExceeded as exc: self._fail(run,str(exc),on_event)
         except AgentException as exc: self._fail(run,exc.message,on_event)
         except Exception as exc: self._fail(run,f"Agent 运行异常：{exc}",on_event)
         finally: run.finished_at=time.time(); self._trace_outcome(run, session)
         return run
 
-    GREETINGS={"你好","您好","嗨","哈喽","hello","hi","hey","早上好","下午好","晚上好","谢谢","感谢","在吗","你是谁","你叫什么","再见","拜拜"}
-    # 说明：这里漏词会直接表现为「明明是数据任务却走普通对话」——用户说「关联 / 拼接 / 宽表」
-    # 这类常见说法时不含「合并」二字，请求会被当闲聊，只回一句固定的「尚未配置大模型」。
-    DATA_TERMS=("数据","数据集","csv","excel","xlsx","表格","字段","列","行","分析","处理","清洗","缺失","重复","异常","质量","统计","描述","分布","相关","相关性","可视化","图表","eda","训练","模型","预测","分类","回归","机器学习","特征","目标列","读取","导入","导出","转换","合并","筛选","聚合","排序","去重","运行","实验","检测","画像","profile","inspect","python","pandas","workflow","工作流","流程","报告","report","pdf",
-                # 多表关联类说法
-                "关联","join","merge","拼接","宽表","连接","外键",
-                # 建模评估类说法
-                "建模","评估","准确率","auc","特征工程","聚类")
+    def _agent_turn(self, run: AgentRun, session: AgentSession, intent, *, confirmed: bool, plan_override: AgentPlan | None, on_event: EventCallback | None) -> None:
+        """路由之后、给出结果之前的完整一段（上下文 → Pre-flight → 规划 → 执行）。
 
-    def _route(self, text: str, *, plan_override: AgentPlan | None = None, has_datasets: bool = False) -> tuple[str, str]:
-        """对话/工具路由。返回 (mode, reason)；reason 用于 route 事件向用户解释路由依据。"""
+        单独抽出来的原因：用户回答反问后要**从 Pre-flight 处继续**（重新规划），
+        而不是从头再走一次路由；抽出来才能让「首次运行」与「回答后继续」
+        共用同一段代码，避免两处逻辑漂移。
+        """
+        context=self._build_context(run,session); self._emit(run,"planning",{"stage":"context_ready","data_access":"metadata_only"},on_event)
+        if plan_override is None and settings.AGENT_PREFLIGHT_ENABLED:
+            pre=self._preflight(run,session,intent,context)
+            run.preflight=pre.to_dict()
+            self._emit(run,"preflight",{"outcome":str(pre.outcome),"checks_run":pre.checks_run,"findings":[f.to_dict() for f in pre.findings],"clarifications":[c.to_dict() for c in pre.clarifications],"resolved":pre.resolved},on_event)
+            if pre.needs_user:
+                self._await_clarification(run,pre,on_event)
+                return
+            # Pre-flight 顺带确认下来的事实（如推断出的目标列）直接交给规划器，
+            # 避免规划阶段再猜一遍。
+            if pre.resolved:
+                context.task_context = {**(context.task_context or {}), "preflight": dict(pre.resolved)}
+        all_tools=self.registry.list(); self._fill_tools(context,all_tools); candidate_tools=self._candidate_tools(context,all_tools)
+        retrieval=context.tool_context.get("retrieval_scores") or {}
+        self._emit(run,"planning",{"stage":"tools_retrieved","count":len(candidate_tools),"tools":[t.get("name") for t in candidate_tools],"retrieval":retrieval},on_event)
+        plan=self._build_plan(run, context, candidate_tools, all_tools, plan_override)
+        run.plan=plan.to_dict(); self._emit(run,"planning",{"stage":"plan_ready","goal":plan.goal,"steps":len(plan.steps),"cache_hit":bool(getattr(plan,"cache_hit",False))},on_event)
+        # 规划器是本次运行的第一笔真实开销（除非命中 Plan Cache），这里立刻反映到账本上。
+        self._emit_usage(run,on_event)
+        if not plan.steps: self._direct_chat(run,session,on_event); return
+        run.status=RunStatus.RUNNING; self._run_plan(run,session,context,self._role_of(run),plan,offset=0,attempts={},confirmed=confirmed,on_event=on_event)
+
+    def _build_plan(self, run: AgentRun, context: AgentContext, candidate_tools: list[dict[str, Any]], all_tools: list[dict[str, Any]], plan_override: AgentPlan | None) -> AgentPlan:
+        if plan_override is not None: return plan_override
+        return self.planner.build_plan_resilient(run.user_request, context, candidate_tools, all_tools=all_tools)
+
+    # ---- Pre-flight（第一层改造） ----------------------------------------
+    def _preflight(self, run: AgentRun, session: AgentSession, intent, context: AgentContext):
+        """开工前的确定性检查。拿不到列信息的检查会自动跳过（宁可不问，不乱问）。"""
+        columns: list[dict[str, Any]] = []
+        if settings.AGENT_PREFLIGHT_READ_SCHEMA and len(session.dataset_ids) == 1:
+            columns = self._column_schema(session.dataset_ids[0])
+        meta: dict[int, dict[str, Any]] = {}
+        for key, value in (context.dataset_context or {}).items():
+            try: meta[int(key)] = dict(value)
+            except (TypeError, ValueError): continue
+        return run_preflight(
+            PreflightInput(
+                user_request=run.user_request,
+                intent=intent,
+                dataset_ids=list(session.dataset_ids),
+                dataset_meta=meta,
+                columns=columns,
+                answers=dict(run.clarification_answers),
+            )
+        )
+
+    def _column_schema(self, dataset_id: int) -> list[dict[str, Any]]:
+        """只读列结构（列名 + 类型），**不加载任何数据行**。
+
+        Pre-flight 里刻意不用 `dataset.schema`（它要算每列唯一值，千万行表上
+        是几十秒级开销），只读 Parquet 的 schema——列名与 dtype 已足够完成
+        「目标列是否明确 / 任务类型是否矛盾」这两项判定。
+        """
+        try:
+            return list(self.data_engine.column_schema(dataset_id) or [])
+        except Exception:  # noqa: BLE001 - 拿不到列信息就跳过依赖它的检查
+            return []
+
+    def _await_clarification(self, run: AgentRun, pre, on_event: EventCallback | None) -> None:
+        """把 Pre-flight 的反问挂到运行上，转入等待态。"""
+        question = pre.first_question()
+        payload = question.to_dict() if question else {
+            "code": "preflight.unknown", "question": "需要补充信息才能继续", "options": [],
+        }
+        payload["outcome"] = str(pre.outcome)
+        payload["checks_run"] = pre.checks_run
+        run.status = RunStatus.WAITING_CLARIFICATION
+        run.pending_clarification = payload
+        self._emit(run, "clarification", {**payload, "stage": "clarification_required"}, on_event)
+        self.store.persist(force=True)
+
+    def answer_clarification(self, run_id: str, answer: str, *, on_event: EventCallback | None = None) -> AgentRun:
+        """用户回答反问：把答案记进账本，然后从 Pre-flight / 原步骤继续。
+
+        与 :meth:`resume` 的分工：``resume`` 处理「高风险操作授权」，
+        这里处理「信息补全」。两者都会让运行脱离等待态，但语义不同。
+        """
+        run = self.store.get_run(run_id)
+        pending = run.pending_clarification
+        if run.status != RunStatus.WAITING_CLARIFICATION or pending is None:
+            raise ValidationException("该运行不在等待澄清状态")
+        code = str(pending.get("code") or "")
+        run.clarification_answers[code] = str(answer or "").strip()
+        step_index = pending.get("step_index")
+        run.pending_clarification = None
+        session = self.store.get_session(run.session_id)
+        intent = classify(run.user_request, has_datasets=bool(session.dataset_ids))
+        self._emit(run, "clarification", {"stage": "answered", "code": code, "answer": str(answer)}, on_event)
+        # 计划内反问（agent.clarify）→ 从原步骤继续；Pre-flight 反问 → 重新规划
+        continue_from = int(step_index) if step_index is not None else None
+        try:
+            with self._usage_scope(run):
+                run.status = RunStatus.RUNNING
+                if continue_from is not None and run.plan:
+                    continue_plan = AgentPlan(
+                        goal=(run.plan or {}).get("goal", "继续执行"),
+                        steps=self._plan_from_dict(run.plan).steps[continue_from:],
+                    )
+                    context = self._build_context(run, session)
+                    self._run_plan(run, session, context, self._role_of(run), continue_plan,
+                                   offset=continue_from, attempts={continue_from: 1},
+                                   confirmed=False, on_event=on_event)
+                else:
+                    run.status = RunStatus.PLANNING
+                    self._agent_turn(run, session, intent, confirmed=False, plan_override=None, on_event=on_event)
+        except AgentLimitExceeded as exc: self._fail(run, str(exc), on_event)
+        except AgentException as exc: self._fail(run, exc.message, on_event)
+        except Exception as exc: self._fail(run, f"Agent 运行异常：{exc}", on_event)
+        finally: run.finished_at = time.time()
+        return run
+
+    # 关键词表已迁到 `app.agent.intent`（唯一真源）：
+    # 路由、候选工具注入、规则规划三处共用同一份，避免「改了两处漏了一处」
+    # 造成的「工具已注册但 Agent 不调用」。这里保留别名仅为向后兼容。
+    GREETINGS = GREETINGS
+    DATA_TERMS = tuple(k for kws in INTENT_KEYWORDS.values() for k in kws)
+
+    def _route(self, text: str, *, plan_override: AgentPlan | None = None, has_datasets: bool = False) -> tuple[str, str, Any]:
+        """对话/工具路由。返回 ``(mode, reason, intent_decision)``。
+
+        判定本身完全交给 :func:`app.agent.intent.classify`；这里只做
+        「Intent → 走聊天还是走工具」的映射，不再维护第二套关键词。
+        """
         if plan_override is not None:
-            return "agent", "服务端指定计划（plan_override），直接进入工具流程"
-        t = text.strip().lower()
-        if t in self.GREETINGS:
-            return "chat", "命中问候语，无需数据工具"
-        matched = [term for term in self.DATA_TERMS if term in t]
-        if matched:
-            return "agent", f"命中数据任务关键词：{'、'.join(matched[:5])}{'…' if len(matched) > 5 else ''}"
-        # 会话已绑定数据集时，需求几乎一定围绕这批数据展开；关键词漏召回
-        # （如「关联一下」「看看分布」）不应退化成一句「尚未配置大模型」。
-        if has_datasets and len(t) >= 4:
-            return "agent", "会话已绑定数据集，默认进入工具流程（关键词未命中时的兜底）"
-        return "chat", "未命中数据任务关键词，走普通对话"
+            return "agent", "服务端指定计划（plan_override），直接进入工具流程", classify(text, has_datasets=has_datasets)
+        decision = classify(text, has_datasets=has_datasets)
+        if decision.value == Intent.CHAT:
+            return "chat", decision.reasons[0] if decision.reasons else "按普通对话处理", decision
+        return "agent", decision.reasons[0] if decision.reasons else "进入工具流程", decision
 
     def _needs_data_tools(self, text: str) -> bool:
         return self._route(text)[0] == "agent"
@@ -207,7 +316,7 @@ class AgentRuntime:
     def deny(self, run_id: str, *, on_event: EventCallback | None = None) -> AgentRun:
         """用户拒绝高风险操作：终止该运行并释放会话（否则 run 永远停在 WAITING_CONFIRMATION，会话被 409 锁死）。"""
         run = self.store.get_run(run_id)
-        if run.status != RunStatus.WAITING_CONFIRMATION or run.pending_confirmation is None:
+        if run.status not in (RunStatus.WAITING_CONFIRMATION, RunStatus.WAITING_CLARIFICATION) or run.pending_confirmation is None:
             return run
         run.pending_confirmation = None
         self._fail(run, "用户拒绝授权，运行终止", on_event)
@@ -220,8 +329,8 @@ class AgentRuntime:
         if run.status in (RunStatus.PENDING, RunStatus.PLANNING, RunStatus.RUNNING):
             run.cancel_requested = True
             self.store.persist(force=True)
-        elif run.status == RunStatus.WAITING_CONFIRMATION:
-            # 等待授权时取消等价于拒绝授权
+        elif run.status == RunStatus.WAITING_CLARIFICATION:
+            # 等待澄清时取消等价于「不回答」：终止并释放会话
             run = self.deny(run_id)
         return run
 
@@ -242,7 +351,13 @@ class AgentRuntime:
 
         现在的三层保护：**尝试数写回** + **重试不前进下标** + **每次迭代过熔断与重规划总闸**。
         """
-        tool_ctx=self._tool_context(session,role); services=self._services(); current=plan; permanent_failure=""; total_steps=max(len(plan.steps),1); replans=0
+        tool_ctx=self._tool_context(session,role,user_request=run.user_request)
+        # 本轮已回答的反问注入工具上下文（保持 `_tool_context` 原签名不变：
+        # 它是既有测试替身的重写点，改签名会连带打断它们）。
+        extra = getattr(tool_ctx, "extra", None)
+        if isinstance(extra, dict):
+            extra.setdefault(ANSWERS_KEY, dict(run.clarification_answers or {}))
+        services=self._services(); current=plan; permanent_failure=""; total_steps=max(len(plan.steps),1); replans=0
         while current.steps:
             # ① 重规划总闸：与单步尝试上限互补，任何原因的循环到这里都会被截断
             if replans>=self.replanner.limits.max_replans:
@@ -269,6 +384,14 @@ class AgentRuntime:
                 record=self.executor.execute_step(step,tool_ctx,services,confirmed=confirmed,attempt=attempt_no,step_index=abs_idx); run.tool_calls.append(record)
                 if record.status=="needs_confirmation":
                     run.status=RunStatus.WAITING_CONFIRMATION; run.pending_confirmation={"call":record,"step_index":abs_idx}; self._emit(run,"permission",{"stage":"confirmation_required","tool":step.tool,"reason":record.error,"step_index":abs_idx},on_event); return
+                if record.status=="needs_clarification":
+                    # 计划执行中的结构化反问（agent.clarify）：记下步号，
+                    # 用户回答后从这一步继续，前面的重型步骤不重跑。
+                    clarification=record.clarification.to_dict() if hasattr(record.clarification,"to_dict") else {}
+                    run.status=RunStatus.WAITING_CLARIFICATION
+                    run.pending_confirmation={**clarification,"step_index":abs_idx,"tool":step.tool}
+                    self._emit(run,"clarification",{**clarification,"stage":"clarification_required","tool":step.tool,"step_index":abs_idx},on_event)
+                    self.store.persist(force=True); return
                 if record.status=="denied": permanent_failure=f"第 {abs_idx} 步被拒绝：{record.error}"; break
                 result_payload=self._result_for_llm(run,record); self._emit(run,"tool_result",{"step_index":abs_idx,"tool":step.tool,"status":record.status,"summary":record.result.summary if record.result else record.error,"llm_result":result_payload,"progress":min(95,max(5,round(((abs_idx+1)/max(total_steps,1))*90)))},on_event)
                 # `_result_for_llm` 刚把「结果压缩省下多少 Token」记进账本，这里立刻同步给界面。
@@ -318,9 +441,29 @@ class AgentRuntime:
     def _build_context(self,run:AgentRun,session:AgentSession)->AgentContext: return ContextBuilder(self.data_engine).build(run.user_request,dataset_ids=session.dataset_ids,role=self._role_of(run),history=session.history[:-1])
     def _fill_tools(self,context:AgentContext,tools:list[dict[str,Any]])->None: ContextBuilder(self.data_engine).with_tools(context,tools,registry=self.registry)
     def _role_of(self,run:AgentRun)->str:return "analyst"
-    def _tool_context(self,session:AgentSession,role:str)->ToolExecutionContext:
-        permissions=ROLE_PERMISSIONS.get(role,ROLE_PERMISSIONS["viewer"]); return ToolExecutionContext(user_id=session.user_id,session_id=session.id,dataset_ids=set(session.dataset_ids),permissions=set(permissions))
-    def _services(self)->ToolServices: return ToolServices(dataset_service=self.data_engine.dataset_service,data_engine_service=self.data_engine,experiment_service=self.experiment_service,db=self.db)
+    def _tool_context(self, session: AgentSession, role: str, *, user_request: str = "") -> ToolExecutionContext:
+        # `extra["user_request"]`：工具的「语义兜底输入」。
+        # 没有它，ml.detect_task 这类需要理解用户诉求的工具就只能指望 LLM 记得把
+        # 诉求原文抄进参数里 —— 那是把正确性押在提示词遵从度上（且规划器本来
+        # 也拿不到列名）。工具读这个字段即可获得稳定的意图来源。
+        # `extra[ANSWERS_KEY]`：本轮已回答的结构化反问（第一层），
+        # agent.clarify 靠它判断「这个问题是否已经答过」。
+        permissions=ROLE_PERMISSIONS.get(role,ROLE_PERMISSIONS["viewer"])
+        return ToolExecutionContext(
+            user_id=session.user_id,
+            session_id=session.id,
+            dataset_ids=set(session.dataset_ids),
+            permissions=set(permissions),
+            extra={
+                "user_request": str(user_request or ""),
+                ANSWERS_KEY: {},
+            },
+        )
+    def _services(self)->ToolServices:
+        # connector_service 按需构造（依赖同一个 Session 与 DatasetService）：
+        # 连接器导入必须复用 DatasetService 的版本链路，不能自建一套存储。
+        from app.connectors.service import ConnectorService
+        return ToolServices(dataset_service=self.data_engine.dataset_service,data_engine_service=self.data_engine,experiment_service=self.experiment_service,connector_service=ConnectorService(self.db,self.data_engine.dataset_service),db=self.db)
     def _tool_output_schema(self,tool_name:str)->dict[str,Any]|None:
         try:return self.registry.get(tool_name).output_schema
         except Exception:return None

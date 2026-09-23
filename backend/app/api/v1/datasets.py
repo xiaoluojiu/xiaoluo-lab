@@ -22,6 +22,8 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
 def _to_response(
     dataset,
     service: DatasetService,
+    *,
+    ingest: dict | None = None,
 ) -> DatasetResponse:
     """ORM Dataset 转 API Schema。"""
     latest = service.latest_version(dataset.id)
@@ -38,6 +40,7 @@ def _to_response(
             if latest is not None
             else None
         ),
+        ingest=ingest,
     )
 
 
@@ -54,15 +57,37 @@ def create_dataset(
     )
 
     # 有 source_file_id 时自动加载文件并创建初始版本
+    ingest_meta: dict | None = None
+
     if payload.source_file_id is not None:
         file_record = file_service.get(payload.source_file_id)
-        content = file_service.read(payload.source_file_id)
-        # 用 original_name 推断扩展名，LoaderRegistry 按扩展名匹配
-        loaded = REGISTRY.load(file_record.original_name, data=content)
-        service.create_version(dataset.id, loaded.df)
+
+        # 快路径：存储后端支持本地直通时，走「流式解析 → 直接落 Parquet」，
+        # 常驻内存与文件体积无关（不再把整份文件读成 bytes 再解析）。
+        source_path = file_service.local_path(payload.source_file_id)
+
+        if source_path is not None and source_path.is_file():
+            _, result = service.create_version_from_source(
+                dataset.id,
+                source_path,
+                fmt=file_record.format or None,
+            )
+            ingest_meta = result.to_metadata()
+        else:
+            # 慢路径：远程/非本地存储后端 —— 先取回 bytes，再按格式物化解析。
+            # 这里保留旧行为作为兜底，保证存储后端可替换。
+            content = file_service.read(payload.source_file_id)
+            loaded = REGISTRY.load(file_record.original_name, data=content)
+            service.create_version(dataset.id, loaded.df)
+            ingest_meta = {
+                "strategy": "materialized(non-local-storage)",
+                "row_count": loaded.df.height,
+                "column_count": loaded.df.width,
+                "warnings": ["存储后端不支持本地直通，已退回内存物化路径"],
+            }
 
     return ApiResponse(
-        data=_to_response(dataset, service)
+        data=_to_response(dataset, service, ingest=ingest_meta)
     )
 
 

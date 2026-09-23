@@ -1,5 +1,10 @@
 {
  "tools": [
+  "agent.clarify",
+  "connector.import",
+  "connector.list",
+  "connector.preview",
+  "connector.tables",
   "data.aggregate",
   "data.clean",
   "data.filter",
@@ -32,6 +37,11 @@
   "workflow.run"
  ],
  "intent_of_tool": {
+  "agent.clarify": null,
+  "connector.import": null,
+  "connector.list": null,
+  "connector.preview": null,
+  "connector.tables": null,
   "data.aggregate": "data_transform",
   "data.clean": "data_transform",
   "data.filter": "data_transform",
@@ -64,6 +74,22 @@
   "workflow.run": "workflow"
  },
  "required_params": {
+  "agent.clarify": [
+   "code",
+   "question"
+  ],
+  "connector.import": [
+   "connector_id",
+   "table"
+  ],
+  "connector.list": [],
+  "connector.preview": [
+   "connector_id",
+   "table"
+  ],
+  "connector.tables": [
+   "connector_id"
+  ],
   "data.aggregate": [
    "dataset_id",
    "group_by",
@@ -163,6 +189,35 @@
   ]
  },
  "optional_params": {
+  "agent.clarify": [
+   "options",
+   "default",
+   "severity",
+   "context"
+  ],
+  "connector.import": [
+   "schema_name",
+   "columns",
+   "where",
+   "order_by",
+   "keyset_column",
+   "max_rows",
+   "dataset_id",
+   "dataset_name"
+  ],
+  "connector.list": [
+   "page",
+   "page_size"
+  ],
+  "connector.preview": [
+   "schema_name",
+   "columns",
+   "where",
+   "limit"
+  ],
+  "connector.tables": [
+   "schema"
+  ],
   "data.aggregate": [
    "version"
   ],
@@ -200,7 +255,8 @@
    "version"
   ],
   "dataset.quality": [
-   "version"
+   "version",
+   "target"
   ],
   "dataset.schema": [
    "version"
@@ -242,7 +298,8 @@
   "ml.detect_task": [
    "version",
    "target",
-   "infer_target"
+   "infer_target",
+   "goal"
   ],
   "ml.evaluate": [],
   "ml.explain": [],
@@ -263,8 +320,11 @@
   "ml.train": [
    "version",
    "target",
+   "task",
+   "goal",
    "params",
    "preprocessing",
+   "excluded_columns",
    "test_size",
    "seed",
    "description"
@@ -289,6 +349,11 @@
  },
  "label_space": [
   "chat",
+  "call::agent.clarify",
+  "call::connector.import",
+  "call::connector.list",
+  "call::connector.preview",
+  "call::connector.tables",
   "call::data.aggregate",
   "call::data.clean",
   "call::data.filter",
@@ -322,5 +387,5 @@
  ],
  "category_inconsistencies": [],
  "source_sha1": "154392f35293e9b6f5eba6d3ca3d0a45bcaaae5b",
- "generated_at_epoch": 1790054521
+ "generated_at_epoch": 1790152009
 }

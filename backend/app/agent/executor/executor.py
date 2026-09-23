@@ -6,6 +6,7 @@ import logging
 import time
 from typing import Any
 
+from app.agent.clarify import ClarificationRequired
 from app.agent.planner.models import PlanStep
 from app.tools.base import ToolConfirmationRequired, ToolPermissionError, ToolServices
 from app.tools.context import ToolExecutionContext
@@ -27,9 +28,13 @@ class ToolCallRecord:
         self.error: str = ""
         self.started_at = time.time()
         self.finished_at: float | None = None
+        #: 结构化反问（仅 ``needs_clarification`` 时有值），供前端渲染选择器
+        self.clarification: Any | None = None
 
-    def finish(self, status: str, *, result: ToolResult | None = None, error: str = "") -> None:
+    def finish(self, status: str, *, result: ToolResult | None = None, error: str = "", clarification: Any = None) -> None:
         self.status, self.result, self.error, self.finished_at = status, result, error, time.time()
+        if clarification is not None:
+            self.clarification = clarification
 
     @property
     def elapsed_ms(self) -> float:
@@ -39,7 +44,14 @@ class ToolCallRecord:
         return {"step_index": self.step_index, "tool": self.tool, "status": self.status, "attempt": self.attempt, "result": self.result.for_llm(max_items=max_items, max_chars=max_chars) if self.result else None, "error": self.error, "elapsed_ms": self.elapsed_ms}
 
     def to_dict(self) -> dict[str, Any]:
-        return {"step_index": self.step_index, "tool": self.tool, "arguments": self.arguments, "attempt": self.attempt, "status": self.status, "result": self.result.to_dict() if self.result else None, "error": self.error, "elapsed_ms": self.elapsed_ms}
+        payload = {"step_index": self.step_index, "tool": self.tool, "arguments": self.arguments, "attempt": self.attempt, "status": self.status, "result": self.result.to_dict() if self.result else None, "error": self.error, "elapsed_ms": self.elapsed_ms}
+        if self.clarification is not None:
+            payload["clarification"] = (
+                self.clarification.to_dict()
+                if hasattr(self.clarification, "to_dict")
+                else self.clarification
+            )
+        return payload
 
 
 def _schema_errors(value: Any, schema: dict[str, Any], path: str = "$") -> list[str]:
@@ -104,6 +116,14 @@ class AgentExecutor:
             record.finish("needs_confirmation", error=exc.message)
         except ToolPermissionError as exc:
             record.finish("denied", error=exc.message)
+        except ClarificationRequired as exc:
+            # 第一层：计划执行中的结构化反问。与「高风险操作待确认」同构，
+            # 区别只是用户要补的是信息而不是授权。
+            record.finish(
+                "needs_clarification",
+                error=exc.clarification.question,
+                clarification=exc.clarification,
+            )
         except Exception as exc:
             # 记录完整 traceback 到日志，便于溯源（此前只 str(exc) 塞进 record.error）。
             logger.exception(

@@ -37,6 +37,16 @@ export const client = axios.create({
   timeout: 60_000,
 });
 
+/** 长耗时操作的超时：入库 / 数据库抽取 / 大文件上传。
+ *
+ * 这类请求的服务端工作量由**文件体积**决定，不是「卡住」：
+ * 实测一个 385 MB / 1000 万行的 ARFF 入库要数秒，而不可流式的 XLSX
+ * 或更大的文件可能是分钟级。用 60s 兜底会把「正在正常处理」误报成失败，
+ * 用户看到 timeout 后往往立刻重试 —— 于是产生重复数据集。
+ * 因此这几个端点单独放到 30 分钟。
+ */
+export const LONG_OPERATION_TIMEOUT_MS = 30 * 60_000;
+
 client.interceptors.response.use(
   (resp) => {
     const body = resp.data as ApiResponse<unknown>;
@@ -57,9 +67,19 @@ client.interceptors.response.use(
   (error) => {
     const body = error.response?.data as (ApiResponse<unknown> & { detail?: string }) | undefined;
     const status = error.response?.status;
+    // 超时要单独说话：否则用户只看到一句英文 "timeout of 60000ms exceeded"，
+    // 会以为是上传失败并立刻重试 —— 而服务端其实可能已经成功、
+    // 重试只会再建一份重复数据。
+    const isTimeout =
+      error.code === "ECONNABORTED" ||
+      (typeof error.message === "string" && error.message.includes("timeout"));
     const message =
       body?.error?.message ??
       body?.detail ??
+      (isTimeout
+        ? "请求超时：服务端可能仍在处理（大文件入库较慢）。请稍后刷新列表确认结果，" +
+          "不要立即重试，以免生成重复数据集。"
+        : undefined) ??
       (status ? `请求失败（HTTP ${status}）` : undefined) ??
       (axios.isCancel(error) ? "请求已取消" : undefined) ??
       error.message ??

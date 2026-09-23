@@ -9,6 +9,7 @@ from typing import Any
 
 from app.agent.permission.manager import PermissionManager
 from app.core.exceptions import AppException
+from app.core.registry import Registry
 from app.tools.base import Tool, ToolConfirmationRequired, ToolPermissionError, ToolServices
 from app.tools.context import ToolExecutionContext
 from app.tools.result import ToolResult
@@ -25,38 +26,38 @@ class UnknownToolError(AppException):
 _TOKEN_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9_.-]*|[\u4e00-\u9fff]")
 
 
-class ToolRegistry:
-    """工具注册表 + 受控执行入口。"""
+class ToolRegistry(Registry[Tool]):
+    """工具注册表 + 受控执行入口。
+
+    键值存储、重复/缺失报错、遍历与自描述汇总全部复用
+    :class:`app.core.registry.Registry`（标准化内核），本类只保留工具层特有的
+    **语义检索** 与 **受控执行** 两件事，不再重复实现一份 dict 管理。
+    """
 
     def __init__(self, permission_manager: PermissionManager | None = None) -> None:
-        self._tools: dict[str, Tool] = {}
+        super().__init__(label="工具")
         self.permission_manager = permission_manager or PermissionManager()
 
-    def register(self, tool: Tool) -> Tool:
+    # ---- Registry 错误钩子：沿用工具层既有异常体系 ----------------------
+    def _conflict_error(self, key: str) -> AppException:
+        return AppException(f"工具 {key!r} 已注册", code="TOOL_ALREADY_REGISTERED")
+
+    def _missing_error(self, key: str) -> AppException:
+        return UnknownToolError(details={"tool": key, "available": self.keys()})
+
+    # ---- 注册（保持既有「传 Tool 实例」的调用方式） ---------------------
+    def register(self, tool: Tool, *, replace: bool = False) -> Tool:
         if not tool.name:
             raise AppException("工具必须声明 name", code="TOOL_NAME_REQUIRED")
-        if tool.name in self._tools:
-            raise AppException(f"工具 {tool.name!r} 已注册", code="TOOL_ALREADY_REGISTERED")
-        self._tools[tool.name] = tool
-        return tool
-
-    def unregister(self, name: str) -> None:
-        if name not in self._tools:
-            raise UnknownToolError(details={"tool": name})
-        del self._tools[name]
-
-    def get(self, name: str) -> Tool:
-        tool = self._tools.get(name)
-        if tool is None:
-            raise UnknownToolError(details={"tool": name, "available": sorted(self._tools)})
-        return tool
+        return super().register(tool.name, tool, replace=replace)
 
     def list(self) -> list[dict[str, Any]]:
-        return [tool.describe() for tool in self._tools.values()]
+        """全部工具自描述（顺序稳定，供 Planner 上下文与 /agent/tools 使用）。"""
+        return self.describe_all()
 
     def names(self) -> list[str]:
         """已注册工具名（排序，供安全校验与文档使用）。"""
-        return sorted(self._tools)
+        return self.keys()
 
     def retrieve(self, query: str, *, top_k: int = 8, min_score: float = 0.15) -> list[dict[str, Any]]:
         """本地、零 Token 工具召回（不含得分，供 Planner 上下文使用）。"""
@@ -68,7 +69,7 @@ class ToolRegistry:
         除 name/description/category 外加入稳定的任务词映射。
         这层只负责扩大候选集合，不替代 Planner 的最终决策。
         """
-        if not self._tools:
+        if not len(self):
             return []
         top_k = max(int(top_k), 1)
         min_score = max(float(min_score), 0.0)
@@ -84,9 +85,10 @@ class ToolRegistry:
             "ml": ("训练", "模型", "预测", "分类", "回归", "评估", "特征", "机器学习", "解释", "对比"),
             "workflow": ("workflow", "工作流", "流程", "编排", "节点", "运行流程", "流水线", "pipeline"),
             "report": ("报告", "导出报告", "实验报告", "pdf", "html", "markdown", "汇报", "结果文档"),
+            "connector": ("连接器", "数据库", "外部数据源", "导入数据", "mysql", "postgres", "postgresql", "sqlite", "sql server", "oracle", "数据接入"),
         }
         scored: list[tuple[float, str, dict[str, Any], list[str]]] = []
-        for tool in self._tools.values():
+        for tool in self.values():
             desc = tool.describe()
             name = str(desc.get("name", "")).lower()
             description = str(desc.get("description", "")).lower()

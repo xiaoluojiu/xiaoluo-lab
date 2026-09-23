@@ -47,10 +47,13 @@ def _stratified_stats(df: Any, *, max_groups: int = 3, max_metrics: int = 2) -> 
     输出成 {dimension, metric, rows:[{value, mean, median, count}]} 列表，供报告渲染。
     只取前 max_groups 个分类列、前 max_metrics 个连续列，避免 300 万行数据过度聚合。
     """
-    from app.analysis import categorical_columns, continuous_columns
+    from app.analysis import classify_columns
 
-    cat_cols = categorical_columns(df)
-    cont_cols = continuous_columns(df)
+    classes = classify_columns(df)
+    cat_cols = [c for c, is_cat in classes.items() if is_cat]
+    cont_cols = [
+        c for c, is_cat in classes.items() if not is_cat and df.schema[c].is_numeric()
+    ]
     out: list[dict[str, Any]] = []
     for dim in cat_cols[:max_groups]:
         n = int(df[dim].drop_nulls().n_unique())
@@ -93,7 +96,9 @@ class ReportGenerateTool(Tool):
     description = (
         "基于真实数据质量、EDA 和相关分析结果生成并保存一份完整的结构化分析报告，"
         "报告自动嵌入多张图表（分布直方图、类别柱状图、相关系数热力图、相关性散点图、正态 Q-Q 图、累积分布图），"
-        "并由大模型针对真实数值撰写章节正文与结论。request 参数建议填写用户的原始诉求，"
+        "并自动关联该数据集最近的 Experiment / Run，写入「建模与评估」「关联实验」两章"
+        "（若尚未训练则明确标注该章未生成及原因，而不是静默跳号）。"
+        "章节正文与结论由大模型针对真实数值撰写。request 参数建议填写用户的原始诉求，"
         "模型会据此组织正文侧重点。返回 report_key 用于在报告中心打开。"
     )
     category = "report"
@@ -112,6 +117,7 @@ class ReportGenerateTool(Tool):
 
     def execute(self, params: dict[str, Any], context: ToolExecutionContext, services: ToolServices) -> ToolResult:
         from app.analysis import CorrelationAnalyzer, DescriptiveAnalyzer
+        from app.reports.discovery import discover_ml_context
         from app.reports.generator import ReportGenerator
         from app.reports.narrator import default_provider, narrate_and_apply
         from app.reports.report_charts import build_report_charts
@@ -145,6 +151,9 @@ class ReportGenerateTool(Tool):
         # 分层统计：低基数分类列 × 连续列的均值/中位数交叉，让报告的分层分析「已做」而非「建议做」
         # （回归：报告反复建议「按 Borough/VendorID/payment_type 分层评估」，正文却只有单变量分布图）。
         stratified = _stratified_stats(df)
+        # 建模上下文：与 POST /reports/generate 共用同一份发现逻辑。
+        # 没有这一步，Agent 报告会缺「四、建模与评估」整章（用户明确要求「选择适合的模型进行处理」）。
+        ml_ctx = discover_ml_context(ds.db, ds, dataset_id)
         report = ReportGenerator().generate(
             title=str(params.get("title") or "AI 数据分析实验报告"),
             dataset_info=info,
@@ -154,6 +163,8 @@ class ReportGenerateTool(Tool):
                 "correlation": {"pairs": sorted(pairs, key=lambda x: abs(x["correlation"]), reverse=True)[:10]},
                 "stratified": stratified,
             },
+            ml=ml_ctx.ml,
+            experiments=ml_ctx.experiments,
             charts=charts,
             conclusions=_clean_conclusions(params.get("conclusions")),
         )
@@ -175,11 +186,16 @@ class ReportGenerateTool(Tool):
         data.setdefault("metadata", {})["report_key"] = key
 
         chart_types = sorted({c.get("type") for c in charts if isinstance(c, dict)})
+        missing = [c["heading"] for c in (data.get("metadata") or {}).get("chapters", []) if not c.get("generated")]
         summary = (
             f"数据集 {dataset_id} 报告生成完成：{len(data.get('sections') or [])} 个章节、"
             f"{len(charts)} 张图表（{'/'.join(chart_types) or '无'}），"
             f"{'含 LLM 正文叙述' if narration_applied else '模板正文'}，已保存为 {key}"
         )
+        if missing:
+            # 章节缺失必须回执给 Agent：否则 Agent 会向用户宣称报告已涵盖建模，
+            # 而报告里其实没有这一章（真实事故：用户要求「选择适合的模型」，报告无建模章）。
+            summary += f"；未生成章节：{'、'.join(missing)}"
         # 给 LLM 的视图必须极小：完整报告含图表 SVG/数据表，直接进上下文会击穿 Token 预算。
         compact = {
             "report_key": key,
@@ -192,6 +208,17 @@ class ReportGenerateTool(Tool):
                 for s in (data.get("sections") or [])
             ],
             "chart_types": chart_types,
+            "ml": (
+                {
+                    "task": ml_ctx.ml.get("task"),
+                    "model": ml_ctx.ml.get("model"),
+                    "target_column": ml_ctx.ml.get("target_column"),
+                    "metrics": ml_ctx.ml.get("metrics"),
+                }
+                if ml_ctx.ml
+                else None
+            ),
+            "missing_chapters": missing,
             "conclusions": (data.get("conclusions") or [])[:8],
             "narrated": narration_applied,
         }

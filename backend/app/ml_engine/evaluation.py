@@ -68,7 +68,37 @@ def evaluate_clustering(X: pl.DataFrame, labels: pl.Series) -> dict[str, Any]:
         result["silhouette"] = None
         result["silhouette_note"] = "簇数不满足 2 <= k <= n-1，无法计算轮廓系数"
         return result
-    result["silhouette"] = float(sk_metrics.silhouette_score(X.to_numpy(), labels))
+
+    # 轮廓系数的复杂度是 O(n²)：1000 万行上既算不下也算不完。
+    # 因此在**取数组之前**先抽样，而不是先 to_numpy() 全量再交给 sklearn。
+    from app.ml_engine.preprocessing import (
+        _assert_dense_fits,
+        _max_silhouette_samples,
+    )
+
+    cap = _max_silhouette_samples()
+    total = X.height
+    if cap > 0 and total > cap:
+        rng = np.random.default_rng(0)
+        picked = rng.choice(total, size=cap, replace=False)
+        picked.sort()
+        idx = picked.tolist()
+        X_used, labels_used = X[idx], labels[idx]
+        result["silhouette_note"] = (
+            f"轮廓系数基于 {cap:,} 行随机子样本（共 {total:,} 行；该指标复杂度为 O(n²)）"
+        )
+    else:
+        X_used, labels_used = X, labels
+
+    _assert_dense_fits(
+        X_used.height,
+        X_used.width,
+        stage="轮廓系数输入",
+        hint="可调小 ML_MAX_SILHOUETTE_SAMPLES 或 ML_MAX_TRAIN_ROWS。",
+    )
+    result["silhouette"] = float(
+        sk_metrics.silhouette_score(X_used.to_numpy(), labels_used)
+    )
     return result
 
 

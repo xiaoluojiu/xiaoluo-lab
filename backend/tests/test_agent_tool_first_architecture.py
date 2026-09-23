@@ -14,7 +14,7 @@ def test_runtime_short_circuits_chat_before_context_build():
     source = (ROOT / "app/agent/runtime/runtime.py").read_text(encoding="utf-8")
     chat_guard = 'if plan_override is None and mode == "chat":'
     context_build = "context=self._build_context(run,session)"
-    route_event = 'self._emit(run,"route",{"mode":mode,"reason":route_reason},on_event)'
+    route_event = 'self._emit(run,"route",{"mode":mode,"reason":route_reason,"intent":explain_intent(intent)},on_event)'
     assert chat_guard in source
     assert route_event in source
     # 路由事件必须先于对话短路与上下文构建发出（透明性：路由依据对用户可见）

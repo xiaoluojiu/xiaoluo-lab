@@ -1,5 +1,5 @@
 /** Dataset API —— CRUD（/datasets）+ 只读分析（schema/profile/quality/preview）。 */
-import { client, unwrap } from "./client";
+import { LONG_OPERATION_TIMEOUT_MS, client, unwrap } from "./client";
 import type {
   Dataset,
   DatasetListResult,
@@ -21,11 +21,18 @@ export function getDataset(datasetId: number) {
 
 export function createDataset(name: string, description = "", sourceFileId?: number) {
   return unwrap<Dataset>(
-    client.post("/datasets", {
-      name,
-      description,
-      source_file_id: sourceFileId ?? null,
-    }),
+    client.post(
+      "/datasets",
+      {
+        name,
+        description,
+        source_file_id: sourceFileId ?? null,
+      },
+      // 带 sourceFileId 时会**在本次请求内完成入库**（解析 → 落 Parquet），
+      // 耗时由文件体积决定：385 MB ARFF 约 6s，不可流式格式或更大文件更久。
+      // 用 60s 兜底会把正常处理误报成失败。
+      { timeout: LONG_OPERATION_TIMEOUT_MS },
+    ),
   );
 }
 

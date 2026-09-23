@@ -51,3 +51,24 @@ class Report:
             "conclusions": self.conclusions,
             "metadata": self.metadata,
         }
+
+
+def describe_experiment(exp: dict[str, Any]) -> str:
+    """一行描述一次实验（三个导出器共用，转义交给各渲染器）。
+
+    **状态与失败原因必须写出来**：只报 id/task/model 会让读者以为
+    「列了关联实验 = 建模成功」，而真实情况常常是几次失败 + 一次成功 ——
+    事故里 dataset 9 的 5 次运行只有 1 次是回归成功，另外 3 次是
+    「目标列不能出现在排除列中」的即时失败、1 次是 57.1 GiB 崩溃。
+    """
+    line = (
+        f"实验 #{exp.get('experiment_id', '-')}"
+        f"（{exp.get('task', '-')}/{exp.get('model', '-')}）"
+    )
+    if exp.get("target_column"):
+        line += f"，目标列 {exp['target_column']}"
+    if exp.get("status"):
+        line += f"，状态 {exp['status']}"
+    if exp.get("error"):
+        line += f"：{str(exp['error'])[:200]}"
+    return line

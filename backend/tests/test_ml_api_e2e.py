@@ -303,14 +303,22 @@ def test_train_too_small_dataset_fails_clearly(api, service):
 # ----------------------------------------------------------------------
 # T0-9.8：target 在 excluded_columns 中 → 明确失败
 # ----------------------------------------------------------------------
-def test_target_in_excluded_columns_fails(api, service):
+def test_target_in_excluded_columns_is_tolerated(api, service):
+    """目标列被写进 excluded_columns 时应自动剔除，而不是让整条训练失败。
+
+    语义依据：目标列本来就不参与特征（X 已经 drop 掉它），所以「把 target 也列进
+    排除列」是一条**幂等的冗余指令**，不是非法输入。原实现直接抛
+    「target_column 不能出现在 excluded_columns 中」，使这条常见且无害的计划
+    在 0.2 秒内必然失败 —— 真实事故里一个延误回归请求连续 3 次 run failed
+    （experiment 26/27/29），用户只看到「训练失败」，模型链路整条没跑起来。
+    """
     ds_id, _ = _create_version(
         service,
         "cls-target-excluded",
         pl.DataFrame(
             {
-                "a": [1.0, 2.0, 3.0, 4.0],
-                "label": [0, 1, 0, 1],
+                "a": [float(i) for i in range(20)],
+                "label": [i % 2 for i in range(20)],
             }
         ),
     )
@@ -322,14 +330,18 @@ def test_target_in_excluded_columns_fails(api, service):
             "task": "classification",
             "model": "logistic_regression",
             "target_column": "label",
-            "excluded_columns": ["label"],  # 错误：排除 target
+            "excluded_columns": ["label"],  # 冗余但无害：目标列本就不参与特征
+            "test_size": 0.3,
             "seed": 0,
         },
     )
     body = resp.json()
     run = body["data"]["run"]
-    assert run["status"] == "failed"
-    assert "target" in run["error"].lower() or "excluded" in run["error"].lower()
+    assert run["status"] == "success", run.get("error")
+    # 目标列既不在特征里，也不残留在 excluded_columns 里
+    assert "label" not in run["artifacts"]["features"]
+    assert "label" not in (run["artifacts"].get("excluded_columns") or [])
+    assert run["artifacts"]["target_column"] == "label"
 
 
 # ----------------------------------------------------------------------

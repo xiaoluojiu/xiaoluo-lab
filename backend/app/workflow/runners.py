@@ -16,10 +16,13 @@ from app.agent.llm.openai_compatible import OpenAICompatibleProvider
 from app.core.config import settings
 from app.core.exceptions import WorkflowException
 from app.data_engine.json_utils import json_safe
+from app.ml_engine.exceptions import MLEngineException
 from app.ml_engine.evaluation import evaluate_clustering
+from app.ml_engine.inference import batch_evaluate, batch_predict, batch_transform
 from app.ml_engine.preprocessing import (
     PreprocessingPipeline,
     build_pipeline,
+    cap_training_rows,
 )
 from app.ml_engine.registry import MODEL_REGISTRY
 from app.workflow.models import flatten_config
@@ -139,6 +142,11 @@ def build_default_runners() -> dict[str, NodeRunner]:
         model = MODEL_REGISTRY.create(model_name, config)
         X, y = df.select(feature_columns), df[target]
 
+        # 训练集规模治理：超限即随机抽样，**必须先于切分与预处理** —— 否则 1000 万行
+        # 会先被 ColumnTransformer 展开成 767 列稠密矩阵（57.1 GiB 事故的直接路径）。
+        # 抽样是有损的，所以 sampling 必须回执到结果里，否则指标无法解释。
+        X, y, sampling = cap_training_rows(X, y, seed=random_state)
+
         started = time.perf_counter()
         try:
             if model.task == "clustering":
@@ -163,6 +171,10 @@ def build_default_runners() -> dict[str, NodeRunner]:
                 train_rows, test_rows = X_train.height, X_test.height
         except ValueError as exc:
             raise WorkflowException(f"训练失败：{exc}") from exc
+        except MLEngineException as exc:
+            # 内存预检（_guard_dense）抛的是 MLEngineException，带的是可操作的中文提示，
+            # 这里原样转成 WorkflowException，避免被上层当成「未知内部错误」吞掉细节。
+            raise WorkflowException(f"训练失败：{exc}") from exc
 
         logger.info(
             "ml.train 完成 model=%s task=%s 训练行=%s 测试行=%s 耗时=%.3fs",
@@ -180,6 +192,7 @@ def build_default_runners() -> dict[str, NodeRunner]:
             "train_rows": train_rows,
             "test_rows": test_rows,
             "random_state": random_state,
+            "sampling": sampling,
             "metrics": metrics,
             "preprocessing_report": pipeline.report,
         }
@@ -201,8 +214,12 @@ def build_default_runners() -> dict[str, NodeRunner]:
         missing = [c for c in raw_columns if c not in df.columns]
         if missing:
             raise WorkflowException(f"ml.predict 推理数据缺少特征列：{missing}")
-        X = pipeline.transform(df.select(raw_columns)) if pipeline is not None else df.select(raw_columns)
-        prediction = model.predict(X)
+        # 推理**不能抽样**（少预测一行就是少一行结果），只能分块：每块独立
+        # transform + predict，结果按行拼接，语义与一次性推理逐样本一致。
+        try:
+            prediction = batch_predict(model, df.select(raw_columns), pipeline=pipeline)
+        except MLEngineException as exc:
+            raise WorkflowException(f"ml.predict 推理失败：{exc}") from exc
         output_column = str(config.get("output_column", "prediction"))
         out = df.with_columns(prediction.alias(output_column))
         logger.info(
@@ -219,13 +236,33 @@ def build_default_runners() -> dict[str, NodeRunner]:
         target = config.get("target_column")
         if not target or target not in df.columns:
             raise WorkflowException("ml.evaluate 需要 params.target_column")
-        raw_columns = getattr(model, "feature_names_", [])
+        # ★ 必须取「原始特征列」，不能取 model.feature_names_。
+        # 训练若经过预处理，model.feature_names_ 是 **one-hot/标准化之后**的列名
+        # （如 'cat_hi=c1'）。旧代码拿它去 df 里挑列，非数值列全部被过滤掉，
+        # 随后 pipeline.transform 立刻报「transform 缺失训练列: ['cat_hi', ...]」
+        # —— 也就是说：只要工作流里 ml.train 接了 ml.evaluate，评估就必然失败。
+        # 取法与 ml.predict 保持一致：先问节点 config，再问上游训练节点的输出。
+        raw_columns = config.get("feature_columns")
+        if not raw_columns:
+            for output in upstream.values():
+                if isinstance(output, dict) and output.get("feature_columns"):
+                    raw_columns = output["feature_columns"]
+                    break
+        if not raw_columns:
+            raw_columns = getattr(model, "feature_names_", [])
         if not raw_columns:
             raise WorkflowException("模型没有记录训练特征")
         raw_columns = [c for c in raw_columns if c in df.columns]
-        X = pipeline.transform(df.select(raw_columns)) if pipeline is not None else df.select(raw_columns)
+        if not raw_columns:
+            raise WorkflowException("评估数据缺少训练时的特征列")
+        try:
+            metrics = batch_evaluate(
+                model, df.select(raw_columns), df[target], pipeline=pipeline
+            )
+        except MLEngineException as exc:
+            raise WorkflowException(f"ml.evaluate 评估失败：{exc}") from exc
         return {
-            "metrics": model.evaluate(X, df[target]),
+            "metrics": metrics,
             "model": getattr(model, "name", ""),
             "rows": df.height,
         }
@@ -242,26 +279,47 @@ def build_default_runners() -> dict[str, NodeRunner]:
         if not MODEL_REGISTRY.supports_param(model_name, "random_state"):
             config.pop("random_state", None)
         model = MODEL_REGISTRY.create(model_name, config)
-        X = df.select(feature_columns)
-        pipeline = build_pipeline(preprocessing, X)
-        Xp = pipeline.fit_transform(X)
-        model.fit(Xp)
-        # DBSCAN 无 predict：降级使用训练样本的 labels_
-        try:
-            labels = model.predict(Xp)
-        except Exception:  # noqa: BLE001 - DBSCAN 明确不支持 predict
-            labels = model.labels_
-            if labels is None:
-                raise WorkflowException(f"{model_name} 无法产出簇标签") from None
-        metrics = evaluate_clustering(Xp, labels)
+        X_all = df.select(feature_columns)
+
+        # 聚类输出是「每行一个簇编号」，不能只给抽样行打标。所以抽样只用于
+        # **学出簇结构**，打标走分块全量推理 —— 两者配起来才能既跑得动又不错行。
+        seed = config.get("random_state")
+        X_fit, _, sampling = cap_training_rows(X_all, seed=seed)
+        pipeline = build_pipeline(preprocessing, X_fit)
+        Xp_fit = pipeline.fit_transform(X_fit)
+        model.fit(Xp_fit)
+
+        if sampling["sampled"]:
+            try:
+                labels = batch_predict(model, X_all, pipeline=pipeline)
+            except MLEngineException as exc:
+                raise WorkflowException(
+                    f"{model_name} 不支持对样本外数据预测簇标签，无法在全量 "
+                    f"{X_all.height:,} 行上打标（已用 {sampling['used_rows']:,} 行抽样学结构）。"
+                    f"请改用支持 predict 的聚类算法（如 kmeans），或先在上游缩减数据集。"
+                ) from exc
+        else:
+            # DBSCAN 无 predict：降级使用训练样本的 labels_（与旧行为一致）
+            try:
+                labels = model.predict(Xp_fit)
+            except Exception:  # noqa: BLE001 - DBSCAN 明确不支持 predict
+                labels = model.labels_
+                if labels is None:
+                    raise WorkflowException(f"{model_name} 无法产出簇标签") from None
+
+        # 轮廓系数必须在「学结构的那个矩阵」上算：抽样后 Xp_fit 与 labels 同长，
+        # 不能拿全量 labels（长度 = 总行数）去配 Xp_fit。
+        fit_labels = model.labels_ if model.labels_ is not None else labels.head(Xp_fit.height)
+        metrics = evaluate_clustering(Xp_fit, fit_labels)
         out = df.with_columns(labels.alias(output_column))
         logger.info(
-            "ml.cluster 完成 model=%s 簇数=%s 轮廓系数=%s",
+            "ml.cluster 完成 model=%s 簇数=%s 轮廓系数=%s 抽样=%s",
             model_name, metrics.get("cluster_count"), metrics.get("silhouette"),
+            sampling.get("sampled"),
         )
         return {
             "_df": out, "_model": model, "_pipeline": pipeline,
-            "model": model_name, "output_column": output_column,
+            "model": model_name, "output_column": output_column, "sampling": sampling,
             "metrics": metrics, **_summarize(out),
         }
 
@@ -271,14 +329,26 @@ def build_default_runners() -> dict[str, NodeRunner]:
         feature_columns = config.pop("feature_columns", None) or list(df.columns)
         preprocessing = config.pop("preprocessing", None)
         model = MODEL_REGISTRY.create("pca", config)
-        X = df.select(feature_columns)
-        pipeline = build_pipeline(preprocessing, X)
-        Xp = pipeline.fit_transform(X)
-        model.fit(Xp)
-        out = model.transform(Xp)
+        X_all = df.select(feature_columns)
+
+        # PCA 同理：抽样只影响学出的主成分，但不能因此让输出少行 ——
+        # 降维结果要给下游做散点图，丢 98% 的行等于丢掉了可视化对象。
+        X_fit, _, sampling = cap_training_rows(X_all)
+        pipeline = build_pipeline(preprocessing, X_fit)
+        Xp_fit = pipeline.fit_transform(X_fit)
+        model.fit(Xp_fit)
+        try:
+            out = (
+                batch_transform(model, X_all, pipeline=pipeline)
+                if sampling["sampled"]
+                else model.transform(Xp_fit)
+            )
+        except MLEngineException as exc:
+            raise WorkflowException(f"ml.pca 降维失败：{exc}") from exc
         return {
             "_df": out, "_model": model, "_pipeline": pipeline,
             "model": "pca",
+            "sampling": sampling,
             "explained_variance_ratio": model.explained_variance_ratio_,
             **_summarize(out),
         }

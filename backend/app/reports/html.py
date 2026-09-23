@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import html as _html
 
-from app.reports.models import Report
+from app.reports.models import Report, describe_experiment
+from app.reports.numbering import chapter_heading, missing_chapters
 
 _CSS = """
 body { font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
@@ -25,6 +26,9 @@ footer { margin-top: 32px; color: #888; font-size: 0.9em;
 .chart-figure { margin: 18px 0; text-align: center; }
 .chart-figure figcaption { font-size: 0.92em; color: #475569; margin-bottom: 6px; }
 .chart-figure svg { max-width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; }
+.missing-note { background: #fff8e6; border-left: 4px solid #d9a406; padding: 8px 14px;
+                margin: 18px 0; font-size: 0.94em; }
+.missing-note ul { margin: 6px 0 0; padding-left: 20px; }
 """
 
 
@@ -75,16 +79,19 @@ def export_html(report: Report) -> str:
             parts.append(
                 f'<figure class="chart-figure"><figcaption>{title}</figcaption>{svg}</figure>'
             )
+    missing = missing_chapters(report)
+    if missing:
+        parts.append('<div class="missing-note"><strong>未生成章节说明</strong><ul>')
+        for item in missing:
+            parts.append(f"<li><strong>{_esc(item['heading'])}</strong>：{_esc(item['reason'])}</li>")
+        parts.append("</ul></div>")
     if report.experiments:
-        parts.append("<h2>五、关联实验</h2><ul>")
+        parts.append(f"<h2>{_esc(chapter_heading('experiments'))}</h2><ul>")
         for exp in report.experiments:
-            parts.append(
-                f"<li>实验 #{_esc(exp.get('experiment_id', '-'))}"
-                f"（{_esc(exp.get('task', '-'))}/{_esc(exp.get('model', '-'))}）</li>"
-            )
+            parts.append(f"<li>{_esc(describe_experiment(exp))}</li>")
         parts.append("</ul>")
     if report.conclusions:
-        parts.append('<h2>六、结论</h2><ul class="conclusion">')
+        parts.append(f'<h2>{_esc(chapter_heading("conclusions"))}</h2><ul class="conclusion">')
         for c in report.conclusions:
             parts.append(f"<li>{_esc(c)}</li>")
         parts.append("</ul>")

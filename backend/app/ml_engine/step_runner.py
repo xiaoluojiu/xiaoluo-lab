@@ -19,9 +19,11 @@ from typing import Any
 import polars as pl
 
 from app.ml_engine.exceptions import MLEngineException
+from app.ml_engine.inference import batch_predict, batch_predict_proba
 from app.ml_engine.preprocessing import (
     PreprocessingPipeline,
     build_pipeline,
+    cap_training_rows,
     default_preprocessing_config,
 )
 from app.ml_engine.registry import MODEL_REGISTRY
@@ -123,12 +125,10 @@ def run_load_step(
             artifacts={"columns": list(df.columns)},
         )
     if target is not None and target in excluded:
-        return StepResult(
-            step="load",
-            status="failed",
-            error="目标列不能同时出现在排除列中",
-            artifacts={"target": target, "excluded_columns": excluded},
-        )
+        # 目标列本就不参与特征（下面的 feature_cols 已按 `c != target` 过滤），
+        # 因此「把目标列列进排除列」是幂等的冗余指令，不是错误。
+        # 这里自动剔除而不是让整条链路失败 —— 与 ExperimentService._execute 同一口径。
+        excluded = [c for c in excluded if c != target]
 
     feature_cols = [c for c in df.columns if c != target and c not in excluded]
     schema_profile = [
@@ -186,8 +186,13 @@ def run_preprocess_step(
     feature_cols = loaded.output["feature_columns"]
     X = df.select(feature_cols)
     effective_cfg = config if isinstance(config, dict) and config else default_preprocessing_config(X)
-    pipeline = build_pipeline(effective_cfg, X).fit(X)
-    Xp = pipeline.transform(X)
+    # 本步只需要「列映射 + 前 N 行对照」，却要 fit 整份数据。
+    # 而 one-hot 的 fit 会物化整份变换结果（10M 行 × 767 列 = 57 GiB）。
+    # ⇒ 在大数据上按上限抽样来 fit（统计量在抽样上足够稳），
+    #   transform 也只在抽样集上做，不再为 5 行预览付出全量代价。
+    X_fit, _, sampling = cap_training_rows(X)
+    pipeline = build_pipeline(effective_cfg, X_fit).fit(X_fit)
+    Xp = pipeline.transform(X_fit)
 
     # 变换前后对照：取前 N 行原始特征与模型特征
     before = X.head(preview_rows).to_dicts()
@@ -206,11 +211,18 @@ def run_preprocess_step(
             "pipeline_report": pipeline.report,
             "before_preview": before,
             "after_preview": after,
+            "sampling": sampling,
         },
         note=(
             f"预处理后特征由 {len(feature_cols)} 列变为 {len(pipeline.feature_names_out_)} 列"
             f"（{'含' if effective_cfg.get('encoding') else '不含'}类别编码，"
-            f"{'含' if effective_cfg.get('scaling') else '不含'}数值缩放）"
+            f"{'含' if effective_cfg.get('scaling') else '不含'}数值缩放"
+            + (
+                f"；因数据量 {sampling['original_rows']:,} 行，管道仅在 "
+                f"{sampling['used_rows']:,} 行抽样上拟合）"
+                if sampling["sampled"]
+                else "）"
+            )
         ),
     )
 
@@ -277,6 +289,10 @@ def run_train_step(
     if preflight_error:
         return StepResult(step="train", status="failed", error=preflight_error)
 
+    # 训练集规模治理（与 ExperimentService 同一口径）：超限即随机抽样，
+    # 并把抽样信息写进 artifacts —— 静默改训练集规模会让指标无法解释。
+    X, y, sampling = cap_training_rows(X, y, seed=seed)
+
     try:
         pipeline = build_pipeline(preprocessing, X)
         model_obj = MODEL_REGISTRY.create(model, dict(parameters or {}))
@@ -286,13 +302,16 @@ def run_train_step(
             model_obj = MODEL_REGISTRY.create(model, model_obj.params)
 
         details: dict[str, Any] = {}
+        details["sampling"] = sampling
         if effective_task == "clustering":
             Xp = pipeline.fit_transform(X)
             model_obj.fit(Xp)
             metrics = evaluate_clustering(Xp, model_obj.labels_)
             train_rows, test_rows, stratified = X.height, 0, False
         else:
-            stratify = _can_stratify(y)
+            # 与 ExperimentService 同口径：分层切分只对分类任务有意义，
+            # 回归任务按类别分层会变成「要求测试集覆盖目标的所有取值」并莫名失败。
+            stratify = effective_task == "classification" and _can_stratify(y)
             # 分层切分的硬约束：每类样本数 × test_size 至少能分到 1 个测试样本，
             # 否则 sklearn 会抛难懂的 "test_size = N should be greater or equal to
             # the number of classes"。此处给出可操作的中文提示而非裸错。
@@ -391,10 +410,11 @@ def run_predict_step(
             artifacts={"required": feature_columns},
         )
     X_raw = df.select(feature_columns)
-    X = pipeline.transform(X_raw) if pipeline is not None else X_raw
     started = time.perf_counter()
     try:
-        prediction = model_obj.predict(X)
+        # 推理不能抽样，只能分块（见 ml_engine.inference）：1000 万行 × 767 列的
+        # 稠密矩阵是 57.1 GiB，一次性 transform + predict 必崩。
+        prediction = batch_predict(model_obj, X_raw, pipeline=pipeline)
     except Exception as exc:  # noqa: BLE001
         return StepResult(step="predict", status="failed", error=str(exc))
     elapsed = round(time.perf_counter() - started, 6)
@@ -407,7 +427,7 @@ def run_predict_step(
     probability_columns: list[str] = []
     if getattr(model_obj, "task", "") == "classification":
         try:
-            proba = model_obj.predict_proba(X)
+            proba = batch_predict_proba(model_obj, X_raw, pipeline=pipeline)
             probability_columns = list(proba.columns)
             for i, row in enumerate(proba.head(preview).to_dicts()):
                 if i < len(payload):

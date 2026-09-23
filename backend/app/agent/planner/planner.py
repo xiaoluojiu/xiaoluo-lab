@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from app.agent.context.budget import ContextBudget
 from app.agent.context.models import AgentContext
+from app.agent.intent import Intent, wants_modeling
 from app.agent.llm.base import LLMProvider
 from app.agent.planner.models import AgentPlan, PlanStep
 from app.core.config import settings
@@ -162,7 +163,19 @@ class AgentPlanner:
             "且其 column/x/y/columns 必须来自 dataset.schema / dataset.profile 的真实字段名，不确定就不要画）；"
             "除非用户明确只要聊天，否则不要省略 report.generate。"
             "workflow 相关请求请用 workflow.build_and_run 一步完成（内部已包含创建与执行），不要拆成 workflow.create + workflow.run。"
-            "建模请求固定顺序：dataset.inspect → dataset.profile → ml.detect_task(infer_target=true) → ml.prepare(target={{stepN.target}}) → ml.train(target={{stepN.target}}) → report.generate。"
+            "建模请求固定顺序：dataset.inspect → dataset.profile → ml.detect_task(infer_target=true, goal=用户诉求原文) → ml.prepare(target={{stepN.target}}) → ml.train(target={{stepN.target}}) → report.generate。"
+            "ml.detect_task 会自己按「命名约定 → 诉求语义（goal 与数据集名称）→ 排除日历/时间/标识列后的唯一候选」"
+            "推断目标列，并把依据写在 reasons / target_source 里 —— 所以 goal 一定要填用户诉求原文"
+            "（例如「预测出发延误」），推断质量取决于它。"
+            "只有当 ml.detect_task 回传 needs_target=true（确实无法唯一确定）时，才需要你从 target_candidates 中"
+            "依据用户诉求选定目标列，改用 ml.train(target=选定的列, model=\"auto\") 重试；绝不要在监督任务上用聚类代替。"
+            "若计划里同时有 ml.prepare / ml.train，直接引用 {{stepN.target}}（N=ml.detect_task 的步号）；"
+            "ml.train 自身也具备同一套推断能力，未给 target 时会自动推断并回传 target_inferred。"
+            "【信息不足时用 agent.clarify，不要猜】目标列不明、任务类型与列类型矛盾时，"
+            "用 agent.clarify 提出结构化问题并把候选列写进 options（禁止自由生成问题文本、"
+            "禁止在监督任务上用聚类顶替）；后续步骤用 {{stepN.answer}} 引用用户回答。"
+            "确实能从命名约定或诉求语义唯一确定目标列时，不要反问，直接填。"
+            "模型选择优先用 model=\"auto\"（按任务类型自动选），只有用户明确要求具体算法时才写模型名。"
             "计划的最后一步通常是 report.generate。"
             "每个步骤的 expected_output 用不超过 20 字的一句话概括，不要写长句。"
             "输出 JSON：{\"goal\": str, \"steps\": [{\"tool\": str, \"arguments\": object, \"expected_output\": str, \"permission\": str}]}。"
@@ -205,12 +218,20 @@ class AgentPlanner:
                 args.update(extra)
             return args
 
-        wants_train = any(k in text for k in ("训练", "模型", "预测", "分类", "回归", "train"))
-        wants_quality = any(k in text for k in ("质量", "缺失", "重复", "异常", "quality"))
+        # 关键词判定统一走 app.agent.intent（与运行时路由、候选工具注入共用一份）。
+        # 改之前这里有一套自己的关键词，漏改一处就表现为「走错分支」。
+        from app.agent.intent import classify, hits, model_hint, wants_merge
+
+        decision = classify(user_request, has_datasets=bool(ds_ids))
+        intent_hits = hits(text)
+        wants_train = wants_modeling(text)
+        wants_quality = bool(intent_hits.get(Intent.DATASET)) and any(
+            k in text for k in ("质量", "缺失", "重复", "异常", "quality")
+        )
         wants_corr = any(k in text for k in ("相关", "corr"))
-        wants_workflow = any(k in text for k in ("workflow", "工作流", "流程", "编排", "pipeline"))
-        wants_merge = any(k in text for k in ("合并", "关联", "拼接", "连接", "宽表", "join", "merge"))
-        wants_report = any(k in text for k in ("报告", "汇报", "导出", "report", "pdf"))
+        wants_workflow = bool(intent_hits.get(Intent.WORKFLOW))
+        wants_merge = wants_merge(text)  # noqa: F811 - 同名覆盖为布尔意图标记
+        wants_report = bool(intent_hits.get(Intent.REPORT))
         wants_chart = any(k in text for k in ("图", "可视化", "chart", "直方图", "散点", "热力图", "分布图"))
         # 注意：这里用到的工具必须在 ContextBuilder.with_tools 的确定性注入集合里，
         # 否则规则规划会引用未被注入的候选工具而被 _validate 拒绝。
@@ -256,18 +277,27 @@ class AgentPlanner:
             return AgentPlan(goal=f"编排并执行工作流：{user_request[:80]}", steps=steps[: self.max_steps])
 
         if wants_train:
+            # goal 带上用户诉求原文：ml.detect_task 靠它做语义匹配选目标列
+            # （规划阶段看不到列名，诉求是唯一能带过去的语义线索）。
+            _goal = user_request[:200]
             steps.extend([
                 PlanStep(tool="dataset.inspect", arguments=_args()),
                 PlanStep(tool="dataset.schema", arguments=_args()),
                 PlanStep(tool="dataset.profile", arguments=_args()),
-                PlanStep(tool="ml.detect_task", arguments=_args({"infer_target": True})),
+                PlanStep(
+                    tool="ml.detect_task",
+                    arguments=_args({"infer_target": True, "goal": _goal}),
+                ),
                 PlanStep(tool="ml.prepare", arguments=_args({"target": "{{step4.target}}"})),
             ])
-            # target 不再靠猜：ml.detect_task（第 4 步）会按命名约定推断目标列，
-            # ml.train 通过结构化引用消费其输出；无目标列时 detect_task 判为聚类，
-            # train 会给出明确错误而不是盲目执行。
-            model = "linear_regression" if "回归" in text else "logistic_regression"
-            train_args = _args({"model": model, "target": "{{step4.target}}"})
+            # target 不再靠猜：ml.detect_task（第 4 步）会按命名约定与数据集名称推断目标列，
+            # ml.train 通过结构化引用消费其输出。
+            # ★ model 用 auto 而不是硬编一个监督模型：用户说「选择适合的机器学习模型」
+            # （请求里既没有「回归」也没有「分类」）时，旧写法一律给 logistic_regression，
+            # 与 detect_task 判出的任务不匹配，被 ml.train 静默换成 kmeans —— 真实事故里
+            # 一条延误回归请求最终跑成了聚类。auto 交给任务类型决定，并在结果里留痕。
+            model = model_hint(text)
+            train_args = _args({"model": model, "target": "{{step4.target}}", "goal": _goal})
             steps.append(PlanStep(tool="ml.train", arguments=train_args))
             # 「训练并评估」是常见说法：训练步自带指标，但显式要求评估时应补 ml.evaluate，
             # 这样链路才闭环（此前规则规划只训练不评估，用户看到的结果少一截）。

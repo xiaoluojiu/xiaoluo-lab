@@ -510,8 +510,12 @@ def test_ml_train_evaluate_compare_explain(services, seeded):
     assert features == {"a", "b", "city=北京", "city=上海"}
 
 
-def test_ml_train_auto_detect_task(services, seeded):
-    """未指定 target 时自动判聚类。"""
+def test_ml_train_infers_convention_target_column(services, seeded):
+    """未指定 target 时按命名约定推断出 `label`，任务随之判为分类。
+
+    这正是过去失效的地方：ml.train 调用 ml.detect_task 时漏传 infer_target=True
+    （注释声称会传、代码没传），于是「训练一个模型」链路静默退化成聚类。
+    """
     result = TOOL_REGISTRY.execute(
         "ml.train",
         {
@@ -524,5 +528,109 @@ def test_ml_train_auto_detect_task(services, seeded):
         full_ctx(), services, confirmed=True,
     )
     assert result.success, result.errors
+    # 推断出 label → 分类；用户给的 kmeans 被换成该任务的默认模型
+    assert result.metadata["task"] == "classification"
+    assert result.metadata["model"] == "logistic_regression"
+    # ★ 换模型时必须丢掉不属于新模型的参数，否则 sklearn 报
+    #   "LogisticRegression.__init__() got an unexpected keyword argument 'n_clusters'"
+    assert result.data["model_adjusted"]["dropped_params"] == ["n_clusters"]
+
+
+def test_ml_train_without_target_or_convention_falls_back_to_clustering(services, dataset_service):
+    """既没有 target 也没有 target/label/y/class 列，且名称无任务提示 → 聚类。"""
+    ds = dataset_service.create("tools-demo-plain")
+    dataset_service.create_version(
+        ds.id,
+        pl.DataFrame(
+            {
+                "a": [float(i % 5) for i in range(30)],
+                "b": [float(i % 7) for i in range(30)],
+                "city": ["北京", "上海", "广州"] * 10,
+            }
+        ),
+    )
+    result = TOOL_REGISTRY.execute(
+        "ml.train",
+        {
+            "dataset_id": ds.id,
+            "model": "kmeans",
+            "params": {"n_clusters": 2},
+            "seed": 0,
+            "preprocessing": {"encoding": {"method": "one_hot"}},
+        },
+        full_ctx(ds.id), services, confirmed=True,
+    )
+    assert result.success, result.errors
     assert result.metadata["task"] == "clustering"
     assert result.data["status"] == "success"
+
+
+def test_ml_train_fails_instead_of_clustering_when_dataset_name_says_regression(
+    services, dataset_service
+):
+    """数据集名称写明是回归任务、又**无法唯一确定**目标列时，必须失败并给出候选目标列。
+
+    真实事故：数据集「航空公司出发延误预测（回归）」因为没有 target/label/y/class
+    字段被判成无监督聚类，kmeans 跑「成功」，用户要的延误预测整条链路跑偏。
+
+    这里刻意造成「两列都符合回归且无法区分」的歧义：推断器必须如实报告
+    「无法唯一确定」，而不是随手挑一个（也不许退回聚类）。
+    """
+    ds = dataset_service.create("延误预测（回归）")
+    dataset_service.create_version(
+        ds.id,
+        pl.DataFrame(
+            {
+                "x1": [float(i % 80) for i in range(200)],
+                "x2": [float(i % 90) for i in range(200)],
+                "city": ["北京", "上海", "广州", "深圳"] * 50,
+            }
+        ),
+    )
+    result = TOOL_REGISTRY.execute(
+        "ml.train",
+        {"dataset_id": ds.id, "model": "auto", "seed": 0},
+        full_ctx(ds.id), services, confirmed=True,
+    )
+    assert not result.success
+    assert result.data["needs_target"] is True
+    assert result.data["dataset_hint"] == "regression"
+    assert {"x1", "x2"} <= set(result.data["target_candidates"]["regression"])
+    assert "请显式指定 target" in result.errors[0]
+
+
+def test_ml_train_auto_infers_target_from_dataset_name(services, experiment_service, dataset_service):
+    """事故的正解：数据集名写着「出发延误预测」，列名 `DepDelay` 就是那个目标 ——
+    无需用户指定即可选中、训练，并把推断依据回执出来。
+
+    数据刻意做成「70 档取整后的延误分钟」：这是一个**取值不多的回归目标**。
+    过去分层切分判定只看唯一值数，会把这种目标按类别分层，然后以
+    「测试集样本不足以覆盖 70 个类别」失败（把回归说成分类，排查方向完全错）。
+    """
+    ds = dataset_service.create("航空公司出发延误预测（回归）")
+    dataset_service.create_version(
+        ds.id,
+        pl.DataFrame(
+            {
+                "DepDelay": [float(i % 70) for i in range(200)],
+                "x1": [float(i % 80) for i in range(200)],
+                "Month": [float(i % 12 + 1) for i in range(200)],
+                "Distance": [float(i % 90) for i in range(200)],
+            }
+        ),
+    )
+    result = TOOL_REGISTRY.execute(
+        "ml.train",
+        {"dataset_id": ds.id, "model": "auto", "seed": 0},
+        full_ctx(ds.id), services, confirmed=True,
+    )
+    assert result.success, result.errors
+    assert result.metadata["task"] == "regression"
+    inferred = result.data["target_inferred"]
+    assert inferred["target"] == "DepDelay"
+    assert inferred["source"] == "goal_match"
+    assert inferred["reasons"], "推断必须给出理由"
+    assert any("delay" in r for r in inferred["reasons"])
+    # ★ 回归任务不得被分层切分（否则低基数回归目标会被误判成多分类）
+    run = experiment_service.get_run(result.data["run_id"])
+    assert (run.artifacts or {}).get("stratified") is False

@@ -15,7 +15,13 @@ logger = logging.getLogger("xiaoluo.agent.store")
 
 # `usage` 是 Token 账本的增量快照事件：运行过程中就要能看到「花了多少 / 省了多少」，
 # 不能只在结束后算总账（同一批改动的动机见 app/agent/answer_source.py）。
-EVENT_TYPES=("route","planning","permission","tool_call","tool_result","validation","replanning","completed","failed","chat","usage")
+#: 事件类型（唯一真源）。``clarification`` = Pre-flight / agent.clarify 发起的结构化反问。
+#: 新增事件类型必须同步这里与前端渲染，避免「事件发了但界面不认」。
+EVENT_TYPES = (
+    "route", "planning", "permission", "tool_call", "tool_result", "validation",
+    "replanning", "completed", "failed", "chat", "usage",
+    "preflight", "clarification",
+)
 
 @dataclass
 class AgentTokenLedger:
@@ -50,16 +56,24 @@ class AgentEvent:
 
 class RunStatus(StrEnum):
     PENDING="pending";PLANNING="planning";RUNNING="running";WAITING_CONFIRMATION="waiting_confirmation";COMPLETED="completed";FAILED="failed"
+    #: Pre-flight / agent.clarify 反问等待态（第一层改造）。
+    #: 与 WAITING_CONFIRMATION 的区别：后者问「这个高风险操作要不要做」，
+    #: 前者问「信息不完整，请补一个参数」。两者都是「等用户提供输入才能继续」。
+    WAITING_CLARIFICATION="waiting_clarification"
 
 @dataclass
 class AgentRun:
     # answer_source：这条回答由谁产出（远程大模型 / 平台内置规则 / 调用失败降级）。
     # 取值与语义见 app/agent/answer_source.py；空串表示「尚未产生回答」。
     id:str;session_id:str;user_id:str;user_request:str;status:RunStatus=RunStatus.PENDING;plan:dict[str,Any]|None=None;tool_calls:list[ToolCallRecord]=field(default_factory=list);events:list[AgentEvent]=field(default_factory=list);final_answer:str="";error:str="";pending_confirmation:dict[str,Any]|None=None;token_ledger:AgentTokenLedger=field(default_factory=AgentTokenLedger);cancel_requested:bool=False;answer_source:str="";created_at:float=field(default_factory=time.time);started_at:float|None=None;finished_at:float|None=None
+    #: Pre-flight 结果快照（第一层）：本次运行开工前判定了什么、问了什么。
+    preflight:dict[str,Any]|None=None
+    #: 用户对本轮反问的回答（code -> answer）。回答后重新规划，据此跳过已解决项。
+    clarification_answers:dict[str,str]=field(default_factory=dict)
     @property
     def tool_call_count(self):return len(self.tool_calls)
     def elapsed(self):return max((self.finished_at or time.time())-(self.started_at or self.created_at),0.0)
-    def summary(self):return {"id":self.id,"session_id":self.session_id,"user_request":self.user_request,"status":str(self.status),"final_answer":self.final_answer,"error":self.error,"plan":self.plan,"tool_calls":[c.to_dict() for c in self.tool_calls],"tool_call_count":self.tool_call_count,"cancel_requested":self.cancel_requested,"pending_confirmation":({"tool":self.pending_confirmation["call"].tool,"arguments":self.pending_confirmation["call"].arguments,"step_index":self.pending_confirmation["step_index"],"reason":self.pending_confirmation["call"].error} if self.pending_confirmation else None),"token_usage":self.token_ledger.to_dict(),"answer_source":describe(self.answer_source),"elapsed_seconds":round(self.elapsed(),3)}
+    def summary(self):return {"id":self.id,"session_id":self.session_id,"user_request":self.user_request,"status":str(self.status),"final_answer":self.final_answer,"error":self.error,"plan":self.plan,"tool_calls":[c.to_dict() for c in self.tool_calls],"tool_call_count":self.tool_call_count,"cancel_requested":self.cancel_requested,"pending_confirmation":({"tool":self.pending_confirmation["call"].tool,"arguments":self.pending_confirmation["call"].arguments,"step_index":self.pending_confirmation["step_index"],"reason":self.pending_confirmation["call"].error} if self.pending_confirmation else None),"token_usage":self.token_ledger.to_dict(),"answer_source":describe(self.answer_source),"elapsed_seconds":round(self.elapsed(),3),"preflight":self.preflight,"clarification_answers":dict(self.clarification_answers)}
     def full(self):
         d=self.summary();d["events"]=[e.to_dict() for e in self.events];return d
 
@@ -72,7 +86,7 @@ class AgentSession:
 
 class AgentStore:
     """线程安全的轻量 JSON 持久化；一个 Session 同一时间只允许一个活动 Turn。"""
-    ACTIVE_STATUSES={RunStatus.PENDING,RunStatus.PLANNING,RunStatus.RUNNING,RunStatus.WAITING_CONFIRMATION}
+    ACTIVE_STATUSES={RunStatus.PENDING,RunStatus.PLANNING,RunStatus.RUNNING,RunStatus.WAITING_CONFIRMATION,RunStatus.WAITING_CLARIFICATION}
     # 事件级 persist 的最小间隔（秒）。_persist_locked 每次都会把**全部**会话与运行（含每条事件）
     # 序列化重写一遍，而一次运行会产生几十个事件，逐事件落盘是明显的写放大。
     _PERSIST_MIN_INTERVAL=0.5
@@ -159,7 +173,7 @@ class AgentStore:
                 status=RunStatus(x.get("status","pending"))
                 # WAITING_CONFIRMATION 同样标记为中断：重启后 pending_confirmation
                 # 未完整序列化、无法恢复授权流程，保留该状态只会让会话永久 409。
-                interrupted=status in {RunStatus.PENDING,RunStatus.PLANNING,RunStatus.RUNNING,RunStatus.WAITING_CONFIRMATION}
+                interrupted=status in {RunStatus.PENDING,RunStatus.PLANNING,RunStatus.RUNNING,RunStatus.WAITING_CONFIRMATION,RunStatus.WAITING_CLARIFICATION}
                 if interrupted: status=RunStatus.FAILED
                 r=AgentRun(id=x["id"],session_id=x.get("session_id",""),user_id=x.get("user_id","anonymous"),user_request=x.get("user_request",""),status=status,plan=x.get("plan"),final_answer=x.get("final_answer",""),error=(x.get("error","") or "") if not interrupted else "后端进程重启，上一轮 Agent Turn 被中断；原执行过程已保留，可重新发起任务。",created_at=float(x.get("created_at",time.time())),started_at=x.get("started_at"),finished_at=x.get("finished_at") or (time.time() if interrupted else None));u=x.get("token_usage",{});a=u.get("actual",{});o=u.get("optimization",{});r.token_ledger=AgentTokenLedger(llm_calls=int(u.get("llm_calls",0)),actual_input_tokens=int(a.get("input_tokens",0)),actual_output_tokens=int(a.get("output_tokens",0)),actual_total_tokens=int(a.get("total_tokens",0)),estimated_context_saved_tokens=int(o.get("estimated_context_saved_tokens",0)),estimated_result_saved_tokens=int(o.get("estimated_result_saved_tokens",0)),avoided_planner_calls=int(o.get("avoided_planner_calls",0)),cache_hits=int(o.get("plan_cache_hits",0)))
                 for e in x.get("events",[]):r.events.append(AgentEvent(seq=int(e.get("seq",len(r.events)+1)),run_id=r.id,type=e.get("type","planning"),payload=dict(e.get("payload") or {}),created_at=float(e.get("created_at",time.time()))))

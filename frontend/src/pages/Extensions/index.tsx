@@ -1,13 +1,15 @@
 import { PageHeader } from "../../components/PageHeader";
+import { SectionHeader } from "../../components/viz/Blocks";
+import ConnectorPanel from "./ConnectorPanel";
 import "./extensions.css";
 
 const SLOTS = [
-  { name: "数据库连接器", status: "soon" as const, desc: "接入 Postgres / MySQL / 对象存储等外部数据源。" },
+  { name: "数据库连接器", status: "enabled" as const, desc: "接入 Postgres / MySQL / SQLite 等外部数据源，按批抽取为数据集版本。" },
   { name: "LLM 供应商", status: "soon" as const, desc: "接入更多大模型供应商，与默认兼容端点并存。" },
   { name: "通知渠道", status: "soon" as const, desc: "运行完成 / 失败事件推送到邮件、Slack、企业微信与 Webhook。" },
   { name: "自定义算子", status: "soon" as const, desc: "注册业务专属的数据处理与建模算子。" },
   { name: "团队协作", status: "soon" as const, desc: "多租户、成员权限与共享工作区。" },
-  { name: "内置工具集", status: "enabled" as const, desc: "已接入 22 个内置工具（数据集 / 数据 / EDA / ML）。" },
+  { name: "内置工具集", status: "enabled" as const, desc: "已接入 34 个内置工具（数据集 / 数据 / EDA / ML / 工作流 / 报告 / 数据库连接器）。" },
 ];
 
 const DEV_API = [
@@ -17,7 +19,7 @@ const DEV_API = [
 ];
 
 const ROADMAP = [
-  { m: "M1", t: "数据库连接器 + 通知渠道 Alpha" },
+  { m: "M1", t: "数据库连接器（已上线）+ 通知渠道 Alpha" },
   { m: "M2", t: "LLM 供应商可插拔" },
   { m: "M3", t: "自定义算子市场" },
   { m: "M4", t: "团队协作（多租户 + 权限）" },
@@ -25,7 +27,7 @@ const ROADMAP = [
 
 /**
  * 扩展中心。
- * 列出已接入与规划中的扩展能力，规划项随后端能力逐步点亮。
+ * 列出已接入与规划中的扩展能力；数据库连接器已经可用，直接就地展开使用。
  */
 export default function Extensions() {
   return (
@@ -52,8 +54,13 @@ export default function Extensions() {
         </div>
       </section>
 
+      {/* 数据库连接器：已上线，就地展开（不再跳转到单独页面，保持「拓展功能」的入口收敛）。 */}
+      <section className="card-block connector-section">
+        <ConnectorPanel />
+      </section>
+
       <section className="card-block">
-        <h2 className="section-title">开发者接口</h2>
+        <SectionHeader title="开发者接口" />
         <div className="grid g3">
           {DEV_API.map((d) => (
             <div className="card ext-card" key={d.name}>

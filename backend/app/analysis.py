@@ -42,47 +42,123 @@ def _safe_n_unique(series: pl.Series) -> int:
         return -1
 
 
-# 低基数整型列会被判定为「分类编码」，不算连续变量。
+# 低基数数值列会被判定为「分类编码」，不算连续变量。
 # 这是为修复「VendorID/payment_type/RatecodeID/PULocationID/DOLocationID 被当连续变量
 # 算均值/std、进相关性热力图、做 Q-Q 图」而设的阈值（见 FRONTEND/PROJECT 笔记 §报告同质化）。
-# 现实数据里这类列几乎都是编码/ID，唯一值数远小于行数，且通常 < 50。
+# 现实数据里这类列几乎都是编码/ID/日历字段，唯一值数远小于行数，且通常 < 50。
 _CATEGORICAL_MAX_UNIQUE = 50
+
+#: 判定「浮点列的值全部落在整数上」的容差。
+#: ARFF / CSV 里的日历与编码字段（Month / DayofMonth / DayOfWeek）经常被读成
+#: Float64，值本身是 1..12 / 1..31 / 1..7 这样的整数，必须与整型列同等对待。
+_INTEGRAL_TOLERANCE = 1e-9
+
+#: 对**浮点列**启用「低基数即分类」判定的最小行数。
+#: 「唯一值数远少于行数」这个判据只有在行数足够多时才有区分力：31 行的表里
+#: 一个 7 取值列说明不了任何问题（采样本来就少），而 1000 万行的表里
+#: 12 取值只可能是月份这种编码。加这道闸门是为了让本判定只作用于它要解决的大表场景，
+#: 不影响小数据集上「低基数浮点列算连续量」的既有行为。
+_FLOAT_CATEGORICAL_MIN_ROWS = 1000
+
+
+def _is_integral_valued(series: pl.Series) -> bool:
+    """浮点列是否全部落在整数上（真实事故：airlines 的 Month=12 / DayofMonth=31 /
+    DayOfWeek=7 全是 Float64，若只放行整型列，它们会被当连续变量算均值、
+    进相关性热力图、还生成正态 Q-Q 图，把报告带偏）。"""
+    s = series.drop_nulls()
+    if s.len() == 0:
+        return False
+    try:
+        diff = (s - s.round(0)).abs().max()
+    except Exception:  # noqa: BLE001 - 类型不支持时按「非整数」处理
+        return False
+    return diff is not None and float(diff) <= _INTEGRAL_TOLERANCE
+
+
+def _batch_n_unique(df: pl.DataFrame, columns: list[str]) -> dict[str, int]:
+    """一次 ``select`` 批量算多列唯一值数。
+
+    逐列 ``df[c].n_unique()`` 会各起一次全表扫描；批量写法把同一份扫描结果
+    复用于所有列（与本模块 ``_batch_series_stats`` 同一思路）。不可哈希类型
+    与批量失败都退回单列 ``_safe_n_unique``，保证只退化、不报错。
+    """
+    out: dict[str, int] = {}
+    if not columns:
+        return out
+    try:
+        exprs = [pl.col(c).n_unique().alias(c) for c in columns]
+        row = df.select(exprs).row(0, named=True)
+    except Exception:  # noqa: BLE001 - 批量失败逐列兜底
+        row = {}
+    for c in columns:
+        value = row.get(c) if isinstance(row, dict) else None
+        out[c] = int(value) if value is not None else _safe_n_unique(df[c])
+    return out
+
+
+def classify_columns(df: pl.DataFrame, columns: list[str] | None = None) -> dict[str, bool]:
+    """一次性判定每列「是否按分类变量对待」。
+
+    调用方应优先用本函数而不是分别调 ``categorical_columns`` + ``continuous_columns``：
+    后者会把每列的唯一值数**算两遍**（大表上就是两倍全表扫描）。
+
+    规则：非数值类型一律分类；数值类型中「唯一值数 ≤ 50 且唯一值数明显少于行数」
+    的列视为分类编码。整型直接放行；浮点还要满足「取值全部是整数」，避免把
+    金额/距离/延误分钟这类低基数浮点列误判成分类。
+    """
+    cols = [c for c in (columns or df.columns) if c in df.columns]
+    if not cols:
+        return {}
+    result: dict[str, bool] = {}
+    numeric: list[str] = []
+    for c in cols:
+        dtype = df.schema[c]
+        if not dtype.is_numeric():
+            result[c] = True
+            continue
+        result[c] = False
+        if isinstance(dtype, _HASHABLE_SKIP_TYPES):
+            continue
+        numeric.append(c)
+    counts = _batch_n_unique(df, numeric)
+    rows = int(df.height)
+    for c in numeric:
+        n = counts.get(c, -1)
+        if not (0 <= n <= _CATEGORICAL_MAX_UNIQUE and n * 2 < rows):
+            continue
+        if df.schema[c].is_integer():
+            result[c] = True
+        elif rows >= _FLOAT_CATEGORICAL_MIN_ROWS:
+            # 浮点列：只有「值全是整数」才可能是编码/日历列（Month=1..12、DayOfWeek=1..7）
+            result[c] = _is_integral_valued(df[c])
+    return result
 
 
 def is_categorical_like(df: pl.DataFrame, column: str) -> bool:
     """判断某列是否应视为「分类变量」而非「连续变量」。
 
-    规则：非数值类型（字符串/布尔/时间）一律视为分类；数值类型中，
-    **整型**且「唯一值数 ≤ _CATEGORICAL_MAX_UNIQUE 且唯一值明显少于行数
-    （n_unique * 2 < n_rows）」的列视为分类编码（VendorID/payment_type/RatecodeID/
-    PULocationID/DOLocationID 等）。加「唯一值远小于行数」这一条，是为了避免把
+    规则见 :func:`classify_columns`。加「唯一值远小于行数」这一条，是为了避免把
     小数据集里接近一一对应的连续整型列（如 age、行号）误判成分类（回归：6 行的
     age 有 6 个唯一值，若只看 n_unique≤50 会被误判）。
     """
-    dtype = df.schema.get(column)
-    if dtype is None:
+    if column not in df.columns:
         return False
-    if not dtype.is_numeric():
-        return True
-    # 数值类型里，浮点几乎都是连续量（金额/距离），只有整型才可能是编码/ID。
-    if dtype.is_integer():
-        n = _safe_n_unique(df[column])
-        rows = int(df.height)
-        if 0 <= n <= _CATEGORICAL_MAX_UNIQUE and n * 2 < rows:
-            return True
-    return False
+    return bool(classify_columns(df, [column]).get(column, False))
 
 
 def categorical_columns(df: pl.DataFrame, columns: list[str] | None = None) -> list[str]:
     """返回应视为分类变量的列名（供相关性/描述统计剔除连续误判）。"""
-    cols = columns or list(df.columns)
-    return [c for c in cols if c in df.columns and is_categorical_like(df, c)]
+    return [c for c, is_cat in classify_columns(df, columns).items() if is_cat]
 
 
 def continuous_columns(df: pl.DataFrame, columns: list[str] | None = None) -> list[str]:
     """返回应视为连续变量的数值列（分类编码列已剔除）。"""
-    cols = columns or list(df.columns)
-    return [c for c in cols if c in df.columns and df.schema[c].is_numeric() and not is_categorical_like(df, c)]
+    cls = classify_columns(df, columns)
+    return [
+        c
+        for c in (columns or df.columns)
+        if c in df.columns and df.schema[c].is_numeric() and not cls.get(c, False)
+    ]
 
 
 def _batch_series_stats(
@@ -556,6 +632,18 @@ def compute_outlier_bounds(
 
 
 class OutlierChecker(QualityChecker):
+    """异常值检查。
+
+    在原有「算边界 + 报数量」之外补上了**方法适用性判定**（第二层改造）：
+    每个字段先经 :mod:`app.quality` 得到语义画像，再判断当前方法是否适用；
+    不适用时把 ``method_mismatch`` 写进 ``details``（不改判定结果本身），
+    由报告/Agent 向用户说明「这个结论可能不成立」。
+
+    为什么默认只标注、不改判定：直接换方法会静默改变既有报告的数字
+    （如 ``v=[1,2,3,4,5,100]`` 在 IQR 下 1 个异常、换分位数口径后可能 0 个）。
+    需要真正改方法时显式传 ``adaptive=True``，由调用方承担口径变化。
+    """
+
     name = "outlier"
 
     def __init__(
@@ -566,37 +654,146 @@ class OutlierChecker(QualityChecker):
         z_threshold: float = 3.0,
         columns: list[str] | None = None,
         warn_threshold: float = 0.01,
+        target: str | None = None,
+        business_rules: list[Any] | None = None,
+        adaptive: bool = False,
     ) -> None:
         self.method = method
         self.k = k
         self.z_threshold = z_threshold
         self.columns = columns
         self.warn_threshold = warn_threshold
+        #: 目标列：只描述、不产出清洗建议
+        self.target = target
+        self.business_rules = list(business_rules or [])
+        #: True ⇒ 按字段语义自动改用适配方法（口径会变，需调用方知情）
+        self.adaptive = adaptive
 
     def check(self, df: pl.DataFrame) -> list[QualityIssue]:
         cols = self.columns or [c for c, d in df.schema.items() if d.is_numeric()]
         issues: list[QualityIssue] = []
         if df.height == 0:
             return issues
+
+        semantics: dict[str, Any] = {}
+        if self.adaptive or self.target or self.business_rules:
+            semantics = _infer_column_semantics(
+                df, target=self.target, business_rules=self.business_rules
+            )
+
         for name in cols:
             dtype = df.schema[name]
             if not dtype.is_numeric():
                 continue
-            lower, upper, info = compute_outlier_bounds(
-                df[name], method=self.method, k=self.k, z_threshold=self.z_threshold
-            )
-            if info.get("empty") or info.get("constant"):
-                continue
+            sem = semantics.get(name)
+            rules = None
+            if sem is not None and isinstance(sem.stats.get("business_rule"), dict):
+                rules = _business_rule_from(sem)
+
+            if self.adaptive and sem is not None:
+                decision = _assess_column(
+                    sem, df[name], requested=self.method, k=self.k,
+                    z_threshold=self.z_threshold, business_rule=rules,
+                )
+                bounds = decision.value
+                if bounds is None or not bounds.usable:
+                    continue
+                lower_f = bounds.lower if bounds.lower is not None else float("-inf")
+                upper_f = bounds.upper if bounds.upper is not None else float("inf")
+                info = dict(bounds.info)
+                info["method"] = bounds.method
+                if bounds.notes:
+                    info["adjusted_notes"] = list(bounds.notes)
+                used_method = bounds.method
+                if used_method == "low_frequency":
+                    # 低频类别没有数值边界，只报取值清单
+                    rare = bounds.info.get("rare_values") or []
+                    if not rare:
+                        continue
+                    issues.append(
+                        QualityIssue(
+                            check=self.name,
+                            column=name,
+                            severity="low",
+                            message=(
+                                f"字段 {name!r} 检测到 {bounds.info.get('rare_value_count', 0)} "
+                                f"个低频取值（占比 < {bounds.info.get('threshold_ratio', 0):.2%}）"
+                            ),
+                            details={
+                                "method": "low_frequency",
+                                "outlier_count": int(bounds.info.get("rare_value_count", 0)),
+                                "outlier_ratio": 0.0,
+                                "sample_outliers": rare[:5],
+                                "applicable": True,
+                                "recommended_method": "low_frequency",
+                                "method_mismatch": None,
+                            },
+                        )
+                    )
+                    continue
+            else:
+                lower_f, upper_f, info = compute_outlier_bounds(
+                    df[name], method=self.method, k=self.k, z_threshold=self.z_threshold
+                )
+                if info.get("empty") or info.get("constant"):
+                    continue
+                used_method = self.method
+
             s = df[name]
-            mask = (s < lower) | (s > upper)
+            mask = (s < lower_f) | (s > upper_f)
             count = int(mask.sum())
+            mismatch = None
+            recommended = used_method
+            cleaning = True
+            if sem is not None:
+                verdict = _select_outlier_method(
+                    sem, requested=self.method, business_rule=rules
+                )
+                recommended = verdict.value or used_method
+                blocking = verdict.findings
+                mismatch = (
+                    {
+                        "code": blocking[0].code,
+                        "severity": str(blocking[0].severity),
+                        "message": blocking[0].message,
+                        "suggestion": blocking[0].suggestion,
+                    }
+                    if blocking
+                    else None
+                )
+                cleaning = _should_suggest_cleaning(sem)
+                # 目标列不进结论（只描述）
+                if sem.is_target:
+                    cleaning = False
             if count == 0:
+                # 保持既有行为：没有异常值就不产出 issue。方法不适用的提示只在
+                # 确有个结论需要被质疑时才有意义，凭空报「0 个异常但方法不对」
+                # 会让质量问题表凭空变长，掩盖真正需要看的问题。
                 continue
             ratio = count / df.height
             severity = "high" if ratio >= self.warn_threshold * 5 else (
                 "medium" if ratio >= self.warn_threshold else "low"
             )
             samples = s.filter(mask).head(5).to_list()
+            details = {
+                **info,
+                "lower": lower_f,
+                "upper": upper_f,
+                "outlier_count": count,
+                "outlier_ratio": round(ratio, 6),
+                "sample_outliers": samples,
+                "applicable": mismatch is None,
+                "recommended_method": recommended,
+                "method_mismatch": mismatch,
+                "cleaning_suggested": cleaning,
+            }
+            if sem is not None:
+                details["semantics"] = {
+                    "role": str(sem.role),
+                    "domain": str(sem.domain),
+                    "shape": str(sem.shape),
+                    "is_target": sem.is_target,
+                }
             issues.append(
                 QualityIssue(
                     check=self.name,
@@ -604,19 +801,68 @@ class OutlierChecker(QualityChecker):
                     severity=severity,
                     message=(
                         f"字段 {name!r} 检测到 {count} 个异常值 ({ratio:.2%})，"
-                        f"方法={self.method}，边界=[{lower:.4g}, {upper:.4g}]"
+                        f"方法={used_method}，边界=[{lower_f:.4g}, {upper_f:.4g}]"
+                        + (
+                            f"；⚠ 该方法对本字段可能不适用（建议 {recommended}）"
+                            if mismatch
+                            else ""
+                        )
                     ),
-                    details={
-                        **info,
-                        "lower": lower,
-                        "upper": upper,
-                        "outlier_count": count,
-                        "outlier_ratio": round(ratio, 6),
-                        "sample_outliers": samples,
-                    },
+                    details=details,
                 )
             )
         return issues
+
+
+# ---- Quality 层标准能力接线（延迟导入，避免与 app.quality 形成循环依赖） ----
+
+def _infer_column_semantics(
+    df: "pl.DataFrame", *, target: str | None, business_rules: list[Any]
+) -> dict[str, Any]:
+    from app.quality.semantics import infer_semantics
+
+    try:
+        return infer_semantics(df, target=target, business_rules=business_rules)
+    except Exception:  # noqa: BLE001 - 语义推断失败不得影响质量检查本身
+        return {}
+
+
+def _select_outlier_method(sem: Any, *, requested: str, business_rule: Any) -> Any:
+    from app.quality.outlier_strategy import select_outlier_method
+
+    return select_outlier_method(sem, requested=requested, business_rule=business_rule)
+
+
+def _assess_column(
+    sem: Any, series: "pl.Series", *, requested: str, k: float, z_threshold: float, business_rule: Any
+) -> Any:
+    from app.quality.outlier_strategy import assess_column
+
+    return assess_column(
+        sem, series, requested=requested, k=k,
+        z_threshold=z_threshold, business_rule=business_rule,
+    )
+
+
+def _should_suggest_cleaning(sem: Any) -> bool:
+    from app.quality.outlier_strategy import should_suggest_cleaning
+
+    return should_suggest_cleaning(sem)
+
+
+def _business_rule_from(sem: Any) -> Any:
+    from app.quality.semantics import BusinessRule
+
+    raw = sem.stats.get("business_rule") or {}
+    return BusinessRule(
+        column=raw.get("column", sem.name),
+        lower=raw.get("lower"),
+        upper=raw.get("upper"),
+        strict_lower=bool(raw.get("strict_lower")),
+        strict_upper=bool(raw.get("strict_upper")),
+        allowed_values=raw.get("allowed_values"),
+        note=str(raw.get("note") or ""),
+    )
 
 
 # 期望类型别名 -> 兼容的 Polars dtype 基类型
@@ -799,12 +1045,25 @@ def build_report(
     checkers: list[QualityChecker] | None = None,
     *,
     expected_schema: dict[str, str] | None = None,
+    target: str | None = None,
+    business_rules: list[Any] | None = None,
+    adaptive_outlier: bool = False,
 ) -> QualityReport:
+    """汇总质量检查。
+
+    ``target`` / ``business_rules`` / ``adaptive_outlier`` 是第二层改造的入口：
+    知道目标列时，异常值检查会标注「该列是目标，不做清洗建议」；
+    传了业务口径时，业务口径优先于统计口径。三者都缺省时行为与改造前完全一致。
+    """
     if checkers is None:
         checkers = [
             MissingChecker(),
             DuplicateChecker(),
-            OutlierChecker(),
+            OutlierChecker(
+                target=target,
+                business_rules=business_rules,
+                adaptive=adaptive_outlier,
+            ),
         ]
 
         if expected_schema is not None:

@@ -12,6 +12,7 @@ from app.agent.runtime.models import AgentStore
 from app.agent.runtime.agent_runtime import AgentRuntime
 from app.core.config import settings
 from app.core.database import get_db
+from app.connectors.service import ConnectorService
 from app.data_engine.service import DataEngineService
 from app.experiments.service import ExperimentService
 from app.learning.service import LearningService
@@ -54,6 +55,19 @@ def get_dataset_service(db: Session = Depends(get_db), storage: StorageService =
 
 def get_data_engine_service(dataset_service: DatasetService = Depends(get_dataset_service)) -> DataEngineService:
     return DataEngineService(dataset_service)
+
+
+def get_connector_service(
+    db: Session = Depends(get_db),
+    dataset_service: DatasetService = Depends(get_dataset_service),
+) -> ConnectorService:
+    """数据库连接器服务（拓展功能）。
+
+    依赖 DatasetService 是刻意的：连接器导入的产物必须是与其他数据集完全等价的
+    DatasetVersion，因此抽取落盘走的是同一条 ``stage_version`` 链路，
+    而不是连接器自己另搞一套存储。
+    """
+    return ConnectorService(db, dataset_service)
 
 def get_experiment_service(db: Session = Depends(get_db), dataset_service: DatasetService = Depends(get_dataset_service)) -> ExperimentService:
     return ExperimentService(db, dataset_service)

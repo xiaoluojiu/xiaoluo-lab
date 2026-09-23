@@ -251,6 +251,32 @@ class DataEngineService:
             df
         )
 
+    def column_schema(
+        self,
+        dataset_id: int,
+        version: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """只读列结构（列名 + dtype），**不加载任何数据行**。
+
+        为 Pre-flight 而设：目标列是否明确、任务类型是否与列类型矛盾，
+        这两项判定只需要列名与类型。用 `schema()` 会去算每列唯一值，
+        在千万行表上是几十秒级开销 —— 那是「为了防错反而把链路拖垮」。
+
+        拿不到本地路径（如远端存储）时返回空列表，调用方据此跳过相关检查。
+        """
+        try:
+            version_row = self.dataset_service.get_version_row(dataset_id, version)
+            path = self.dataset_service.version_local_path(version_row)
+        except Exception:  # noqa: BLE001 - 探测失败按「拿不到」处理
+            return []
+        if path is None:
+            return []
+        try:
+            collected = pl.scan_parquet(str(path)).collect_schema()
+        except Exception:  # noqa: BLE001
+            return []
+        return [{"name": str(name), "dtype": str(dtype)} for name, dtype in collected.items()]
+
     def profile(
         self,
         df: pl.DataFrame,
@@ -279,10 +305,21 @@ class DataEngineService:
             str,
         ]
         | None = None,
+        target: str | None = None,
+        business_rules: list[Any] | None = None,
+        adaptive_outlier: bool = False,
     ) -> dict[str, Any]:
+        """质量检查。
+
+        ``target`` 传入后，异常值检查会把该列标为「只描述、不清洗」，
+        并在结果里说明它未进入清洗建议（第二层：目标列保护）。
+        """
         return build_report(
             df,
             expected_schema=expected_schema,
+            target=target,
+            business_rules=business_rules,
+            adaptive_outlier=adaptive_outlier,
         ).to_dict()
 
     # =========================================================

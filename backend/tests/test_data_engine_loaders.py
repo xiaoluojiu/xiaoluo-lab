@@ -9,6 +9,7 @@ import pytest
 from app.data_engine.exceptions import LoadError, UnsupportedFormat
 from app.data_engine.loaders import (
     REGISTRY,
+    ArffLoader,
     CSVLoader,
     ExcelLoader,
     JSONLoader,
@@ -171,6 +172,85 @@ class TestExcelLoader:
         assert ExcelLoader().can_handle("a.xlsx")
         assert ExcelLoader().can_handle("a.xls")
         assert not ExcelLoader().can_handle("a.csv")
+
+
+ARFF_WEATHER = b"""% a comment line
+@relation weather
+
+@attribute outlook {sunny, overcast, rainy}
+@attribute temperature real
+@attribute humidity real
+@attribute windy {TRUE, FALSE}
+@attribute play {yes, no}
+
+@data
+sunny,85,85,FALSE,no
+sunny,80,90,TRUE,no
+overcast,83,86,FALSE,yes
+rainy,70,96,FALSE,yes
+rainy,68,80,FALSE,yes
+{0 overcast, 1 81, 2 75, 4 yes}
+"""
+
+
+class TestArffLoader:
+    def test_load_dense_and_sparse(self):
+        result = ArffLoader().load(ARFF_WEATHER)
+        assert result.format == "arff"
+        assert result.df.height == 6
+        assert result.df.columns == [
+            "outlook",
+            "temperature",
+            "humidity",
+            "windy",
+            "play",
+        ]
+
+    def test_relation_and_attribute_names(self):
+        result = ArffLoader().load(ARFF_WEATHER)
+        assert result.metadata["relation"] == "weather"
+        assert result.metadata["columns"] == [
+            "outlook",
+            "temperature",
+            "humidity",
+            "windy",
+            "play",
+        ]
+
+    def test_sparse_missing_values_filled(self):
+        result = ArffLoader().load(ARFF_WEATHER)
+        last_row = result.df[-1]
+        # 稀疏行 {0 overcast, 1 81, 2 75, 4 yes}：windy 缺失应为 null
+        assert last_row["outlook"][0] == "overcast"
+        assert last_row["windy"][0] is None
+
+    def test_numeric_type_inference(self):
+        result = ArffLoader().load(ARFF_WEATHER)
+        assert result.df.schema["temperature"] in (pl.Float64, pl.Float32)
+        assert result.df.schema["humidity"] in (pl.Float64, pl.Float32)
+
+    def test_nominal_string_type(self):
+        result = ArffLoader().load(ARFF_WEATHER)
+        assert result.df.schema["outlook"] == pl.Utf8
+
+    def test_missing_attribute_def(self):
+        bad = b"@relation x\n@data\n1,2\n"
+        with pytest.raises(LoadError):
+            ArffLoader().load(bad)
+
+    def test_missing_data_section(self):
+        bad = b"@relation x\n@attribute a numeric\n"
+        with pytest.raises(LoadError):
+            ArffLoader().load(bad)
+
+    def test_can_handle(self):
+        loader = ArffLoader()
+        assert loader.can_handle("a.arff")
+        assert not loader.can_handle("a.csv")
+
+    def test_registry_routes_arff(self):
+        assert isinstance(REGISTRY.get_loader("x.arff"), ArffLoader)
+        assert ".arff" in REGISTRY.supported_extensions
 
 
 class TestRegistry:

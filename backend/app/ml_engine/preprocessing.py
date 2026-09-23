@@ -13,6 +13,7 @@ from sklearn.model_selection import train_test_split as _sk_train_test_split
 from sklearn.pipeline import FunctionTransformer, Pipeline
 from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, StandardScaler, MinMaxScaler
 
+from app.core.config import settings
 from app.ml_engine.exceptions import MLEngineException
 
 MISSING_STRATEGIES = {"mean", "median", "mode", "constant"}
@@ -20,6 +21,158 @@ ENCODING_METHODS = {"one_hot", "ordinal"}
 SCALING_METHODS = {"standard", "min_max"}
 _IMPUTE = {"mean": "mean", "median": "median", "mode": "most_frequent", "constant": "constant"}
 _TO_FLOAT = FunctionTransformer(np.asarray, kw_args={"dtype": "float64"})
+
+# 每个 float64/int64 元素占 8 字节。所有内存估算都基于它。
+_ITEMSIZE = 8
+
+
+# =========================================================
+# 内存治理：配置读取 + 稠密规模估算
+# =========================================================
+#
+# 背景：sklearn 的估计器几乎都要求**稠密** numpy 矩阵，而本模块的对外契约是
+# 返回 pl.DataFrame（无法承载稀疏）。于是「one-hot 高基数列 + 大数据集」必然
+# 撞内存。实测事故：10,000,000 行 × 767 列 int64 = 57.1 GiB，直接
+# numpy._core._exceptions._ArrayMemoryError。
+#
+# 对策分三层，缺一不可：
+#   ① 抽样（cap_training_rows）：让大数据集默认能训得动，且**绝不静默**；
+#   ② 基数控制（ML_ONEHOT_MAX_CATEGORIES）：从源头压住列数膨胀；
+#   ③ 规模预检（_assert_dense_fits）：真装不下时给出可操作的中文报错，
+#      而不是让 numpy 抛一个看不懂的 GiB 数字。
+# =========================================================
+
+
+def _max_dense_bytes() -> int:
+    """稠密特征矩阵的内存预算（字节）。<=0 表示不设限。"""
+    try:
+        return int(settings.ML_MAX_DENSE_BYTES)
+    except Exception:  # pragma: no cover - 配置层异常时按默认兜底
+        return 2 * 1024 * 1024 * 1024
+
+
+def _max_train_rows() -> int:
+    """单次训练的最大样本数。<=0 表示不抽样。"""
+    try:
+        return int(settings.ML_MAX_TRAIN_ROWS)
+    except Exception:  # pragma: no cover
+        return 200_000
+
+
+def _onehot_max_categories() -> int | None:
+    """one-hot 单列最大类别数；<=0 表示不合并（保留旧行为）。"""
+    try:
+        cap = int(settings.ML_ONEHOT_MAX_CATEGORIES)
+    except Exception:  # pragma: no cover
+        return 50
+    return cap if cap > 0 else None
+
+
+def _max_silhouette_samples() -> int:
+    """轮廓系数的采样上限（该指标复杂度 O(n²)）。<=0 表示不采样。"""
+    try:
+        return int(settings.ML_MAX_SILHOUETTE_SAMPLES)
+    except Exception:  # pragma: no cover
+        return 20_000
+
+
+def estimate_dense_bytes(n_rows: int, n_cols: int) -> int:
+    """稠密 float64/int64 矩阵的字节数。"""
+    return max(0, int(n_rows)) * max(0, int(n_cols)) * _ITEMSIZE
+
+
+def _human_bytes(num: int) -> str:
+    """字节数的可读表示，自动选单位。
+
+    不要一律输出 GiB —— 预算 512 MB 时 ``{x / 1024**3:.1f}`` 会显示成
+    「0.5 GiB」勉强能看，而 64 MB 会显示成「0.1 GiB」、1 MB 会显示成
+    「0.0 GiB」。这条提示存在的唯一意义就是让用户知道「差多少」，
+    显示成 0.0 等于没提示。
+    """
+    value = float(max(0, int(num)))
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024 or unit == "TiB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} TiB"  # pragma: no cover - 上一步已返回
+
+
+def _assert_dense_fits(n_rows: int, n_cols: int, *, stage: str, hint: str) -> None:
+    """规模预检：装不下就**明确拒绝**，并告诉调用方怎么改。"""
+    budget = _max_dense_bytes()
+    if budget <= 0:
+        return
+    needed = estimate_dense_bytes(n_rows, n_cols)
+    if needed <= budget:
+        return
+    raise MLEngineException(
+        f"{stage}需要稠密矩阵 {n_rows:,} 行 × {n_cols:,} 列 ≈ "
+        f"{_human_bytes(needed)}，超过内存预算 {_human_bytes(budget)}。{hint}",
+        details={
+            "stage": stage,
+            "rows": int(n_rows),
+            "columns": int(n_cols),
+            "needed_bytes": needed,
+            "budget_bytes": budget,
+        },
+    )
+
+
+def estimate_output_width(X: pl.DataFrame, encoding: dict[str, Any] | None) -> int:
+    """估算预处理输出的列数（one-hot 会按类别数展开）。
+
+    用于在**真正物化之前**判断会不会爆内存。刻意取偏大的估计：
+    宁可在边界上多拒绝一次，也不要先分配 57 GiB 再崩。
+    """
+    one_hot_cols: set[str] = set()
+    if isinstance(encoding, dict) and encoding.get("method") == "one_hot":
+        one_hot_cols = set(encoding.get("columns") or [])
+
+    cap = _onehot_max_categories()
+    width = 0
+    for name in X.columns:
+        if name in one_hot_cols and _kind(X.schema[name]) == "cat":
+            unique = int(X[name].n_unique())
+            # 合并低频类别后每列最多 cap 个输出（含「其他」列）
+            width += min(unique, cap) if cap else unique
+        else:
+            width += 1
+    return width
+
+
+def cap_training_rows(
+    X: pl.DataFrame,
+    y: pl.Series | None = None,
+    *,
+    seed: int | None = None,
+) -> tuple[pl.DataFrame, pl.Series | None, dict[str, Any]]:
+    """把训练集行数压到 ``ML_MAX_TRAIN_ROWS`` 以内（随机抽样）。
+
+    返回 ``(X, y, info)``，``info`` 形如::
+
+        {"sampled": True, "original_rows": 10_000_000, "used_rows": 200_000}
+
+    **抽样是有损的**，所以调用方必须把 ``info`` 透出到结果里 ——
+    静默改变训练集规模会让指标无法解释（用户会以为模型是在全量数据上训的）。
+    """
+    limit = _max_train_rows()
+    total = X.height
+    if limit <= 0 or total <= limit:
+        return X, y, {"sampled": False, "original_rows": total, "used_rows": total}
+
+    rng = np.random.default_rng(seed)
+    picked = rng.choice(total, size=limit, replace=False)
+    picked.sort()
+    idx = picked.tolist()
+    X_small = X[idx]
+    y_small = y[idx] if y is not None else None
+    return X_small, y_small, {
+        "sampled": True,
+        "original_rows": total,
+        "used_rows": limit,
+        "sample_rate": round(limit / total, 6),
+    }
+
 
 
 def _is_temporal(dtype: pl.DataType) -> bool:
@@ -156,6 +309,7 @@ class PreprocessingPipeline:
 
     def fit(self, X: pl.DataFrame) -> PreprocessingPipeline:
         self._columns_ = list(X.columns)
+        self._guard_dense(X, stage="预处理")
         self.pipeline_ = self._build(X).fit(self._to_matrix(X))
         self._collect_names()
         self.fitted_ = True
@@ -168,11 +322,49 @@ class PreprocessingPipeline:
         if missing:
             raise MLEngineException(f"transform 缺失训练列: {missing}", details={"missing": missing})
         X_aligned = X.select(self._columns_)
+        # 预测/转换同样要预检：在 1000 万行上 transform 一样会爆。
+        self._guard_dense(X_aligned, stage="转换")
         arr = self.pipeline_.transform(self._to_matrix(X_aligned))
-        out = pl.DataFrame({n: arr[:, i].tolist() for i, n in enumerate(self.feature_names_out_)})
+        out = self._matrix_to_frame(arr)
         if self._ord_cols_:
             out = out.with_columns(pl.col(c).fill_nan(None).cast(pl.Int64) for c in self._ord_cols_)
         return out
+
+    def _guard_dense(self, X: pl.DataFrame, *, stage: str) -> None:
+        """在物化之前做规模预检（输入 + one-hot 展开后的输出）。"""
+        hint = (
+            "可采取：① 调小 ML_MAX_TRAIN_ROWS 缩小训练集；"
+            "② 把高基数列的 encoding.method 改为 'ordinal'（列数不膨胀）；"
+            "③ 调小 ML_ONEHOT_MAX_CATEGORIES 合并低频类别；"
+            "④ 若确信内存充足，调大 ML_MAX_DENSE_BYTES。"
+        )
+        _assert_dense_fits(X.height, X.width, stage=f"{stage}输入", hint=hint)
+        _assert_dense_fits(
+            X.height,
+            estimate_output_width(X, self.encoding),
+            stage=f"{stage}输出（含 one-hot 展开）",
+            hint=hint,
+        )
+
+    def _matrix_to_frame(self, arr: np.ndarray) -> pl.DataFrame:
+        """把 ColumnTransformer 的稠密输出转成 DataFrame。
+
+        不要写成 ``{name: arr[:, i].tolist()}`` —— 那是 **O(行数 × 列数) 个
+        Python 对象**：767 列 × 1000 万行会造出上百 GB 的临时对象，
+        比矩阵本身更致命（矩阵 57 GiB，装箱后是它的数倍）。
+        ``pl.from_numpy`` 直接按缓冲区构造，不做逐元素装箱。
+        """
+        if arr.ndim != 2:  # pragma: no cover - ColumnTransformer 恒返回 2D
+            raise MLEngineException(f"预处理输出维度异常：{arr.shape}")
+        names = list(self.feature_names_out_)
+        if not names:
+            return pl.DataFrame()
+        if arr.shape[1] != len(names):  # pragma: no cover - 列名与矩阵理应一致
+            raise MLEngineException(
+                "预处理输出的列数与列名不一致",
+                details={"matrix_columns": int(arr.shape[1]), "names": len(names)},
+            )
+        return pl.from_numpy(np.ascontiguousarray(arr), schema=names)
 
     def fit_transform(self, X: pl.DataFrame) -> pl.DataFrame:
         return self.fit(X).transform(X)
@@ -231,7 +423,21 @@ class PreprocessingPipeline:
             steps.append(("scale", scaler))
         if kind == "cat" and self.encoding:
             if self.encoding["method"] == "one_hot":
-                steps.append(("encode", OneHotEncoder(handle_unknown="ignore", sparse_output=False, dtype=np.int64)))
+                # max_categories：把低频类别合并成一个「其他」列。
+                # Origin / Dest 这类 300 量级的高基数列，不合并会让特征数从 10
+                # 涨到 767（本次事故的直接原因），既是内存问题也是统计问题
+                # （metadata.py 早已把「高基数用 one_hot」标为风险，只是代码没兜住）。
+                steps.append(
+                    (
+                        "encode",
+                        OneHotEncoder(
+                            handle_unknown="ignore",
+                            sparse_output=False,
+                            dtype=np.int64,
+                            max_categories=_onehot_max_categories(),
+                        ),
+                    )
+                )
             else:
                 steps.append(("encode", OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=np.nan)))
         return Pipeline(steps) if steps else "passthrough"

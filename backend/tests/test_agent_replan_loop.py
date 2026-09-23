@@ -151,7 +151,9 @@ class _RuntimeStub(SimpleNamespace):
     def _complete(self, run, session, on_event):
         AgentRuntime._complete(self, run, session, on_event)
 
-    def _tool_context(self, session, role):
+    # 签名必须与 AgentRuntime._tool_context 保持一致（现多了一个关键字参数
+    # user_request，用于把用户诉求注入工具上下文，见 target_inference）。
+    def _tool_context(self, session, role, *, user_request=""):
         return self.ctx
 
     def _services(self):

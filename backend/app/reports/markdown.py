@@ -3,7 +3,8 @@
 from __future__ import annotations
 from urllib.parse import quote
 
-from app.reports.models import Report
+from app.reports.models import Report, describe_experiment
+from app.reports.numbering import chapter_heading, missing_chapters
 
 
 def _table(headers: list[str], rows: list[list[str]]) -> str:
@@ -12,6 +13,22 @@ def _table(headers: list[str], rows: list[list[str]]) -> str:
         cells = [str(c).replace("|", "\\|").replace("\n", " ") for c in row]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
+
+
+def _missing_block(report: Report) -> list[str]:
+    """未生成章节的显式说明。
+
+    章节号按固定计划表排定，某章缺失时序号不会顺延 —— 但必须告诉读者
+    「这一章为什么没有」，否则「一 / 二 / 三 / 六」会被当成编号错误。
+    """
+    missing = missing_chapters(report)
+    if not missing:
+        return []
+    out = ["---", "", "**未生成章节说明**", ""]
+    for item in missing:
+        out.append(f"- **{item['heading']}**：{item['reason']}")
+    out.append("")
+    return out
 
 
 def export_markdown(report: Report) -> str:
@@ -40,17 +57,15 @@ def export_markdown(report: Report) -> str:
             parts.append(f"![{title}]({uri})")
             parts.append(f"*图：{title}*")
             parts.append("")
+    parts.extend(_missing_block(report))
     if report.experiments:
-        parts.append("## 五、关联实验")
+        parts.append(f"## {chapter_heading('experiments')}")
         parts.append("")
         for exp in report.experiments:
-            exp_id = exp.get("experiment_id", "-")
-            parts.append(
-                f"- 实验 #{exp_id}（{exp.get('task', '-')}/{exp.get('model', '-')}）"
-            )
+            parts.append(f"- {describe_experiment(exp)}")
         parts.append("")
     if report.conclusions:
-        parts.append("## 六、结论")
+        parts.append(f"## {chapter_heading('conclusions')}")
         parts.append("")
         for c in report.conclusions:
             parts.append(f"- {c}")

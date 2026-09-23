@@ -122,29 +122,12 @@ def generate_report(
     ml: dict[str, Any] | None = None
     experiments: list[dict[str, Any]] = []
     if body.include_ml:
-        from sqlalchemy import select
-        from app.models.experiment import Experiment
+        # 与 Agent 工具 report.generate 共用同一份发现逻辑（app.reports.discovery），
+        # 否则两条入口会分叉：Agent 报告曾完全没有「建模与评估」章。
+        from app.reports.discovery import discover_ml_context
 
-        exp_rows = list(
-            ds_service.db.scalars(
-                select(Experiment)
-                .where(Experiment.dataset_id == body.dataset_id)
-                .order_by(Experiment.id.desc())
-                .limit(1)
-            )
-        )
-        if exp_rows:
-            from app.experiments.service import ExperimentService
-
-            runs = ExperimentService(ds_service.db, ds_service).list_runs(exp_rows[0].id)
-            if runs:
-                experiments = [{"experiment_id": exp_rows[0].id, "run_id": runs[0].id}]
-                ml = {
-                    "task": exp_rows[0].task,
-                    "model": exp_rows[0].model,
-                    "metrics": runs[0].metrics or {},
-                    "error": runs[0].error,
-                }
+        ctx = discover_ml_context(ds_service.db, ds_service, body.dataset_id)
+        ml, experiments = ctx.ml, ctx.experiments
 
     report = ReportGenerator().generate(
         title=body.title,

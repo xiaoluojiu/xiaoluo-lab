@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import { Link } from "react-router-dom";
 import { createDataset, deleteDataset, listDatasets } from "../../api/datasets";
-import { FILE_ALLOWED_EXTENSIONS, FILE_MAX_SIZE, formatFileSize, uploadFile } from "../../api/files";
+import { FILE_ALLOWED_EXTENSIONS, FILE_MAX_SIZE, formatFileSize, getUploadLimits, uploadFile } from "../../api/files";
 import type { Dataset } from "../../types/dataset";
 import { DataTable, type DataTableColumn } from "../../components/DataTable";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
@@ -28,6 +28,8 @@ export default function Datasets() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [progress, setProgress] = useState(0);
+  // 上传上限由后端下发，前端不再硬编码（否则调大后端上限前端仍会拦下）。
+  const [maxUploadSize, setMaxUploadSize] = useState<number>(FILE_MAX_SIZE);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -39,6 +41,20 @@ export default function Datasets() {
       .finally(() => setLoading(false));
   }, [reloadKey]);
 
+  useEffect(() => {
+    let alive = true;
+    getUploadLimits()
+      .then((limits) => {
+        if (alive) setMaxUploadSize(limits.max_size_bytes);
+      })
+      .catch(() => {
+        /* 拉取失败保持兜底值 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const pickFile = (file: File | undefined | null) => {
     if (!file) return;
     const ext = (file.name.match(/\.[^.]+$/)?.[0] ?? "").toLowerCase();
@@ -46,8 +62,8 @@ export default function Datasets() {
       setUploadError(`不支持的文件类型 ${ext || "（无扩展名）"}，仅支持 ${FILE_ALLOWED_EXTENSIONS.join(" / ")}`);
       return;
     }
-    if (file.size > FILE_MAX_SIZE) {
-      setUploadError(`文件过大：${formatFileSize(file.size)}，上限 ${formatFileSize(FILE_MAX_SIZE)}`);
+    if (file.size > maxUploadSize) {
+      setUploadError(`文件过大：${formatFileSize(file.size)}，上限 ${formatFileSize(maxUploadSize)}`);
       return;
     }
     setUploadError(null);

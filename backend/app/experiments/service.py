@@ -30,9 +30,11 @@ from app.ml_engine.evaluation import (
     regression_residuals,
 )
 from app.ml_engine.exceptions import MLEngineException
+from app.ml_engine.inference import batch_predict, batch_predict_proba
 from app.ml_engine.preprocessing import (
     PreprocessingPipeline,
     build_pipeline,
+    cap_training_rows,
     default_preprocessing_config,
 )
 from app.ml_engine.metadata import PIPELINE_STEPS
@@ -327,10 +329,20 @@ class ExperimentService:
         excluded = list((exp.preprocessing or {}).get("excluded_columns") or [])
         target = exp.target_column
         if target and target in excluded:
-            raise MLEngineException(
-                "target_column 不能出现在 excluded_columns 中",
-                details={"target_column": target},
+            # 目标列只做标签、永远不参与特征（下面 `df.drop([target])` 已把它移除），
+            # 所以「把目标列也列进 excluded_columns」是一条幂等的冗余指令，不是错误。
+            # 原实现直接抛 MLEngineException，使这条常见且无害的计划在 0.2 秒内必然失败；
+            # 真实事故：DepDelay 回归任务连续 3 次 run failed（experiment 26/27/29），
+            # 用户看到的只是「训练失败」，模型链路整条没跑起来。
+            # 这里改为自动剔除并留痕。
+            logger.info(
+                "excluded_columns 中的目标列 %s 已自动剔除（目标列不参与特征，指令冗余）",
+                target,
             )
+            excluded = [c for c in excluded if c != target]
+            pp = dict(exp.preprocessing or {})
+            pp["excluded_columns"] = excluded
+            exp.preprocessing = pp
         missing_cols = [c for c in excluded if c not in df.columns]
         if missing_cols:
             raise MLEngineException(
@@ -343,7 +355,7 @@ class ExperimentService:
 
         y = df[target] if target else None
 
-        # ---- 目标列空值清理：丢弃标签缺失的整行（而不是让 sklearn 抛 NaN 错）----
+        # 目标列空值清理：丢弃标签缺失的整行（而不是让 sklearn 抛 NaN 错）
         dropped_rows = 0
         if y is not None and y.null_count() > 0:
             keep = y.is_not_null()
@@ -360,6 +372,24 @@ class ExperimentService:
             + (f"，剔除空标签 {dropped_rows} 行" if dropped_rows else ""),
         )
 
+        # ---- 训练集规模治理：超过 ML_MAX_TRAIN_ROWS 时随机抽样 ----
+        # sklearn 的估计器都要求稠密矩阵，1000 万行 × one-hot 展开后的列数
+        # 会直接把 numpy 撑爆（实测 57.1 GiB）。抽样是**有损**的，
+        # 因此必须 emit 出去并写进 artifacts，绝不静默。
+        X, y, sampling = cap_training_rows(X, y, seed=exp.seed)
+        # 到这里 X 已经是抽样后的小表（训练全程只用 X / y，本方法不再触碰整表 df）。
+        # 显式释放 df：1000 万行 × 10 列常驻约 1.3 GB，与下游预处理矩阵的峰值叠加
+        # 会白白吃掉一份内存预算 —— 在 16 GB 机器上直接决定「跑得通 / 跑不通」。
+        # 聚类场景此前 X is df，正是它让整表在 fit 期间一直活着。
+        del df
+        if sampling["sampled"]:
+            emit(
+                "sample",
+                f"数据量 {sampling['original_rows']:,} 行，超过单次训练上限，"
+                f"已随机抽样 {sampling['used_rows']:,} 行"
+                f"（{sampling['sample_rate']:.1%}）用于训练",
+            )
+
         # ---- T0-3: 训练前 preflight 校验 ----
         self._preflight(exp.task, X, y)
 
@@ -375,6 +405,9 @@ class ExperimentService:
 
         stratified = False
         details: dict[str, Any] = {}
+        # 抽样信息透出到 artifacts：训练指标必须能解释（用户要能看出
+        # 指标是在全量还是在抽样上算出来的）。
+        details["sampling"] = sampling
         if exp.task == "clustering":
             Xp = pipeline.fit_transform(X)
             emit("preprocess", f"{X.width} 列 → {len(pipeline.feature_names_out_)} 列")
@@ -389,7 +422,13 @@ class ExperimentService:
             model_features = list(pipeline.feature_names_out_)
         else:
             # ---- T0-4: 分类场景尝试 stratify split ----
-            stratify = self._can_stratify(y)
+            # ★ 分层切分只对**分类**有意义。回归目标即使取值较少（延误分钟被取整成
+            # 几十档、「件数/人数」这类离散计数），也绝不能按类别分层：那会要求
+            # 「测试集样本数 ≥ 目标唯一值数」，把一次完全正常的回归训练在中小数据上
+            # 直接判死；而且报错文案「测试集样本不足以覆盖 N 个类别」会把回归说成分类，
+            # 让人朝完全错误的方向排查（真实事故：200 行 / 70 档延误分钟的回归训练
+            # 报「不足以覆盖 70 个类别」）。
+            stratify = exp.task == "classification" and self._can_stratify(y)
             # 分层切分的硬约束：每类至少要能分到 1 个测试样本，否则 sklearn 抛
             # "The test_size = N should be greater or equal to the number of classes = M"
             # 这类难懂英文错。此处提前转成可操作的中文提示（与 step_runner 同口径）。
@@ -681,10 +720,12 @@ class ExperimentService:
                 details={"missing_columns": missing},
             )
         X_raw = df.select(feature_columns)
-        X = pipeline.transform(X_raw) if pipeline is not None else X_raw
 
         started = time.perf_counter()
-        prediction = model.predict(X)
+        # 推理**不能抽样**（少预测一行就是少一行结果），只能分块：每块独立
+        # transform + predict，结果按行拼接，语义与一次性推理逐样本一致。
+        # 这样 1000 万行 × 767 列也不会一次性稠密化（那是 57.1 GiB）。
+        prediction = batch_predict(model, X_raw, pipeline=pipeline)
         elapsed = round(time.perf_counter() - started, 6)
 
         probabilities: list[dict[str, Any]] | None = None
@@ -694,7 +735,7 @@ class ExperimentService:
         preview = int(limit) if limit and limit > 0 else rows
         if exp.task == "classification":
             try:
-                proba_frame = model.predict_proba(X)
+                proba_frame = batch_predict_proba(model, X_raw, pipeline=pipeline)
                 probability_columns = list(proba_frame.columns)
                 # 只物化要返回的前 preview 行：整表 to_dicts() 会为百万行数据集构造等量 Python dict，
                 # 而下面只有前 preview 行被写进 payload。

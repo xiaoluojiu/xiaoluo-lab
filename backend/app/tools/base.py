@@ -45,6 +45,7 @@ class ToolServices:
     dataset_service: Any | None = None  # DatasetService
     data_engine_service: Any | None = None  # DataEngineService
     experiment_service: Any | None = None  # ExperimentService
+    connector_service: Any | None = None  # ConnectorService（外部数据库接入）
     db: Any | None = None  # SQLAlchemy Session（版本化操作需要）
 
     def require(self, name: str) -> Any:

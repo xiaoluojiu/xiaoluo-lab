@@ -62,4 +62,11 @@ DEFAULT_TOOL_RISKS: dict[str, RiskLevel] = {
     "workflow.build_and_run": RiskLevel.HIGH,
     # 报告：只读分析 + 产出报告文件，低风险
     "report.generate": RiskLevel.LOW,
+    # 拓展功能 · 数据库连接器
+    # 列连接器 / 列表 / 预览均为只读（preview 会打到外部库，但仍不改变平台数据）
+    "connector.list": RiskLevel.LOW,
+    "connector.tables": RiskLevel.LOW,
+    "connector.preview": RiskLevel.LOW,
+    # 导入会把外部数据落成新的 DatasetVersion（写类操作 + 可能抽取大量数据）
+    "connector.import": RiskLevel.HIGH,
 }

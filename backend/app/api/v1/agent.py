@@ -38,6 +38,16 @@ class AgentMessageRequest(BaseModel):
     content: str
     stream: bool = False
     dataset_ids: list[int] | None = None
+
+
+class AgentClarifyRequest(BaseModel):
+    """回答 Agent 的结构化反问（第一层：Pre-flight / agent.clarify）。
+
+    ``answer`` 是**机读值**：取反问里的 ``options[].value``，
+    不是自由文本。前端应渲染成选择器而不是输入框。
+    """
+
+    answer: str = Field(..., min_length=1, max_length=500)
     # 安全约束（S-1/S-2）：
     # - 不接受客户端传入 confirmed —— 高风险确认只能走 POST /agent/runs/{id}/confirm
     # - 不接受客户端传入 role —— 角色由服务端决定（当前固定 analyst），防止提权到 admin
@@ -247,6 +257,22 @@ def confirm_run(run_id: str, runtime: AgentRuntime = Depends(get_agent_runtime))
         return ApiResponse[dict](data={**run.summary(), "hint": "该运行不在等待确认状态，已返回当前进度"})
     session = runtime.get_session(run.session_id)
     resumed = runtime.resume(session, run_id)
+    runtime.store.persist(force=True)
+    return ApiResponse[dict](data=resumed.summary())
+
+
+@router.post("/runs/{run_id}/clarify", response_model=ApiResponse[dict])
+def clarify_run(run_id: str, body: AgentClarifyRequest, runtime: AgentRuntime = Depends(get_agent_runtime)) -> ApiResponse[dict]:
+    """回答 Agent 的反问（第一层改造）。
+
+    与 ``/confirm`` 的区别：``/confirm`` 是授权（做不做），``/clarify`` 是补信息
+    （做哪个）。回答后运行从 Pre-flight 处重新规划，或从发起反问的那一步继续，
+    前面的重型步骤不重跑。
+    """
+    run = runtime.get_run(run_id)
+    if run.status != RunStatus.WAITING_CLARIFICATION or run.pending_clarification is None:
+        return ApiResponse[dict](data={**run.summary(), "hint": "该运行不在等待澄清状态，已返回当前进度"})
+    resumed = runtime.answer_clarification(run_id, body.answer)
     runtime.store.persist(force=True)
     return ApiResponse[dict](data=resumed.summary())
 

@@ -33,6 +33,62 @@ _BG = "#ffffff"
 
 FONT = "'Microsoft YaHei','PingFang SC','Noto Sans CJK SC',sans-serif"
 
+#: 单张图的点上限。超过就等距抽样。
+#: 一张 800×450 的图里 3000 个点已经互相盖满（纯噪声），而每个点写成一个
+#: ``<circle>`` 要 ~74 字符。真实事故：报告里两张 Q-Q 图各 5000 点，光点集就
+#: 366 KB，占全部 SVG 的 87%，整份 Markdown 报告被撑到 1.39 MB。
+_MAX_POINTS = 3000
+
+#: 点集用「零长度路径 + 圆头线帽」绘制，直径即 stroke-width（约等于 r=2.6 的圆点）。
+_POINT_DIAMETER = 5.2
+
+
+def _downsample(points: list[tuple[float, float]]) -> tuple[list[tuple[float, float]], int]:
+    """点数超过上限时等距抽样；返回 (抽样后点集, 原始点数或 0)。"""
+    n = len(points)
+    if n <= _MAX_POINTS:
+        return points, 0
+    step = math.ceil(n / _MAX_POINTS)
+    kept = points[::step]
+    if kept[-1] != points[-1]:
+        kept.append(points[-1])
+    return kept, n
+
+
+def _points_layer(
+    points: list[tuple[float, float]],
+    *,
+    color: str,
+    opacity: float,
+) -> tuple[str, str]:
+    """把点集渲染成**单条** ``<path>``，并返回 (svg, 抽样说明)。
+
+    ``h0`` 是零长度水平线，配合 ``stroke-linecap="round"`` 即一个圆点；
+    坐标取整后用相对移动 ``m dx dy`` 连接，每点约 10 字符（``<circle>`` 约 74），
+    在 5000 点的 Q-Q 图上实测体积降到约 1/6。
+    """
+    if not points:
+        return "", ""
+    kept, original = _downsample(points)
+    xi, yi = int(round(kept[0][0])), int(round(kept[0][1]))
+    segs = [f"M{xi} {yi}h0"]
+    for px, py in kept[1:]:
+        nx, ny = int(round(px)), int(round(py))
+        segs.append(f"m{nx - xi} {ny - yi}h0")
+        xi, yi = nx, ny
+    svg = (
+        f'<path d="{"".join(segs)}" fill="none" stroke="{color}" '
+        f'stroke-width="{_POINT_DIAMETER:g}" stroke-linecap="round" '
+        f'stroke-opacity="{opacity:g}"/>'
+    )
+    note = ""
+    if original:
+        note = (
+            f'<text x="{ML}" y="{H - 10}" font-size="10" fill="{TEXT}">'
+            f"共 {original} 个点，为控制体积等距抽样显示 {len(kept)} 个</text>"
+        )
+    return svg, note
+
 
 def to_svg(chart: dict[str, Any]) -> str:
     """把单张图表 dict 渲染为完整 <svg> 字符串。"""
@@ -206,8 +262,14 @@ def _xy_line(chart: dict[str, Any]) -> str:
         f'<polyline points="{pts}" fill="none" stroke="{PRIMARY}" stroke-width="2.2" '
         f'stroke-linejoin="round" stroke-linecap="round"/>'
     )
-    for cx, val in zip(centers, y):
-        out.append(f'<circle cx="{cx:.1f}" cy="{y_lo - val * sy:.1f}" r="2.6" fill="{PRIMARY}"/>')
+    layer, note = _points_layer(
+        [(cx, y_lo - val * sy) for cx, val in zip(centers, y)],
+        color=PRIMARY,
+        opacity=1.0,
+    )
+    out.append(layer)
+    if note:
+        out.append(note)
     out.append(_x_labels(centers, x))
     out.append("</svg>")
     return "".join(out)
@@ -216,7 +278,6 @@ def _xy_line(chart: dict[str, Any]) -> str:
 # ----------------------------------------------------------------------
 # 散点图
 # ----------------------------------------------------------------------
-
 def _scatter(chart: dict[str, Any]) -> str:
     xs = [float(v) for v in (chart.get("x") or []) if v is not None]
     ys = [float(v) for v in (chart.get("y") or []) if v is not None]
@@ -243,10 +304,13 @@ def _scatter(chart: dict[str, Any]) -> str:
             f'text-anchor="middle">{_fmt(t)}</text>'
         )
     out.append(f'<line x1="{ML}" y1="{y_lo:.1f}" x2="{ML + PW}" y2="{y_lo:.1f}" stroke="{AXIS}"/>')
-    for xv, yv in pairs:
-        cx = x0 + (xv - xmin) * sx
-        cy = y_lo - (yv - ymin) * sy
-        out.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="3" fill="{PRIMARY}" fill-opacity="0.62"/>')
+    px_pts = [
+        (x0 + (xv - xmin) * sx, y_lo - (yv - ymin) * sy) for xv, yv in pairs
+    ]
+    layer, note = _points_layer(px_pts, color=PRIMARY, opacity=0.62)
+    out.append(layer)
+    if note:
+        out.append(note)
     out.append("</svg>")
     return "".join(out)
 
@@ -295,11 +359,14 @@ def _box(chart: dict[str, Any]) -> str:
         out.append(f'<line x1="{cx - bw / 2:.1f}" y1="{y_med:.1f}" x2="{cx + bw / 2:.1f}" y2="{y_med:.1f}" stroke="{PRIMARY}" stroke-width="2.2"/>')
         out.append(f'<line x1="{cx - bw * 0.18:.1f}" y1="{y_wl:.1f}" x2="{cx + bw * 0.18:.1f}" y2="{y_wl:.1f}" stroke="{AXIS}"/>')
         out.append(f'<line x1="{cx - bw * 0.18:.1f}" y1="{y_wh:.1f}" x2="{cx + bw * 0.18:.1f}" y2="{y_wh:.1f}" stroke="{AXIS}"/>')
-        for o in (b.get("outliers") or []):
-            if o is None:
-                continue
-            oy = y_lo - (float(o) - ymin) * sy
-            out.append(f'<circle cx="{cx:.1f}" cy="{oy:.1f}" r="2.4" fill="{PRIMARY}" fill-opacity="0.55"/>')
+        # 离群点可能上千个，同样压成单条 path（每个 <circle> 约 74 字符）
+        oy = [
+            (cx, y_lo - (float(o) - ymin) * sy)
+            for o in (b.get("outliers") or [])
+            if o is not None
+        ]
+        layer, _ = _points_layer(oy, color=PRIMARY, opacity=0.55)
+        out.append(layer)
     out.append(_x_labels(centers, [str(b.get("label", "")) for b in boxes]))
     out.append("</svg>")
     return "".join(out)
@@ -384,10 +451,11 @@ def _qq(chart: dict[str, Any]) -> str:
         px = x0 + (t - xmin) * sx
         out.append(f'<text x="{px:.1f}" y="{y_lo + 18:.1f}" font-size="11" fill="{TEXT}" text-anchor="middle">{_fmt(t)}</text>')
     out.append(f'<line x1="{ML}" y1="{y_lo:.1f}" x2="{ML + PW}" y2="{y_lo:.1f}" stroke="{AXIS}"/>')
-    for xv, yv in zip(xs, ys):
-        cx = x0 + (xv - xmin) * sx
-        cy = y_lo - (yv - ymin) * sy
-        out.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="2.6" fill="{PRIMARY}" fill-opacity="0.6"/>')
+    qq_pts = [(x0 + (xv - xmin) * sx, y_lo - (yv - ymin) * sy) for xv, yv in zip(xs, ys)]
+    layer, note = _points_layer(qq_pts, color=PRIMARY, opacity=0.6)
+    out.append(layer)
+    if note:
+        out.append(note)
     # 参考线
     lx0, ly0 = float(line.get("x0", xmin)), float(line.get("y0", ymin))
     lx1, ly1 = float(line.get("x1", xmax)), float(line.get("y1", ymax))
@@ -467,8 +535,10 @@ def _area(chart: dict[str, Any]) -> str:
     baseline = f"{centers[0]:.1f},{y_lo:.1f} {centers[-1]:.1f},{y_lo:.1f}"
     out.append(f'<polygon points="{baseline} {poly}" fill="{PRIMARY}" fill-opacity="0.16"/>')
     out.append(f'<polyline points="{poly}" fill="none" stroke="{PRIMARY}" stroke-width="2.2"/>')
-    for cx, cy in pts:
-        out.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="2.4" fill="{PRIMARY}"/>')
+    layer, note = _points_layer(pts, color=PRIMARY, opacity=1.0)
+    out.append(layer)
+    if note:
+        out.append(note)
     out.append(_x_labels(centers, x))
     out.append("</svg>")
     return "".join(out)

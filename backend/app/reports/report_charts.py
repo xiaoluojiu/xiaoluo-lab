@@ -21,8 +21,7 @@ import polars as pl
 from app.analysis import (
     CorrelationAnalyzer,
     VisualizationBuilder,
-    categorical_columns,
-    continuous_columns,
+    classify_columns,
     is_categorical_like,
 )
 from app.reports.chart_svg import to_svg
@@ -45,16 +44,21 @@ _HIST_CLIP_QUANTILE = 0.99
 def _column_classes(df: pl.DataFrame) -> dict[str, list[str]]:
     """按类型给列分桶，供策划器决定出哪些图。
 
-    「连续变量」与「分类变量」分离：低基数整型编码列（VendorID/ratecodeID/区域 ID）
-    归入 categorical，不再被当连续变量算均值、做 Q-Q/箱线/热力图。
+    「连续变量」与「分类变量」分离：低基数数值编码列（VendorID/ratecodeID/区域 ID/
+    Month/DayOfWeek 这类浮点日历字段）归入 categorical，不再被当连续变量算均值、
+    做 Q-Q/箱线/热力图。
+
+    用一次 ``classify_columns`` 拿到全部判定，而不是 ``continuous_columns`` +
+    逐个 ``is_categorical_like``：后者会把每列的唯一值数重复算很多遍。
     """
-    continuous = continuous_columns(df)
+    classes = classify_columns(df)
+    continuous: list[str] = []
     categorical: list[str] = []
     temporal: list[str] = []
     for c, d in df.schema.items():
-        if c in continuous:
-            continue
-        if d.is_temporal():
+        if d.is_numeric() and not classes.get(c, False):
+            continuous.append(c)
+        elif d.is_temporal():
             temporal.append(c)
         elif d != pl.Boolean:
             categorical.append(c)

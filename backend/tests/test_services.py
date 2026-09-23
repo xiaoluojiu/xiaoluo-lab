@@ -63,8 +63,13 @@ def test_file_service_rejects_bad_input(db, storage):
         svc.upload("", b"x")
     with pytest.raises(ValidationException):
         svc.upload("a.csv", b"")
-    with pytest.raises(ValidationException):
-        svc.upload("a.csv", b"x" * (100 * 1024 * 1024 + 1))
+    # 上传上限由配置驱动（默认 2 GiB），不再硬编码 100 MB。
+    # 这里注入一个极小上限来验证「超限拒绝」这一契约——旧写法为了验证同一个
+    # 契约要真实分配 100 MB 字节串，既慢又与限额调整耦合。
+    tiny = FileService(db, storage, max_upload_size=16)
+    with pytest.raises(ValidationException) as excinfo:
+        tiny.upload("a.csv", b"x" * 32)
+    assert excinfo.value.details["max_size"] == 16
 
 
 def test_file_service_dedupes_same_content(db, storage):

@@ -112,6 +112,10 @@ class DatasetResponse(
         | None
     ) = None
 
+    # 入库可观测信息：strategy / row_count / elapsed_seconds / throughput_mb_s /
+    # warnings 等。仅在「创建数据集并导入文件」时返回，其余读取场景为 None。
+    ingest: dict | None = None
+
 
 class DatasetListResponse(
     BaseModel

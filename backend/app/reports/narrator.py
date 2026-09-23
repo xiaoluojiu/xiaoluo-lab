@@ -24,6 +24,16 @@ from typing import Any
 
 from app.agent.llm.base import LLMMessage, LLMProvider
 from app.core.config import settings
+from app.reports.numbering import (
+    CHAPTERS,
+    chapter_heading,
+    refresh_chapter_status,
+    strip_section_number,
+)
+
+#: 计划表标题 -> 带序号的最终标题。LLM 新增的小节若撞上计划表章节，
+#: 必须用计划表的标题（含统一序号），否则会与「未生成章节说明」自相矛盾。
+_PLAN_TITLE_TO_HEADING = {title: chapter_heading(key) for key, title in CHAPTERS}
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +45,87 @@ _DROP_KEYS = {"svg", "data", "matrix", "boxes", "value_counts", "raw"}
 
 # 叙述不完整的重试次数（每次把 max_tokens 放大一倍）
 _MAX_NARRATION_ATTEMPTS = 3
+
+# JSON 语法残留：以 `": "` / `,` / `]` / `}` 这类 JSON 标点开头的片段。
+# 只在「开头的标点确实是 JSON 残留」时匹配，正常中文散文不会被误伤
+# （正文以 `"` 开头但紧跟着文字时不匹配）。
+_LEAD_JSON_RESIDUE_RE = re.compile(r'^[\s"\']*(?::|,|\]|\})[\s"\',:\[\]{}]*')
+
+
+def _repair_inner_quotes(text: str) -> str:
+    """转义字符串值内部**未转义**的 ASCII 双引号。
+
+    真实事故（2026-09-23，航空公司延误报告）：LLM 写出
+
+        {"sections": {"二、数据质量": "...把模型训练成"只会预测准点"的退化模型..."}}
+
+    键值结构完全正确，只有内层两个引号没转义。``json.loads`` 当场抛
+    ``Expecting ',' delimiter``，而既有的 ``_truncate_salvage`` 只擅长修补「被
+    max_tokens 截断」的 JSON（按字符回退 + 补闭合符号），对「长度完整、仅内层引号
+    失配」毫无办法且会把好字符砍掉。结果是整份叙述退回「原文当综述」，
+    **用户看到的报告正文就是原始 JSON**，还派生出以 `": "` 开头的假章节。
+
+    判定规则：字符串内遇到的引号，**只有当其后第一个非空白字符是 `:`、`,`、`}`、
+    `]` 或到达结尾时**才算该字符串的结束引号；否则它是内层引号，必须转义。
+    中文引号（“”）与单引号不参与判定，原样保留。
+    """
+    out: list[str] = []
+    in_string = False
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if not in_string:
+            out.append(ch)
+            if ch == '"':
+                in_string = True
+            i += 1
+            continue
+        if ch == "\\":
+            # 已转义的序列整体跳过（\" \\ \n \uXXXX），不要再看里面的字符
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if ch != '"':
+            out.append(ch)
+            i += 1
+            continue
+        j = i + 1
+        while j < n and text[j] in " \t\r\n":
+            j += 1
+        if j >= n or text[j] in ":,}]":
+            out.append('"')
+            in_string = False
+        else:
+            out.append('\\"')
+        i += 1
+    return "".join(out)
+
+
+def _looks_like_json(text: str) -> bool:
+    """是否是 JSON 结构（用于决定能否走「当散文用」的降级路径）。"""
+    return text.lstrip().startswith(("{", "["))
+
+
+def _looks_like_raw_json_block(text: str) -> bool:
+    """整段看起来就是一段原始 JSON（键值结构明显），绝不能展示给用户。"""
+    head = text.lstrip()
+    return head.startswith(("{", "[")) and '":' in head[:400] and '"' in head[:400]
+
+
+def _scrub_narration_text(text: str) -> str:
+    """兜底清洗：原始 JSON 与 JSON 标点残留一律不许进入用户可见的正文。
+
+    即使上游修复全部失效，这一层也保证报告里不会出现 `{"executive_summary":` 或
+    以 `": "` 开头的片段。
+    """
+    if not text:
+        return ""
+    stripped = text.strip()
+    if _looks_like_raw_json_block(stripped):
+        return ""
+    return _LEAD_JSON_RESIDUE_RE.sub("", stripped).strip()
+
 
 
 def _missing_parts(narration: dict[str, Any], headings: list[str] | None) -> list[str]:
@@ -59,27 +150,74 @@ def _missing_parts(narration: dict[str, Any], headings: list[str] | None) -> lis
 
 def _same_section(heading: str, provided: set[str]) -> bool:
     """『一、数据概览』与『数据概览』视为同一节（LLM 常省略序号前缀）。"""
-    core = re.sub(r"^[一二三四五六七八九十]+、\s*", "", str(heading)).strip()
-    return any(re.sub(r"^[一二三四五六七八九十]+、\s*", "", p).strip() == core for p in provided)
+    core = strip_section_number(heading)
+    return any(strip_section_number(p) == core for p in provided)
+
+
+# 结论/建议可能被 LLM 塞进 sections 里（而不是顶层）。真实事故：
+#   sections = {..., "conclusions": [...], "recommendations": [...]}，顶层两者皆无。
+# 后果有两层：① _missing_parts 判定「缺 conclusions/recommendations」→ 白重试；
+# ② 它们被当成两个名为 conclusions/recommendations 的**章节**，
+# 正文是 Python 列表的 repr（"['数据规模 10000000 行 …']"）。
+_LIST_SECTION_KEYS = {
+    "conclusions", "conclusion", "recommendations", "recommendation",
+    "suggestions", "suggestion", "summary_bullets", "结论", "建议", "结论与建议",
+}
+
+
+def _as_prose(value: Any) -> str:
+    """把章节值统一成正文文本；列表按段落拼接，其他非字符串一律不生成 repr。"""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        parts = [str(v).strip() for v in value if str(v).strip()]
+        return "\n\n".join(parts)
+    return ""
 
 
 def _normalize_sections(narration: dict[str, Any]) -> dict[str, Any]:
-    """LLM 有时把 sections 写成 [{heading, content}] 数组，统一归一成 {标题: 正文}。"""
+    """LLM 有时把 sections 写成 [{heading, content}] 数组，统一归一成 {标题: 正文}。
+
+    归一后还要做两件「结构纠偏」，都是真实踩过的：
+    1. 把误放进 sections 的 conclusions / recommendations **提升**到顶层；
+    2. 丢掉不是字符串（也不是字符串列表）的 section 值 —— 否则 str(list)
+       会把 Python repr 写进用户可见的正文。
+    """
     raw = narration.get("sections")
     if isinstance(raw, list):
         mapping: dict[str, str] = {}
         for item in raw:
             if isinstance(item, dict):
                 heading = str(item.get("heading") or item.get("title") or "").strip()
-                body = str(item.get("content") or item.get("text") or item.get("paragraph") or "").strip()
+                body = _as_prose(item.get("content") or item.get("text") or item.get("paragraph"))
                 if heading:
                     mapping[heading] = body
             elif isinstance(item, str) and item.strip():
                 mapping[f"段落 {len(mapping) + 1}"] = item.strip()
         narration["sections"] = mapping
-    elif not isinstance(raw, dict):
+    elif isinstance(raw, dict):
+        narration["sections"] = {str(k): _as_prose(v) for k, v in raw.items()}
+    else:
         narration["sections"] = {}
+
+    sections = narration["sections"]
+    for key in list(sections):
+        normalized = str(key).strip().lower()
+        if normalized not in _LIST_SECTION_KEYS:
+            continue
+        # 顶层已有就不覆盖（顶层优先，那是模型按 schema 写对的部分）
+        if not narration.get(key):
+            narration[key] = _split_bullets(sections[key])
+        del sections[key]
+    # 清掉正文为空的章节，避免报告里出现「有标题、没内容」的空壳
+    narration["sections"] = {k: v for k, v in sections.items() if str(v).strip()}
     return narration
+
+
+def _split_bullets(text: str) -> list[str]:
+    """把「段落拼成的字符串」拆回条目列表（提升误嵌套键时用）。"""
+    items = [line.strip(" -·•\t") for line in str(text).splitlines()]
+    return [i for i in items if i]
 
 
 def _chart_fact(chart: dict[str, Any]) -> dict[str, Any]:
@@ -267,11 +405,14 @@ def apply_narration(
     """把 LLM 叙述并回报告 payload（原地修改并返回）。"""
     if not narration:
         return report_payload
+    # 幂等归一：调用方可能传入未经 _normalize_sections 的 narration
+    # （例如直接构造 narration 的其他入口/测试），这里再兜一次结构纠偏。
+    narration = _normalize_sections(dict(narration))
     sections = report_payload.setdefault("sections", [])
     known_headings = [str(s.get("heading")) for s in sections if isinstance(s, dict)]
     by_heading = {str(s.get("heading")): s for s in sections if isinstance(s, dict)}
 
-    exec_summary = str(narration.get("executive_summary") or "").strip()
+    exec_summary = _scrub_narration_text(str(narration.get("executive_summary") or ""))
     if exec_summary:
         sections.insert(
             0,
@@ -285,7 +426,8 @@ def apply_narration(
         by_heading["Agent 分析综述"] = sections[0]
 
     for heading, text in (narration.get("sections") or {}).items():
-        body = str(text or "").strip()
+        # 兜底清洗：任何情况下都不让原始 JSON / JSON 标点残留 / 列表 repr 进入正文
+        body = _scrub_narration_text(_as_prose(text))
         if not body:
             continue
         heading_text = str(heading)
@@ -297,15 +439,24 @@ def apply_narration(
                     target = by_heading[known]
                     break
         if target is None:
-            target = {"heading": heading_text, "content": "", "tables": [], "charts": []}
+            # 新增小节的标题一律去掉序号前缀：序号由 app.reports.numbering 的计划表
+            # 统一分配。若放任 LLM 自带序号，会出现「四、建模建议」与计划表里的
+            # 「四、建模与评估」撞号（真实事故：报告章节号一/二/三/六）。
+            new_heading = strip_section_number(heading_text) or heading_text
+            new_heading = _PLAN_TITLE_TO_HEADING.get(new_heading, new_heading)
+            target = {"heading": new_heading, "content": "", "tables": [], "charts": []}
             sections.append(target)
-            by_heading[heading_text] = target
-            known_headings.append(heading_text)
+            by_heading[new_heading] = target
+            known_headings.append(new_heading)
         original = str(target.get("content") or "").strip()
         target["content"] = f"{original}\n\n{body}" if original else body
 
-    conclusions = [str(c).strip() for c in (narration.get("conclusions") or []) if str(c).strip()]
-    recommendations = [str(c).strip() for c in (narration.get("recommendations") or []) if str(c).strip()]
+    conclusions = [
+        c for c in (_scrub_narration_text(str(x)) for x in (narration.get("conclusions") or [])) if c
+    ]
+    recommendations = [
+        c for c in (_scrub_narration_text(str(x)) for x in (narration.get("recommendations") or [])) if c
+    ]
     existing = list(report_payload.get("conclusions") or [])
     # 保留自动归纳的客观结论（质量分、任务结论），再叠加 LLM 结论与建议
     merged = existing + [c for c in conclusions if c not in existing]
@@ -318,6 +469,8 @@ def apply_narration(
         meta["user_request"] = user_request
     if recommendations:
         meta["recommendations"] = recommendations
+    # 叙述可能补齐了原本未生成的章节，章节计划状态必须同步（否则自相矛盾）
+    refresh_chapter_status(report_payload)
     return report_payload
 
 
@@ -341,26 +494,116 @@ def narrate_and_apply(
 def _parse_narration(text: str, headings: list[str] | None = None) -> dict[str, Any] | None:
     """容错解析 LLM 的叙述输出。
 
-    LLM 常见的三种「看起来像 JSON 但解析不了」的输出：
+    LLM 常见的四种「看起来像 JSON 但解析不了」的输出：
     1. 用 ```json 围栏包裹；
     2. 段落里出现**真实换行**（默认 json 解析器会因控制字符报错）→ strict=False；
-    3. 被 max_tokens 截断，JSON 未闭合 → 逐步回退补齐闭合符号抢救。
+    3. 被 max_tokens 截断，JSON 未闭合 → 逐步回退补齐闭合符号抢救；
+    4. **字符串值里有未转义的 ASCII 双引号**（本次事故）→ `_repair_inner_quotes`。
+
+    关键约定：**原始 JSON 绝不能当正文用**。既有的降级做法（把原文塞进
+    executive_summary + 用 `text.find(标题)` 在 JSON 里切片）会把
+    `{"executive_summary": ...}` 和 `": "…` 直接写进报告，是本次事故的放大器。
+    因此这里改成：JSON 结构但解析失败 ⇒ 只做结构抢救；抢不回来就**放弃本次叙述**
+    （报告退回模板正文），而不是把 JSON 展示给用户。只有**非 JSON 的长文**才走
+    「整段当综述 + 按标题切段」的降级路径。
     """
     data = _loads_lenient(text)
     if isinstance(data, dict):
         return data
-    # 完整内容救不回来时，至少把文字当成综述，不让整段 LLM 输出白白浪费
     stripped = text.strip()
     stripped = re.sub(r"^```(?:json)?|```$", "", stripped, flags=re.MULTILINE).strip()
-    if stripped:
-        logger.warning("报告叙述非 JSON 输出，降级为整段综述")
-        return {"executive_summary": stripped[:6000], "sections": _guess_sections(stripped, headings or [])}
-    return None
+    if not stripped:
+        return None
+    if _looks_like_json(stripped):
+        salvaged = _salvage_json_pairs(stripped)
+        if salvaged:
+            logger.warning("报告叙述 JSON 损坏，已按键值结构抢救出 %s 个字段", len(salvaged))
+            return salvaged
+        logger.warning("报告叙述是损坏的 JSON 且无法抢救，放弃本次叙述（报告退回模板正文）")
+        return None
+    logger.warning("报告叙述非 JSON 输出，降级为整段综述")
+    return {
+        "executive_summary": _scrub_narration_text(stripped[:6000]),
+        "sections": _guess_sections(stripped, headings or []),
+    }
+
+
+# 「短键」的定义：不带换行、长度受限的 JSON 键名（避免把正文里的引号当键）
+_JSON_KEY_RE = re.compile(r'"([^"\\\n]{1,40})"\s*:\s*"')
+
+
+def _salvage_json_pairs(text: str) -> dict[str, Any] | None:
+    """结构抢救：先整体修引号，再逐键取值，最后退到只抓已知字段。
+
+    返回 None 表示「抢不回来」，由调用方决定放弃本次叙述。
+    """
+    for candidate in (text, _repair_inner_quotes(text)):
+        try:
+            value = json.loads(candidate, strict=False)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+
+    repaired = _repair_inner_quotes(text)
+    out: dict[str, Any] = {}
+    # 逐对抽取「键: 字符串值」。值一律用 _repair_inner_quotes 同款规则找结束引号，
+    # 这样内层未转义引号不会把值截断。
+    for match in _JSON_KEY_RE.finditer(repaired):
+        key = match.group(1)
+        start = match.end()
+        end = _find_string_end(repaired, start)
+        if end == -1:
+            continue
+        raw = repaired[start:end]
+        try:
+            out[key] = json.loads(f'"{raw}"', strict=False)
+        except json.JSONDecodeError:
+            out[key] = raw.replace('\\"', '"')
+    if not out:
+        return None
+    sections = out.pop("sections", None)
+    if isinstance(sections, str):
+        # sections 被抽成字符串（整体仍是坏的）：不勉强还原，交给模板正文
+        sections = None
+    if sections is None:
+        # 只抢救出扁平字段（executive_summary / conclusions / recommendations）
+        # 时，章节正文缺失会让 _missing_parts 判定不完整并触发重试，这是期望行为。
+        sections = {}
+    out["sections"] = sections if isinstance(sections, dict) else {}
+    return out if (out.get("executive_summary") or sections) else None
+
+
+def _find_string_end(text: str, start: int) -> int:
+    """从 start 起找到字符串值的结束引号位置（同 _repair_inner_quotes 的判定规则）。"""
+    i = start
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            if j >= n or text[j] in ":,}]":
+                return i
+        i += 1
+    return -1
 
 
 def _loads_lenient(text: str) -> Any:
-    candidates = [text.strip()]
-    candidates.extend(match.group(1) for match in _FENCE_RE.finditer(text))
+    candidates: list[str] = []
+    for match in [None, *_FENCE_RE.finditer(text)]:
+        base = text.strip() if match is None else match.group(1)
+        if not base:
+            continue
+        candidates.append(base)
+        # 未转义内层引号是最高频的 LLM JSON 缺陷，先修它再谈截断抢救
+        repaired = _repair_inner_quotes(base)
+        if repaired != base:
+            candidates.append(repaired)
     for candidate in candidates:
         for raw in (candidate, _truncate_salvage(candidate)):
             if not raw:
@@ -406,7 +649,11 @@ def _truncate_salvage(text: str) -> str:
 
 
 def _guess_sections(text: str, headings: list[str]) -> dict[str, str]:
-    """把非结构化长文按小节标题切成段落映射（尽力而为）。"""
+    """把非结构化长文按小节标题切成段落映射（尽力而为）。
+
+    只在**非 JSON 的散文**上使用。切片结果仍要过一遍 `_scrub_narration_text`：
+    标题本身可能出现在引号或 JSON 键里，切出来就会带上 `": "` 这类残留。
+    """
     if not headings:
         return {}
     positions = [(h, text.find(h)) for h in headings if text.find(h) != -1]
@@ -414,7 +661,10 @@ def _guess_sections(text: str, headings: list[str]) -> dict[str, str]:
     out: dict[str, str] = {}
     for idx, (heading, pos) in enumerate(positions):
         end = positions[idx + 1][1] if idx + 1 < len(positions) else len(text)
-        out[heading] = text[pos + len(heading): end].strip("：:\n ")
+        body = text[pos + len(heading): end]
+        cleaned = _scrub_narration_text(body)
+        if cleaned:
+            out[heading] = cleaned
     return out
 
 

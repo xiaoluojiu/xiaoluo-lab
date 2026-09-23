@@ -211,6 +211,19 @@ class ModelAdapter(ABC):
     def _to_numpy(self, X: pl.DataFrame) -> Any:
         if self.feature_names_:
             X = X.select(self.feature_names_)
+        # 兜底预检：估计器要的是稠密矩阵，10M 行的宽表在这里同样会爆
+        # （与 PreprocessingPipeline 的预检同源，覆盖 predict 在大表上的场景）。
+        from app.ml_engine.preprocessing import _assert_dense_fits
+
+        _assert_dense_fits(
+            X.height,
+            X.width,
+            stage=f"模型 {self.name} 的特征矩阵",
+            hint=(
+                "可采取：① 调小 ML_MAX_TRAIN_ROWS 缩小训练/预测集；"
+                "② 对高基数列改用 ordinal 编码；③ 调大 ML_MAX_DENSE_BYTES。"
+            ),
+        )
         return X.to_numpy()
 
     def _validate_columns(self, X: pl.DataFrame) -> None:

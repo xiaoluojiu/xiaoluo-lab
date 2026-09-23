@@ -158,6 +158,32 @@ def _normalize_encoding(
     return encoding
 
 
+def _decode_probe(
+    data: bytes,
+    encoding: str,
+) -> bool:
+    """判断 ``data`` 能否按 ``encoding`` 解码，容忍**结尾被截断**的多字节字符。
+
+    为什么需要容忍：``_read_head`` 固定读前 64 000 字节，这个边界对 GBK/UTF-8
+    来说有约一半概率落在一个多字节字符中间。若直接 ``data.decode(encoding)``，
+    截断处必然抛 ``UnicodeDecodeError``，于是整份文件被误判成 latin-1 ——
+    中文列名全部变成乱码，而且**文件越大越容易踩到**（小于 64 KB 才不受影响）。
+
+    做法：解码失败时依次丢掉结尾 1~3 个字节重试（覆盖 UTF-8 的 4 字节序列与
+    GB18030 的 4 字节序列）。只影响「探测」，真正解码仍由调用方按完整数据执行。
+    """
+    for trim in range(4):
+        chunk = data if trim == 0 else data[: len(data) - trim]
+        if not chunk:
+            return False
+        try:
+            chunk.decode(encoding)
+            return True
+        except UnicodeDecodeError:
+            continue
+    return False
+
+
 def _detect_encoding(
     data: bytes,
     requested: str,
@@ -169,11 +195,8 @@ def _detect_encoding(
         "utf-8",
         "gb18030",
     ):
-        try:
-            data.decode(encoding)
+        if _decode_probe(data, encoding):
             return encoding
-        except UnicodeDecodeError:
-            pass
 
     return "latin-1"
 
@@ -636,6 +659,268 @@ class ParquetLoader(Loader):
 
 
 # =========================================================
+# ARFF Loader（Weka 属性-关系文件格式）
+# =========================================================
+
+
+class ArffLoader(Loader):
+    """ARFF（Attribute-Relation File Format）加载器。
+
+    支持 Weka 导出的稠密与稀疏两种数据表示：
+    - 稠密：逗号分隔的普通行，缺失值用 ``?``；
+    - 稀疏：``{索引 值, 索引 值}`` 形式，未列出的属性为缺失。
+    属性类型支持 numeric / real / integer / string / date / 标称枚举
+    （``{a,b,c}``）。标称值在数据段可被单引号包裹，支持含空格与逗号的取值。
+
+    实现为自包含纯 Python 解析，不引入 scipy 等额外依赖，
+    解析结果直接产出 Polars DataFrame，标称列保留为字符串（非字节串）。
+    """
+
+    name = "arff"
+    extensions = (".arff",)
+
+    _DATE_FORMATS = (
+        "yyyy-MM-dd",
+        "yyyy-MM-dd HH:mm:ss",
+        "yyyy-MM-dd'T'HH:mm:ss",
+        "yyyy/MM/dd",
+        "yyyy/MM/dd HH:mm:ss",
+    )
+
+    def load(self, source: LoadSource, **options: Any) -> LoadedTable:
+        if not isinstance(source, (bytes, str, PurePosixPath, PureWindowsPath)):
+            raise UnsupportedFormat(f"unsupported source type: {type(source)!r}")
+        text = self._read_text(source)
+        parsed = self._parse(text)
+        df = self._to_frame(parsed)
+        return LoadedTable(
+            df=df,
+            format="arff",
+            metadata={
+                "relation": parsed["relation"],
+                "columns": list(df.columns),
+            },
+        )
+
+    def metadata(self, source: LoadSource, **options: Any) -> dict[str, Any]:
+        text = self._read_text(source)
+        parsed = self._parse(text)
+        return {
+            "relation": parsed["relation"],
+            "columns": [a["name"] for a in parsed["attributes"]],
+            "dtypes": {
+                a["name"]: a["type"] for a in parsed["attributes"]
+            },
+        }
+
+    # ---- 内部工具 ----
+
+    @staticmethod
+    def _read_text(source: LoadSource) -> str:
+        if isinstance(source, bytes):
+            raw = source
+        else:
+            try:
+                with open(str(source), "rb") as fh:
+                    raw = fh.read()
+            except OSError as exc:
+                raise LoadError(
+                    "cannot read ARFF file",
+                    details={"path": str(source), "reason": str(exc)},
+                ) from exc
+        if raw.startswith(b"\xef\xbb\xbf"):
+            raw = raw[3:]
+        for enc in ("utf-8", "gb18030", "latin-1"):
+            try:
+                return raw.decode(enc)
+            except UnicodeDecodeError:
+                continue
+        raise LoadError("failed to decode ARFF file", details={"reason": "unsupported encoding"})
+
+    @staticmethod
+    def _strip_comment(line: str) -> str:
+        # 仅在「行首」处理注释；% 若出现在引号内不应被误删，这里用引号感知的简单扫描
+        in_quote = False
+        for i, ch in enumerate(line):
+            if ch == "'" and (i == 0 or line[i - 1] != "\\"):
+                in_quote = not in_quote
+            elif ch == "%" and not in_quote:
+                return line[:i]
+        return line
+
+    def _parse(self, text: str) -> dict[str, Any]:
+        relation = ""
+        attributes: list[dict[str, Any]] = []
+        data_rows: list[str] = []
+        in_data = False
+
+        for raw_line in text.splitlines():
+            line = self._strip_comment(raw_line).strip()
+            if not line:
+                continue
+            low = line.lower()
+            if low.startswith("@relation"):
+                relation = line.split(None, 1)[1].strip()
+                continue
+            if low.startswith("@attribute"):
+                body = line.split(None, 1)[1].strip()
+                name, spec = self._split_attribute(body)
+                attributes.append(self._parse_attribute(name, spec))
+                continue
+            if low.startswith("@data"):
+                in_data = True
+                continue
+            if in_data:
+                data_rows.append(line)
+
+        if not attributes:
+            raise LoadError("ARFF 文件缺少 @attribute 定义")
+        if not data_rows:
+            raise LoadError("ARFF 文件缺少 @data 数据段")
+        return {"relation": relation, "attributes": attributes, "rows": data_rows}
+
+    @staticmethod
+    def _split_attribute(body: str) -> tuple[str, str]:
+        # 属性名可能带引号包裹（含空格），否则取第一个空白分隔
+        if body.startswith("'") or body.startswith('"'):
+            quote = body[0]
+            end = body.find(quote, 1)
+            if end == -1:
+                raise LoadError("ARFF 属性名引号未闭合")
+            return body[1:end], body[end + 1:].strip()
+        parts = body.split(None, 1)
+        if len(parts) != 2:
+            raise LoadError(f"ARFF 属性定义非法：{body!r}")
+        return parts[0], parts[1].strip()
+
+    @staticmethod
+    def _parse_attribute(name: str, spec: str) -> dict[str, Any]:
+        spec = spec.strip()
+        low = spec.lower()
+        if low in ("numeric", "real", "integer"):
+            return {"name": name, "type": "numeric"}
+        if low == "string":
+            return {"name": name, "type": "string"}
+        if low.startswith("date"):
+            # date 类型可能带格式串（引号包裹），这里统一按字符串日期列处理
+            return {"name": name, "type": "string"}
+        if spec.startswith("{") and spec.endswith("}"):
+            # 标称枚举：{a,b,c}，取值可能带引号/空格
+            inner = spec[1:-1].strip()
+            values = ArffLoader._split_nominal(inner)
+            return {"name": name, "type": "nominal", "values": values}
+        raise LoadError(
+            f"ARFF 属性类型不支持：{spec!r}",
+            details={"attribute": name},
+        )
+
+    @staticmethod
+    def _split_nominal(inner: str) -> list[str]:
+        values: list[str] = []
+        current = ""
+        in_quote = False
+        quote_char = ""
+        for ch in inner:
+            if in_quote:
+                if ch == quote_char:
+                    in_quote = False
+                else:
+                    current += ch
+            elif ch in ("'", '"'):
+                in_quote = True
+                quote_char = ch
+            elif ch == ",":
+                values.append(current.strip())
+                current = ""
+            else:
+                current += ch
+        if current.strip() or (values and not in_quote):
+            values.append(current.strip())
+        return [v for v in values if v != ""]
+
+    @staticmethod
+    def _split_data_line(line: str) -> list[str]:
+        """把一条稠密数据行拆成字段（引号感知，逗号分隔）。"""
+        fields: list[str] = []
+        current = ""
+        in_quote = False
+        quote_char = ""
+        for ch in line:
+            if in_quote:
+                if ch == quote_char:
+                    in_quote = False
+                else:
+                    current += ch
+            elif ch in ("'", '"'):
+                in_quote = True
+                quote_char = ch
+            elif ch == ",":
+                fields.append(current.strip())
+                current = ""
+            else:
+                current += ch
+        fields.append(current.strip())
+        return fields
+
+    def _parse_sparse(self, line: str, n_attrs: int) -> list[str | None]:
+        inner = line.strip()
+        if inner.startswith("{") and inner.endswith("}"):
+            inner = inner[1:-1]
+        out: list[str | None] = [None] * n_attrs
+        for token in self._split_data_line(inner):
+            token = token.strip()
+            if not token:
+                continue
+            parts = token.split(None, 1)
+            if len(parts) != 2:
+                raise LoadError(f"ARFF 稀疏数据项非法：{token!r}")
+            try:
+                idx = int(parts[0])
+            except ValueError as exc:
+                raise LoadError(f"ARFF 稀疏索引非法：{parts[0]!r}") from exc
+            if not 0 <= idx < n_attrs:
+                raise LoadError(f"ARFF 稀疏索引越界：{idx}")
+            out[idx] = parts[1].strip().strip("'\"")
+        return out
+
+    def _to_frame(self, parsed: dict[str, Any]) -> pl.DataFrame:
+        attributes = parsed["attributes"]
+        n_attrs = len(attributes)
+        names = [a["name"] for a in attributes]
+        columns: dict[str, list[Any]] = {n: [] for n in names}
+        types: dict[str, str] = {a["name"]: a["type"] for a in attributes}
+
+        for line in parsed["rows"]:
+            if line.startswith("{"):
+                fields = self._parse_sparse(line, n_attrs)
+            else:
+                fields = self._split_data_line(line)
+            if len(fields) != n_attrs:
+                raise LoadError(
+                    "ARFF 数据行字段数与属性数不一致",
+                    details={"expected": n_attrs, "actual": len(fields)},
+                )
+            for name, raw in zip(names, fields):
+                columns[name].append(self._coerce(raw, types[name]))
+
+        return pl.DataFrame(columns)
+
+    @staticmethod
+    def _coerce(raw: str | None, atype: str) -> Any:
+        if raw is None:
+            return None
+        raw = raw.strip()
+        if raw == "?" or raw == "":
+            return None
+        if atype == "numeric":
+            try:
+                return float(raw)
+            except ValueError:
+                return raw
+        return raw
+
+
+# =========================================================
 # Loader 注册表
 # =========================================================
 
@@ -747,6 +1032,7 @@ def default_registry() -> LoaderRegistry:
         ExcelLoader(),
         JSONLoader(),
         ParquetLoader(),
+        ArffLoader(),
     ):
         registry.register(loader)
 

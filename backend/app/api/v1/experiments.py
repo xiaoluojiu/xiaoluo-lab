@@ -316,6 +316,29 @@ def get_experiment(
     return ApiResponse[dict](data=experiment_dict(experiment_service.get(experiment_id)))
 
 
+@router.get("/{experiment_id}/narrative", response_model=ApiResponse[dict])
+def get_experiment_narrative(
+    experiment_id: int,
+    experiment_service: ExperimentService = Depends(get_experiment_service),
+) -> ApiResponse[dict]:
+    """实验的结构化解读（第五层改造）。
+
+    把「一次实验到底验证了什么、结果说明什么、失败为什么、下一步做什么」
+    组装成固定四字段，避免实验列表变成一堆没有解释的状态与数字。
+    """
+    experiment = experiment_service.get(experiment_id)
+    runs = experiment_service.list_runs(experiment_id)
+    compare = None
+    if len(runs) > 1:
+        from app.experiments.comparator import ExperimentComparator
+
+        compare = ExperimentComparator().compare(runs)
+    from app.experiments.structured import build_narrative
+
+    narrative = build_narrative(experiment, runs, compare=compare)
+    return ApiResponse[dict](data=narrative.to_dict())
+
+
 @router.get("/{experiment_id}/runs", response_model=ApiResponse[list])
 def list_runs(
     experiment_id: int,

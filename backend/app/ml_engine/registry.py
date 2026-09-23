@@ -8,43 +8,34 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.registry import Registry
 from app.ml_engine.base import ModelAdapter
 from app.ml_engine.exceptions import MLEngineException
 
 
-class ModelRegistry:
-    """模型注册表：name -> ModelAdapter 子类。"""
+class ModelRegistry(Registry[type[ModelAdapter]]):
+    """模型注册表：name -> ModelAdapter 子类。
+
+    键值管理与报错复用 :class:`app.core.registry.Registry`（标准化内核），
+    与 ``ToolRegistry`` / 特征工程操作注册表共用同一套协议，
+    本类只保留模型层特有的 ``create`` / ``metadata`` / ``supports_param``。
+    """
 
     def __init__(self) -> None:
-        self._models: dict[str, type[ModelAdapter]] = {}
+        super().__init__(label="模型")
 
-    def register(
-        self, name: str, adapter_class: type[ModelAdapter]
-    ) -> type[ModelAdapter]:
-        """注册模型适配器（同名重复注册报错）。"""
-        if name in self._models:
-            raise MLEngineException(f"模型 {name!r} 已注册")
-        self._models[name] = adapter_class
-        return adapter_class
+    # ---- Registry 错误钩子：沿用 ML 层既有异常体系 ----------------------
+    def _conflict_error(self, key: str) -> MLEngineException:
+        return MLEngineException(f"模型 {key!r} 已注册")
 
-    def unregister(self, name: str) -> None:
-        if name not in self._models:
-            raise MLEngineException(f"模型 {name!r} 未注册")
-        del self._models[name]
-
-    def get(self, name: str) -> type[ModelAdapter]:
-        if name not in self._models:
-            raise MLEngineException(
-                f"模型 {name!r} 未注册",
-                details={"available": sorted(self._models)},
-            )
-        return self._models[name]
+    def _missing_error(self, key: str) -> MLEngineException:
+        return MLEngineException(f"模型 {key!r} 未注册", details={"available": self.keys()})
 
     def list(self) -> list[dict[str, str]]:
         """已注册模型清单（name + task）。"""
         return [
             {"name": cls.name, "task": cls.task}
-            for cls in self._models.values()
+            for cls in self.values()
         ]
 
     def create(self, name: str, params: dict[str, Any] | None = None) -> ModelAdapter:

@@ -369,3 +369,46 @@ class LocalStorage(Storage):
                     key,
                     path,
                 )
+
+    # ==================================================
+    # 本地直通（大数据接入）
+    # ==================================================
+
+    def local_path(
+        self,
+        key: str,
+    ) -> Path | None:
+        """返回对象的本地绝对路径（已做路径穿越校验）。
+
+        仅做路径解析，不要求对象已存在——入库时需要「先拿目标路径、再写文件」，
+        若此处强制 exists 检查，流式写入就没有落点。
+        """
+        return self._resolve(key)
+
+    def promote(
+        self,
+        key: str,
+        source: Path,
+    ) -> StoredObjectMeta:
+        """原子提升本地临时文件为存储对象。
+
+        同盘时 ``os.replace`` 是零拷贝的元数据操作；跨盘（Windows 跨盘符）
+        会抛 ``OSError``，此时退回 ``save_stream`` 的流式拷贝。
+        """
+        if not source.is_file():
+            raise StorageException(
+                "source file not found",
+                code="SOURCE_NOT_FOUND",
+                details={"source": str(source)},
+            )
+
+        path = self._resolve(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            os.replace(source, path)
+        except OSError:
+            # 跨文件系统 / 目标被占用：退回拷贝（仍然先写临时文件再替换）。
+            return self.save_stream(key, source)
+
+        return self._meta(key, path)

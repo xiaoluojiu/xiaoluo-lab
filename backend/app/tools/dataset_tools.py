@@ -189,10 +189,19 @@ class DatasetProfileTool(_VersionDataTool):
 
 class DatasetQualityTool(_VersionDataTool):
     name = "dataset.quality"
-    description = "数据质量检查（缺失、重复、异常值、Schema）。"
+    description = (
+        "数据质量检查（缺失、重复、异常值、Schema）。"
+        "传 target 时该列只做描述、不产出清洗建议；异常值方法会按字段语义标注适用性。"
+    )
     input_schema = {
         "type": "object",
-        "properties": {"dataset_id": {"type": "integer"}, "version": {"type": "integer"}},
+        "properties": {
+            "dataset_id": {"type": "integer"},
+            "version": {"type": "integer"},
+            # 第二层：目标列保护。用户/Agent 已知目标列时必须传，
+            # 否则报告会把「要预测的对象」当成需要清洗的脏数据。
+            "target": {"type": "string", "description": "目标列名（可选，传入后该列不做清洗建议）"},
+        },
         "required": ["dataset_id"],
     }
     output_schema = {"type": "object"}
@@ -203,6 +212,14 @@ class DatasetQualityTool(_VersionDataTool):
     ) -> ToolResult:
         engine = services.require("data_engine_service")
         df, dataset_id = self._load_df(params, context, services)
-        report = engine.quality(df)
+        target = str(params.get("target") or "") or None
+        report = engine.quality(df, target=target)
         issue_count = len(report.get("issues", []))
-        return ToolResult.ok(report, summary=f"数据集 {dataset_id} 质量检查：{issue_count} 个问题")
+        summary = f"数据集 {dataset_id} 质量检查：{issue_count} 个问题"
+        if target:
+            report.setdefault("target_protection", {
+                "target": target,
+                "note": f"{target} 已标记为目标列，只做描述、未进入清洗建议",
+            })
+            summary += f"；目标列 {target} 已排除出清洗建议"
+        return ToolResult.ok(report, summary=summary)

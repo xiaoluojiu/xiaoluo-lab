@@ -4,11 +4,13 @@ from __future__ import annotations
 
 # 导入全部模型，确保表注册到 Base.metadata（必须在 from app.main import app 之前，
 # 否则 `import app.models.*` 会把名字 app 重绑定为包模块）
+import app.models.connector  # noqa: F401
 import app.models.dataset  # noqa: F401
 import app.models.dataset_version  # noqa: F401
 import app.models.experiment  # noqa: F401
 import app.models.experiment_run  # noqa: F401
 import app.models.file  # noqa: F401
+import app.models.learning  # noqa: F401
 import app.models.operation  # noqa: F401
 import pytest
 from app.core.database import Base

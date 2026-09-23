@@ -9,6 +9,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     agent,
+    connectors,
     dataset_analysis,
     datasets,
     eda,
@@ -39,3 +40,4 @@ api_router.include_router(reports.router)
 api_router.include_router(settings.router)
 api_router.include_router(learning.router)
 api_router.include_router(notifications.router)
+api_router.include_router(connectors.router)

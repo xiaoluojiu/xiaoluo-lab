@@ -53,7 +53,8 @@ PIPELINE_STEPS: list[dict[str, Any]] = [
         "output": "X（特征）/ y（目标，聚类为 None）",
         "key_behaviour": [
             "excluded_columns 用于排除 id、主键、高基数字符串等无信息列。",
-            "target 不允许同时出现在 excluded_columns 中（会被显式拒绝）。",
+            "target 出现在 excluded_columns 中会被自动剔除（目标列本来就不参与特征，该指令冗余但无害）；"
+            "早期版本会直接报错，导致这类计划必然失败。",
         ],
         "verify": "run.artifacts.features 是排除后真正参与训练的原始列清单。",
         "code": "app/experiments/service.py::ExperimentService._execute",

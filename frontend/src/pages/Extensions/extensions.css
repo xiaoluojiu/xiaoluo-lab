@@ -45,3 +45,171 @@
   font-size: 13px;
 }
 .roadmap-t { font-size: 14px; color: var(--text-2); }
+
+/* =============================================================
+   数据库连接器面板
+   -------------------------------------------------------------
+   颜色全部取自 tokens.css，深浅主题自动跟随，不写死任何色值。
+   ============================================================= */
+.connector-section .section-title { margin-top: 0; }
+
+.connector-muted { color: var(--text-2); font-size: var(--fs-muted); margin: 0; }
+.connector-tip { margin-top: var(--space-2); line-height: 1.6; }
+
+.connector-alert {
+  margin: var(--space-3) 0 0;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-muted);
+  line-height: 1.6;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.connector-alert.is-ok { border-color: transparent; background: var(--success-weak); color: var(--text); }
+.connector-alert.is-error { border-color: transparent; background: var(--danger-weak); color: var(--text); }
+.connector-alert.is-warn { border-color: transparent; background: var(--warning-weak); color: var(--text); }
+.connector-alert.is-compact { margin-top: 6px; padding: 6px 10px; }
+
+.connector-hint-chip { display: inline-block; margin-left: var(--space-2); }
+.connector-hint-chip code {
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-muted);
+  color: var(--text);
+}
+
+/* ---------- 新建表单 ---------- */
+.connector-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+.connector-form-wide { grid-column: 1 / -1; }
+.connector-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+/* ---------- 连接器列表 ---------- */
+.connector-list { display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-3); }
+.connector-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+}
+.connector-row-main { min-width: 0; }
+.connector-row-title { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.connector-desc {
+  margin: 6px 0 0;
+  font-size: var(--fs-muted);
+  color: var(--text-2);
+  line-height: 1.6;
+  word-break: break-all;
+}
+.connector-row-actions { display: flex; flex: 0 0 auto; gap: var(--space-2); }
+
+/* ---------- 工作台 ---------- */
+.connector-workbench {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+}
+@media (max-width: 860px) {
+  .connector-workbench { grid-template-columns: minmax(0, 1fr); }
+}
+.connector-pane { min-width: 0; }
+.connector-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.connector-table-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.connector-table-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-muted);
+  text-align: left;
+  cursor: pointer;
+}
+.connector-table-item:hover { border-color: var(--primary); }
+.connector-table-item.is-active { border-color: var(--primary); background: var(--primary-weak); color: var(--primary); font-weight: 600; }
+.connector-table-kind { color: var(--text-2); font-size: 12px; flex: 0 0 auto; }
+
+.connector-summary { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-2); }
+
+.connector-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.connector-column {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 12px;
+  cursor: pointer;
+}
+.connector-column.is-on { border-color: var(--primary); background: var(--primary-weak); }
+.connector-column-name { color: var(--text); }
+.connector-column-type { color: var(--text-2); }
+
+/* ---------- 结果与预览 ---------- */
+.connector-result { margin-top: var(--space-3); }
+.connector-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  font-size: var(--fs-muted);
+  color: var(--text-2);
+}
+.connector-metrics .is-warn { color: var(--text); font-weight: 600; }
+.connector-warnings { margin: var(--space-2) 0 0; padding-left: 18px; font-size: var(--fs-muted); color: var(--text-2); line-height: 1.7; }
+
+.connector-preview { margin-top: var(--space-4); }
+.connector-preview-scroll {
+  margin-top: var(--space-2);
+  max-height: 380px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.connector-preview-scroll .data-table { margin: 0; }

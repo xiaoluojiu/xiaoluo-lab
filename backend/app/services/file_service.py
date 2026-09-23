@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import tempfile
 import uuid
+from collections.abc import Iterator
 from io import BytesIO
 from pathlib import Path
 from typing import BinaryIO
@@ -25,6 +26,7 @@ from typing import BinaryIO
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.exceptions import (
     NotFoundException,
     ValidationException,
@@ -32,11 +34,33 @@ from app.core.exceptions import (
 from app.models.file import File
 from app.storage.service import StorageService
 
-# 单文件最大上传大小：100 MB
-MAX_UPLOAD_SIZE = 100 * 1024 * 1024
+# 单文件上传上限与读取块大小：均由配置驱动。
+# 历史上这里是硬编码的 ``100 * 1024 * 1024``——「大数据平台只收 100 MB」
+# 本身就是自相矛盾的定位，而且它并不能真正保护进程（真正的瓶颈见
+# app/data_engine/ingest.py 的说明）。现在默认 2 GiB，可按部署环境调整。
+_FALLBACK_MAX_UPLOAD_SIZE = 2 * 1024 * 1024 * 1024
+_FALLBACK_CHUNK_SIZE = 4 * 1024 * 1024
 
-# 每次从上传流读取 1 MB
-UPLOAD_CHUNK_SIZE = 1024 * 1024
+
+def get_max_upload_size() -> int:
+    """当前生效的单文件上传上限（字节）。"""
+    try:
+        return int(settings.MAX_UPLOAD_SIZE_BYTES)
+    except Exception:  # pragma: no cover - 配置层异常时退回默认
+        return _FALLBACK_MAX_UPLOAD_SIZE
+
+
+def get_upload_chunk_size() -> int:
+    """上传流的分块大小（字节）。"""
+    try:
+        return max(64 * 1024, int(settings.UPLOAD_CHUNK_SIZE_BYTES))
+    except Exception:  # pragma: no cover
+        return _FALLBACK_CHUNK_SIZE
+
+
+# 兼容旧引用：保留常量名，但值不再写死。
+MAX_UPLOAD_SIZE = _FALLBACK_MAX_UPLOAD_SIZE
+UPLOAD_CHUNK_SIZE = _FALLBACK_CHUNK_SIZE
 
 # 第一阶段允许的数据文件格式
 ALLOWED_UPLOAD_FORMATS = {
@@ -45,6 +69,7 @@ ALLOWED_UPLOAD_FORMATS = {
     "xlsx",
     "xls",
     "parquet",
+    "arff",
 }
 
 
@@ -53,9 +78,20 @@ class FileService:
         self,
         db: Session,
         storage: StorageService,
+        *,
+        max_upload_size: int | None = None,
     ) -> None:
         self.db = db
         self.storage = storage
+        # 允许注入：测试可以用极小的上限验证「超限拒绝」这一契约，
+        # 而不用真的构造一个 2 GiB 的字节串（历史测试为此分配了 100 MB）。
+        self.max_upload_size = (
+            int(max_upload_size) if max_upload_size is not None else get_max_upload_size()
+        )
+
+    @property
+    def chunk_size(self) -> int:
+        return get_upload_chunk_size()
 
     # ==================================================
     # 上传
@@ -149,7 +185,7 @@ class FileService:
 
                 while True:
                     chunk = file_obj.read(
-                        UPLOAD_CHUNK_SIZE
+                        self.chunk_size
                     )
 
                     if not chunk:
@@ -158,12 +194,12 @@ class FileService:
                     total_size += len(chunk)
 
                     # 超过限制立即停止
-                    if total_size > MAX_UPLOAD_SIZE:
+                    if total_size > self.max_upload_size:
                         raise ValidationException(
                             "file too large",
                             code="FILE_TOO_LARGE",
                             details={
-                                "max_size": MAX_UPLOAD_SIZE,
+                                "max_size": self.max_upload_size,
                                 "actual_size": total_size,
                             },
                         )
@@ -217,7 +253,7 @@ class FileService:
             # 8. 保存 Storage
             # --------------------------------------------------
 
-            self.storage.save_stream(
+            self.storage.promote(
                 key,
                 temp_path,
             )
@@ -291,12 +327,12 @@ class FileService:
                 code="FILE_EMPTY",
             )
 
-        if len(content) > MAX_UPLOAD_SIZE:
+        if len(content) > self.max_upload_size:
             raise ValidationException(
                 "file too large",
                 code="FILE_TOO_LARGE",
                 details={
-                    "max_size": MAX_UPLOAD_SIZE,
+                    "max_size": self.max_upload_size,
                     "actual_size": len(content),
                 },
             )
@@ -333,18 +369,32 @@ class FileService:
     # 读取
     # ==================================================
 
+    def local_path(
+        self,
+        file_id: int,
+    ) -> Path | None:
+        """返回文件在本地磁盘上的绝对路径；后端不支持本地直通时返回 None。
+
+        这是大数据接入的关键一环：拿到路径后可以「原地解析 + 流式转 Parquet」，
+        而不是先把整个文件读成 bytes（2 GiB 的文件那样做等于白占 2 GiB 内存）。
+        """
+        file = self.get(file_id)
+
+        try:
+            return self.storage.local_path(file.path)
+        except Exception:  # noqa: BLE001 - 探测失败按不支持处理
+            return None
+
     def read(
         self,
         file_id: int,
     ) -> bytes:
-        """读取文件内容。
+        """读取文件内容（兼容接口，慎用于大文件）。
 
         注意：
         当前 Storage 抽象仍然返回 bytes。
-
-        对于毕设规模的数据文件足够使用。
-        后续真正进入大文件数据分析阶段时，
-        再增加流式读取/分块解析能力。
+        需要处理大文件时请改用 ``local_path()``（配合 ingest 流式入库）
+        或 ``open_stream()``（配合流式下载）。
         """
 
         file = self.get(
@@ -354,6 +404,40 @@ class FileService:
         return self.storage.read(
             file.path
         )
+
+    def open_stream(
+        self,
+        file_id: int,
+        chunk_size: int = 4 * 1024 * 1024,
+    ) -> tuple[File, "Iterator[bytes]"]:
+        """以分块迭代器方式读取文件（用于流式下载，内存占用与文件体积无关）。
+
+        后端不支持本地直通时退回「一次性读入内存再分块吐出」——语义一致，
+        只是大文件下会占内存，属于后端能力差异而非本层退化。
+        """
+        file = self.get(file_id)
+
+        path = self.local_path(file_id)
+
+        if path is not None and path.is_file():
+
+            def _iter_local() -> Iterator[bytes]:
+                with path.open("rb") as handle:
+                    while True:
+                        block = handle.read(chunk_size)
+                        if not block:
+                            break
+                        yield block
+
+            return file, _iter_local()
+
+        content = self.storage.read(file.path)
+
+        def _iter_memory() -> Iterator[bytes]:
+            for offset in range(0, len(content), chunk_size):
+                yield content[offset : offset + chunk_size]
+
+        return file, _iter_memory()
 
     # ==================================================
     # 列表
