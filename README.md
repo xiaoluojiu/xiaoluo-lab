@@ -507,11 +507,20 @@ docker compose up -d --build
 
 ### 6.3 生产注意事项
 
-- 将 `DATABASE_URL` 切换为 PostgreSQL
+- 将 `DATABASE_URL` 切换为 PostgreSQL（SQLite 仅建议单实例）
 - 将 `APP_ENV=prod`、`DEBUG=false`
 - 通过反向代理（Nginx / Caddy）启用 HTTPS
-- 设置 `LLM_API_KEY` 环境变量
+- 设置 `LLM_API_KEY` 环境变量（启动时会自动体检，缺失会告警）
 - 限制 `DATA_ROOT` 卷的访问权限
+
+HTTP 边的三个开关（详见 `.env.example`）：
+
+- `CORS_ALLOW_ORIGINS`：compose 部署下前后端不同源（`:8080` vs `:8000`），
+  需在 backend 环境变量里显式写前端地址；**留空即不接受跨域**，不要配 `*`。
+- `GZIP_ENABLED`：默认开启。报告 / 数据集列表这类 JSON 动辄数百 KB，压缩收益明显；
+  SSE 流式响应在中间件里自动跳过，实时性不受影响。
+- `RATE_LIMIT_ENABLED`：默认开启，只保护昂贵写端点（对话 / 报告生成 / 训练 / 连接器导入）。
+  多实例部署时是**每实例独立计数**，边界防护仍应放在反向代理层。
 
 ---
 
@@ -523,36 +532,47 @@ docker compose up -d --build
 xiaoluo-lab/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py                    # FastAPI 入口（生命周期、中间件、健康检查）
-│   │   ├── analysis.py                # 合并模块：Profiling（schema/profile）
+│   │   ├── main.py                    # FastAPI 入口：中间件编排 + 启动体检 + 健康检查
+│   │   ├── analysis.py                # Profiling（schema/profile）
 │   │   │                              #   + Quality（Missing/Duplicate/Outlier/Schema Checker）
 │   │   │                              #   + EDA（Descriptive/Distribution/Correlation/Outlier）
-│   │   ├── api/v1/                    # 10 个 Router（datasets/files/processing/merge/
-│   │   │                              #   eda/experiments[含 /ml 前缀]/workflow/agent/reports/
-│   │   │                              #   dataset_analysis）
-│   │   ├── core/                      # config / database / exceptions / logging / middleware
-│   │   ├── models/                    # 6 个 ORM 模型：File/Dataset/DatasetVersion/
-│   │   │                              #   Operation/Experiment/ExperimentRun
+│   │   ├── api/v1/                    # 14 个 Router：datasets / files / processing / merge /
+│   │   │                              #   eda / experiments[含 /ml 前缀] / dataset_analysis /
+│   │   │                              #   workflow / agent / reports / settings / learning /
+│   │   │                              #   notifications / connectors
+│   │   ├── core/                      # config / database / exceptions / logging /
+│   │   │                              #   middleware(CORS·GZip·限流·请求上下文) / registry
+│   │   ├── models/                    # ORM 模型：File / Dataset / DatasetVersion /
+│   │   │                              #   Operation / Experiment / ExperimentRun /
+│   │   │                              #   Connector / Learning
 │   │   ├── schemas/                   # Pydantic schemas
 │   │   ├── services/                  # DatasetService / FileService
-│   │   ├── storage/                   # Storage 抽象 + LocalStorage + 安全模块
-│   │   ├── data_engine/               # loaders.py / operations.py / base.py / json_utils.py /
-│   │   │                              #   service.py（OPERATION_REGISTRY）+ merge/（plan/validator/
-│   │   │                              #   executor/schema_mapper/key_analyzer/report）
-│   │   ├── ml_engine/                 # base / classification / regression / clustering /
-│   │   │                              #   dimensionality / preprocessing（sklearn Pipeline）/
-│   │   │                              #   evaluation / explainability / registry
-│   │   ├── tools/                     # base / context / result / registry / builtin /
-│   │   │                              #   dataset_tools / data_tools / eda_tools / ml_tools
-│   │   ├── agent/                     # context / planner / permission / executor / validator /
-│   │   │                              #   runtime / llm
-│   │   ├── workflow/                  # models / validator / executor / service / runners / state
+│   │   ├── storage/                   # Storage 抽象 + LocalStorage + 路径穿越防护
+│   │   ├── quality/                   # 语义层：ColumnSemantics / outlier_strategy
+│   │   ├── connectors/                # 外部数据库接入：dialects / crypto(Fernet) /
+│   │   │                              #   extract(有界抽取) / service
+│   │   ├── learning/                  # 学习中心：catalog / reviewer / service（AST 静态检查）
+│   │   ├── notifications/             # 进程内通知中心 + 偏好（含 SSE 推送版本号）
+│   │   ├── data_engine/               # loaders / operations / ingest(分块流式) / cache /
+│   │   │                              #   merge(plan/validator/executor/schema_mapper/key_analyzer)
+│   │   ├── ml_engine/                 # classification / regression / clustering /
+│   │   │                              #   dimensionality / preprocessing / evaluation /
+│   │   │                              #   explainability / inference(分块) / target_inference
+│   │   ├── tools/                     # base / registry / builtin / dataset_tools /
+│   │   │                              #   data_tools / eda_tools / ml_tools / workflow_tools /
+│   │   │                              #   report_tools / connector_tools
+│   │   ├── agent/                     # context(budget/tokens) / intent / preflight / clarify /
+│   │   │                              #   planner / permission / executor / validator / runtime
+│   │   ├── local_router/              # 【实验性，默认关闭】contract(生产依赖) +
+│   │   │                              #   model/router/scoring/escalation_rules(仅 shadow 档加载)
+│   │   ├── workflow/                  # models / validator / executor / service / runners
 │   │   ├── experiments/               # service / comparator
-│   │   └── reports/                   # models / generator / markdown / html / pdf
+│   │   └── reports/                   # models / generator / numbering / discovery /
+│   │                                  #   saved(元数据副本与缓存) / narrator / 三种渲染器
 │   ├── migrations/                    # Alembic 迁移
-│   ├── tests/                         # pytest 测试套件（509 用例通过 / 3 skipped）
-│   ├── scripts/                       # demo_data.py
-│   ├── pyproject.toml
+│   ├── tests/                         # pytest 测试套件
+│   ├── scripts/                       # router/(本地路由实验) / bench_*.py / demo_data.py
+│   ├── pyproject.toml                 # ruff(line-length=100) + pytest 配置
 │   ├── Dockerfile
 │   └── .venv/
 ├── frontend/
@@ -562,27 +582,32 @@ xiaoluo-lab/
 │   │   │                              #   PermissionDialog）
 │   │   ├── features/                  # 业务功能组件（agent / dataset / eda / merge / ml /
 │   │   │                              #   experiment / workflow / report）
+│   │   ├── lib/                       # 零依赖纯函数（toolLabel / notificationFeed）
 │   │   ├── pages/                     # 页面（Home / Datasets(+Detail) / Processing / Analysis /
 │   │   │                              #   ML / AI / Workflow / Experiments / Reports /
-│   │   │                              #   Settings）
+│   │   │                              #   Settings / Extensions(连接器) / Learning(+Workspace)）
 │   │   ├── layouts/MainLayout.tsx
 │   │   ├── router/index.tsx
-│   │   ├── store/aiLab.ts             # zustand 全局状态
+│   │   ├── store/aiLab.ts             # zustand 全局状态（工具目录 5 分钟 TTL 缓存）
 │   │   ├── types/                     # TypeScript 类型定义
 │   │   ├── App.tsx
 │   │   └── main.tsx
 │   ├── package.json
 │   ├── vite.config.ts
 │   └── Dockerfile
+├── tests/                             # 前端单测（node:test，零新增依赖）
 ├── data/                              # 数据目录（raw/datasets/artifacts/experiments/reports）
 ├── models/                            # 训练产出的模型文件
 ├── scripts/                           # dev_start / init / demo（ps1 + sh 双版本）
-├── docs/                              # 项目文档（architecture / data-engine / agent /
-│                                      #   security / development / refactor/PHASE0_STATUS）
-├── docker/                            # Docker 相关配置
+├── docs/                              # 设计文档（大数据规模优化 / Agent 架构 / DB 连接器 /
+│                                      #   项目详细报告 / 毕业论文）
 ├── docker-compose.yml
 ├── .env.example
 ├── .gitignore
+├── SECURITY.md                        # 漏洞报告渠道 + 已知安全取舍
+├── CONTRIBUTING.md                    # 代码风格 / 测试要求 / PR 流程
+├── CHANGELOG.md                       # 重要变更记录
+├── LICENSE                            # MIT
 └── README.md
 ```
 
@@ -613,16 +638,38 @@ xiaoluo-lab/
 
 ---
 
-## 八、状态
+## 八、状态与已知限制
 
-- 项目骨架已建立，业务功能按《文件级 AI 协同开发 Prompt 全量手册》逐 Prompt 开发完成，并完成减法重构（净删 ~3700 行，模块合并 / 删除冗余目录）。
-- 509 测试通过（3 skipped），ruff 静态检查清洁，前端构建与 tsc 0 错误。新增 ML/Merge E2E 黑盒测试共 26 个（`test_ml_api_e2e.py` 9 + `test_merge_api_e2e.py` 17），覆盖 mixed-type 分类、excluded_columns、回归、聚类、非法参数、小样本、composite key、版本固定、各 join 类型、列冲突唯一命名等关键链路。
-- Docker 部署就绪（backend / frontend Dockerfile + docker-compose.yml）。
+### 8.1 完成度
 
-如需更多架构与模块细节，参见 `docs/` 目录下的：
-- `architecture.md`：整体架构
-- `data-engine.md`：数据引擎深入
-- `agent.md`：Agent 系统深入
-- `security.md`：安全设计
-- `development.md`：开发指南
-- `refactor/PHASE0_STATUS.md`：减法重构阶段记录
+- 业务功能按《文件级 AI 协同开发 Prompt 全量手册》逐 Prompt 开发完成，并完成一轮减法重构
+  （净删约 3700 行，模块合并 / 删除冗余目录）。
+- 后端 pytest 通过（3 项 `test_data_center.py` 的历史失败除外，见下）；
+  前端 `tsc` 无错误、`vite build` 通过；新增前端单测用 Node 自带 test runner 运行。
+- Docker 部署就绪（backend / frontend Dockerfile + `docker-compose.yml`，前端映射 **8080**）。
+- 上线前收尾项（中间件 / 性能 / 安全取舍 / 文档）已在本轮处理，详见 `CHANGELOG.md`。
+
+### 8.2 已知限制（部署前必读）
+
+| 模块 | 状态 | 说明 |
+| --- | --- | --- |
+| `app/local_router/` | **实验性，默认未启用** | `LOCAL_ROUTER_MODE=off`。但该目录**不是死代码**：其中 `contract.py` 的 `Intent` 枚举是 Agent 运行时路由的唯一真源（`app/agent/intent.py`、`app/agent/runtime/runtime.py` 直接 import）。只有 `model.py` / `router.py` / `scoring.py` 在 `shadow`（只记录不改变行为）或 `guard`（预留档，**尚未实现接管逻辑**）时才被加载。开启前需先跑 `scripts/router/analyze_fusion.py` 选阈值。 |
+| 认证与授权 | **没有** | 单租户本地平台的刻意取舍。所有 API 对能访问端口的人开放，请勿直接暴露到公网；详见 `SECURITY.md`。 |
+| 通知 / WebSocket 兼容性 | 已支持 SSE 降级 | `GET /notifications/stream` 失败时前端退回指数退避轮询（15s→30s→60s→120s）。不支持长连接的代理环境下会自动走这条兜底路径。 |
+| SQLite | 生产可用但有上限 | 已启用 WAL / `synchronous=NORMAL` / `busy_timeout`，单实例可用；多实例或高并发写请切换 PostgreSQL / MySQL。 |
+| 限流 | 进程内计数 | 只对昂贵写端点生效。**多实例部署时按实例各自计数**，真正的边界防护应放在反向代理层。 |
+| 依赖安装 | 需手动执行 | `.env` 未入库（`LLM_API_KEY` 必填）；改数据模型后必须跑 `alembic upgrade head` —— **测试全绿不能证明生产库已迁移**（测试用的是内存库）。 |
+
+### 8.3 测试注意事项
+
+`tests/` 中有 6 个文件会**真实调用 LLM**（`test_agent.py`、`test_permission_llm.py`、
+`test_phase10_integration.py`、`test_phase9_benchmark.py`、`test_phase9_security.py`、
+`test_local_chat.py`），常规回归请用 `--ignore` 排除它们，避免消耗 API 额度。
+正因为如此，工具风险等级的覆盖检查被单独搬到 `tests/test_production_readiness.py`
+（纯逻辑、每次都会跑），保证「新增工具忘记登记风险」立刻失败。
+
+如需更多架构与模块细节，参见 `docs/` 目录下的设计文档，以及：
+- `backend/ARCHITECTURE.md`：后端架构深入
+- `backend/docs/ML_GUIDE.md`：机器学习模块
+- `backend/docs/LOCAL_ROUTER_TEST_PLAN.md`：本地 Router 的实验与评测计划
+- `CONTRIBUTING.md`：本地如何跑测试 / 提交规范
