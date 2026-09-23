@@ -25,12 +25,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 import polars as pl
 
-from app.core.contracts import Decision, Severity, finding
+from app.core.contracts import Decision, Finding, Severity, finding
 from app.quality.semantics import ColumnSemantics, DistributionShape
 
 __all__ = [

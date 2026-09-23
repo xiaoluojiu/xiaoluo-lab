@@ -62,6 +62,10 @@ DEFAULT_TOOL_RISKS: dict[str, RiskLevel] = {
     "workflow.build_and_run": RiskLevel.HIGH,
     # 报告：只读分析 + 产出报告文件，低风险
     "report.generate": RiskLevel.LOW,
+    # 结构化反问：只读控询哨（不触碰数据、不产生副作用），LOW。
+    # 曾经漏登记：PermissionManager 因此拿不到它的风险等级，而在抽查这批工具时
+    # 也没有任何测试发现 —— 现已由 tests/test_production_readiness.py 钉死。
+    "agent.clarify": RiskLevel.LOW,
     # 拓展功能 · 数据库连接器
     # 列连接器 / 列表 / 预览均为只读（preview 会打到外部库，但仍不改变平台数据）
     "connector.list": RiskLevel.LOW,

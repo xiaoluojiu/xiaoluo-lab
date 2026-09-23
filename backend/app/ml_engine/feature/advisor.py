@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.core.contracts import Decision, Severity, finding
-from app.ml_engine.feature.registry import FEATURE_OP_REGISTRY, FeatureOp
+from app.ml_engine.feature.registry import FEATURE_OP_REGISTRY
 from app.quality.semantics import ColumnRole, ColumnSemantics, DistributionShape
 
 __all__ = ["FeatureAdvice", "PRIORITY_ORDER", "recommend_features"]

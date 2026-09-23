@@ -130,8 +130,14 @@ def _sse_live_run(runtime: AgentRuntime, session, content: str) -> StreamingResp
             run = original_run(session, content, on_event=on_event)
             run_holder.append(run)
         except Exception as exc:
+            # ★ exc 必须在 except 块内**立刻取值**。
+            # 之前把 str(exc) 写进了下面那个 lambda 的 f-string 里，而 lambda 是
+            # 在 SSE 取元素时才被调用的 —— 那时 except 块早已结束，Python 已经
+            # 隐式 `del exc`，于是本该报告「为什么失败」的这行代码自己抛
+            # NameError，SSE 流被掐断，前端只看到"连接中断"而没有任何原因。
+            error_payload = json.dumps(str(exc), ensure_ascii=False)
             # 运行对象尚未建立时也要把失败原因送回 UI，避免 SSE 静默结束。
-            events.put(type("BootstrapEvent", (), {"to_sse": lambda self: f'event: failed\ndata: {{"payload": {{"error": {json.dumps(str(exc), ensure_ascii=False)}}}}}\n\n'})())
+            events.put(type("BootstrapEvent", (), {"to_sse": lambda self: f'event: failed\ndata: {{"payload": {{"error": {error_payload}}}}}\n\n'})())
             _release_reservation(session.id)
             events.put(None)
             return

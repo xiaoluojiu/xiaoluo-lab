@@ -26,7 +26,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.config import settings
-from app.core.exceptions import AppException
 from app.data_engine.exceptions import DataEngineException
 
 # 标识符白名单：字母/下划线开头，允许字母数字下划线，允许 库名.表名 两级。

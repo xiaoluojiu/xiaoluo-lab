@@ -40,7 +40,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import polars as pl
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import Engine, URL
+from sqlalchemy.engine import Engine
 from sqlalchemy.pool import NullPool
 
 from app.connectors.dialects import DialectSpec

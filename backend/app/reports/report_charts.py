@@ -22,7 +22,6 @@ from app.analysis import (
     CorrelationAnalyzer,
     VisualizationBuilder,
     classify_columns,
-    is_categorical_like,
 )
 from app.reports.chart_svg import to_svg
 
