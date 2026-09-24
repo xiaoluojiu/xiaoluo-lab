@@ -8,6 +8,7 @@ from app.agent.decision.provider import (
     AgentDecision,
 )
 from app.agent.decision.rule import RuleDecisionProvider
+from app.agent.decision.signal import SignalDecisionProvider
 from app.agent.decision.local_model import LocalModelDecisionProvider
 from app.agent.decision.remote import RemoteLLMDecisionProvider
 from app.agent.decision.router import DecisionRouter
@@ -20,6 +21,7 @@ __all__ = [
     "DecisionSource",
     "AgentDecision",
     "RuleDecisionProvider",
+    "SignalDecisionProvider",
     "LocalModelDecisionProvider",
     "RemoteLLMDecisionProvider",
 ]

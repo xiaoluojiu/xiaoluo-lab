@@ -187,7 +187,10 @@ def test_summary_without_llm_is_marked_as_platform_rules():
     answer = AgentRuntime._compose_answer(_compose_stub(), run)
     assert run.answer_source == A.PLATFORM_RULES_SUMMARY
     assert A.describe(run.answer_source)["by_llm"] is False
-    assert "真实数据工具步骤" in answer, "规则汇总仍应交代数据是真的跑出来的"
+    # 规则汇总必须交代**真实工具结果**（而非一句「已完成 N 个步骤」打发用户）：
+    # 这里应引用工具名与真实 summary（"3 列 / 100 行"）。
+    assert "eda.describe" in answer and "3 列 / 100 行" in answer, \
+        "规则汇总应引用真实工具结果，而非空泛的完成提示"
 
 
 def test_summary_with_llm_is_marked_as_remote():
@@ -203,7 +206,8 @@ def test_summary_with_llm_error_is_marked_as_degraded():
     answer = AgentRuntime._compose_answer(_compose_stub(_FakeLLM(raise_exc=RuntimeError("429"))), run)
     assert run.answer_source == A.LLM_ERROR_FALLBACK
     assert A.describe(run.answer_source)["by_llm"] is False
-    assert "真实数据工具步骤" in answer
+    # 降级到规则汇总时，同样必须引用真实工具结果，而不是一句「已完成 N 个步骤」。
+    assert "eda.describe" in answer and "3 列 / 100 行" in answer
 
 
 def test_summary_with_empty_llm_content_is_degraded():

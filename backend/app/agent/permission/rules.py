@@ -33,6 +33,7 @@ DEFAULT_TOOL_RISKS: dict[str, RiskLevel] = {
     "dataset.quality": RiskLevel.LOW,
     "eda.describe": RiskLevel.LOW,
     "eda.distribution": RiskLevel.LOW,
+    "eda.distribution_overview": RiskLevel.LOW,
     "eda.correlation": RiskLevel.LOW,
     "eda.outlier": RiskLevel.LOW,
     "eda.visualize": RiskLevel.LOW,

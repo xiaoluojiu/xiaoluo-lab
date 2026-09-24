@@ -32,12 +32,14 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "DOMAIN_LABELS",
     "local_reply",
+    "local_result_summary",
     "no_llm_notice",
     "tool_overview",
 ]
@@ -224,6 +226,95 @@ def local_reply(utterance: str, *, degraded: bool = False) -> str | None:
         return _greeting_reply(degraded=degraded)
 
     return None
+
+
+def _fmt_num(value: Any) -> str:
+    """安全地把数值格式化成短字符串（NaN / None / 超长尾巴都兜住）。"""
+    if value is None:
+        return "—"
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if f != f:  # NaN
+        return "—"
+    if abs(f) >= 1e6 or (abs(f) > 0 and abs(f) < 1e-4):
+        return f"{f:.3g}"
+    return f"{f:,.4g}"
+
+
+def _render_distribution_overview(data: Any) -> str:
+    """从 ``eda.distribution_overview`` 的真实 ``data`` 生成一段本地叙述。
+
+    这是**统一**的数据驱动渲染：读结构化字段（numeric_columns / categorical_columns /
+    signals），不针对某个特定数据集硬编码，也不逐列堆数字 —— 给结论式摘要。
+    """
+    if not isinstance(data, dict):
+        return ""
+    numeric = data.get("numeric_columns") or []
+    categorical = data.get("categorical_columns") or []
+    lines: list[str] = []
+    lines.append(f"这份数据共 {len(numeric)} 个数值列、{len(categorical)} 个类别列。")
+
+    if numeric:
+        lines.append("数值列分布概况：")
+        for item in numeric[:8]:
+            name = item.get("column", "?")
+            mean = _fmt_num(item.get("mean"))
+            median = _fmt_num(item.get("median"))
+            skew = item.get("skew_direction", "")
+            missing = item.get("missing", 0)
+            lines.append(
+                f"  • {name}：均值 {mean}，中位数 {median}，{skew}"
+                + (f"，缺失 {missing} 条" if missing else "")
+            )
+    if categorical:
+        lines.append("类别列概况：")
+        for item in categorical[:8]:
+            name = item.get("column", "?")
+            uniq = item.get("unique_count", "?")
+            top = (item.get("top_categories") or [])[:3]
+            top_str = "、".join(
+                f"{t.get('value')}({t.get('count')})" for t in top
+            ) if top else "无有效值"
+            lines.append(f"  • {name}：{uniq} 个唯一值，Top：{top_str}")
+    return "\n".join(lines)
+
+
+def local_result_summary(tool_calls: list[Any]) -> str:
+    """无远程 LLM 时，基于**真实 ToolResult.data** 生成最终答案。
+
+    统一渲染原则：只识别数据里的**通用结构**（``numeric_columns`` /
+    ``categorical_columns`` / ``signals``），不为每个工具各写一个 formatter。
+    拿不到可识别的结构化数据时，退回到逐条工具 summary（现状的最低兜底），
+    但绝不只丢一句「已完成 N 个步骤」就把用户打发了。
+
+    ``tool_calls`` 是 ``ToolCallRecord`` 列表（有 ``.tool`` / ``.status`` /
+    ``.result``），由 ``runtime._compose_answer`` 传入。
+    """
+    ok_calls = [c for c in tool_calls if getattr(c, "status", "") == "ok" and getattr(c, "result", None) is not None]
+    if not ok_calls:
+        return "任务没有产生有效的数据处理结果。"
+
+    parts: list[str] = []
+    for c in ok_calls:
+        data = getattr(c.result, "data", None)
+        # 统一：优先从数据里生成有意义的叙述，退回到 tool 自带的 summary。
+        rendered = _render_distribution_overview(data) if c.tool == "eda.distribution_overview" else ""
+        if rendered:
+            parts.append(rendered)
+        else:
+            summary = (c.result.summary or "").strip()
+            parts.append(f"• {c.tool}：{summary}" if summary else f"• {c.tool} 已执行。")
+
+    body = "\n\n".join(parts)
+    # 附带真实 signals（机器可读的下一步信号），让用户知道「接下来可以深入什么」。
+    signals: list[str] = []
+    for c in ok_calls:
+        signals.extend(list(getattr(c.result, "signals", []) or []))
+    if signals:
+        body += "\n\n进一步提示（数据驱动）：" + "、".join(dict.fromkeys(signals))
+    return body
 
 
 def no_llm_notice(reason: str = "") -> str:

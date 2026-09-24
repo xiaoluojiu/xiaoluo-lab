@@ -204,7 +204,13 @@ def test_program_bug_is_not_masked_as_fallback(env, monkeypatch):
 
 
 def test_data_task_falls_back_to_rule_planner_and_executes(env, monkeypatch):
-    """★ P0：欠费时数据分析仍然要跑出**真实工具结果**，而不是整次运行失败。"""
+    """★ P0：欠费时数据分析仍然要跑出**真实工具结果**，而不是整次运行失败。
+
+    「检查一下数据质量」是本地 Router 能高置信度识别的简单任务（控制权归位后），
+    直接走本地决策执行，**根本不会去调远程 LLM 规划器** —— 欠费与否都不影响它跑出
+    真实结果。这正是「简单任务零远程调用」的体现：无需再靠「远程失败→规则兜底」这条
+    后路，本地从一开始就不发起那笔注定失败的远程调用。
+    """
     monkeypatch.setattr(settings, "AGENT_ALLOW_MODEL_FALLBACK", True)
     llm = FailingLLM(LLMException("Insufficient Balance"))
     rt = _runtime(env, llm)
@@ -214,9 +220,15 @@ def test_data_task_falls_back_to_rule_planner_and_executes(env, monkeypatch):
 
     assert run.status == RunStatus.COMPLETED, run.error
     executed = [call.tool for call in run.tool_calls]
-    assert "dataset.quality" in executed, f"规则规划器应接管并执行 dataset.quality，实际：{executed}"
-    assert run.plan and run.plan.get("planner_fallback") is True
-    # 数据是真的跑出来的；汇总时模型又挂了 ⇒ 汇总标降级，但 `by_llm` 必须是 False
+    assert "dataset.quality" in executed, f"本地决策应执行 dataset.quality，实际：{executed}"
+    # 简单任务走本地直连（local_direct），不经过远程规划器 ⇒ 没有 planner_fallback 标记，
+    # 也从未发起远程规划调用（欠费与否都与本次运行无关）。
+    assert run.plan and run.plan.get("planner_fallback") is not True
+    # 简单任务走本地直连（local_direct），规划阶段**不发起远程规划调用**（structured_output 为 0）。
+    # 汇总阶段仍会试一次 chat（这是最终答案合成，不是规划），失败后降级到规则汇总 —— 属预期。
+    assert llm.structured_calls == 0, \
+        f"简单任务规划阶段不应发起远程规划调用，实际 structured={llm.structured_calls} 次"
+    # 数据是真的跑出来的；汇总时无远程 ⇒ 标平台规则汇总，`by_llm` 必须是 False。
     assert run.answer_source in (A.LLM_ERROR_FALLBACK, A.PLATFORM_RULES_SUMMARY)
     assert A.describe(run.answer_source)["by_llm"] is False
     assert run.final_answer

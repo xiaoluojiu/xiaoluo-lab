@@ -13,7 +13,7 @@ from app.agent.decision import (
     LocalModelDecisionProvider,
 )
 from app.agent.task_spec import TaskDomain, TaskScope, TaskSpec
-from app.agent.task_spec_builder import TaskSpecBuilder
+from app.agent.task_spec_builder import TaskSpecBuilder, _split_first_clause
 from app.agent.trace.decision_trace import DecisionTrace
 
 
@@ -112,6 +112,33 @@ class TestTaskSpecBuilder:
         u = TaskSpecBuilder().understand("帮我训练一个分类模型", bound_dataset_id=1)
         assert u.spec.domain == TaskDomain.ML
         assert u.spec.entities.get("tool") == "ml.train"
+
+    def test_multi_step_decomposed_to_first_tool(self):
+        """「先X再Y」的多步编排应拆解为「首步工具 + medium」，本地循环推进，
+        而不是升级远程（complex）。首步工具从第一个分句识别。"""
+        u = TaskSpecBuilder().understand("先看看数据分布，再根据结果分析异常情况", bound_dataset_id=1)
+        assert u.spec.entities.get("tool") == "eda.distribution_overview"
+        # medium 表示「本地多步循环」，不是 complex（远程升级）。
+        assert u.spec.complexity_hint.value == "medium"
+        # source 仍是本地 Router（不是远程强塞）。
+        assert u.spec.source == "local_router"
+
+
+class TestSplitFirstClause:
+    def test_strip_leading_先_and_trailing_comma(self):
+        assert _split_first_clause("先看看数据分布，再根据结果分析异常情况") == "看看数据分布"
+
+    def test_再_marker(self):
+        assert _split_first_clause("先清洗缺失值然后再做分布图") == "清洗缺失值"
+
+    def test_然后_marker(self):
+        assert _split_first_clause("看看分布，然后分析相关性") == "看看分布"
+
+    def test_no_marker_returns_original(self):
+        assert _split_first_clause("看看这批数据的分布") == "看看这批数据的分布"
+
+    def test_empty(self):
+        assert _split_first_clause("") == ""
 
 
 # ---------------------------------------------------------------------------

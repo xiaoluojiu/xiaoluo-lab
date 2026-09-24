@@ -147,6 +147,35 @@ class AgentRuntime:
         all_tools=self.registry.list(); self._fill_tools(context,all_tools); candidate_tools=self._candidate_tools(context,all_tools)
         retrieval=context.tool_context.get("retrieval_scores") or {}
         self._emit(run,"planning",{"stage":"tools_retrieved","count":len(candidate_tools),"tools":[t.get("name") for t in candidate_tools],"retrieval":retrieval},on_event)
+        # ★★ 控制权归位（Phase B/C）：本地 Router 已经高置信度识别出的任务，直接由
+        #    本地决策驱动执行（Observe→Decide→Act），不再交给旧 Planner 重新猜测。
+        #    ``_run_dynamic`` 第一步执行本地 Router 选中的工具，之后若产出 signals
+        #    会据其动态推进下一步 —— 简单任务（无 signals）等价于单步执行，
+        #    多步任务（如「先看分布再分析异常」）则自然进入动态循环。
+        #    旧 Planner 只在本地没把握 / 复杂任务 / 显式 plan_override 时兜底。
+        if plan_override is None:
+            direct_plan = self._local_direct_plan(run, session, context, candidate_tools)
+            if direct_plan is not None:
+                run.plan = direct_plan.to_dict()
+                self._emit(run, "planning", {"stage": "local_direct", "tool": direct_plan.steps[0].tool if direct_plan.steps else None, "source": "local_router"}, on_event)
+                self._emit_usage(run, on_event)
+                if not direct_plan.steps:
+                    self._direct_chat(run, session, on_event)
+                    return
+                run.status = RunStatus.RUNNING
+                # 动态循环：本地决策驱动，signals 驱动下一步（复用 AgentContext + DecisionContext）。
+                # 传入首步工具：多步任务（medium）的原文会再次命中 multi_step 升级，
+                # 不能靠 _run_dynamic 自己重新路由出首步，必须把 _local_direct_plan
+                # 已识别的首步工具作为循环的起点。
+                first_tool = direct_plan.steps[0].tool if direct_plan.steps else None
+                # simple 任务只跑首步即收尾（不进入信号驱动的循环，避免「分布↔异常」
+                # 交替空转）；medium（多步编排）才允许信号驱动后续步骤。
+                task_spec = (context.task_context or {}).get("task_spec") or {}
+                is_medium = isinstance(task_spec, dict) and task_spec.get("complexity_hint") == "medium"
+                self._run_dynamic(run, session, context, on_event=on_event,
+                                  first_tool=first_tool, allow_loop=is_medium)
+                return
+
         plan=self._build_plan(run, context, candidate_tools, all_tools, plan_override)
         run.plan=plan.to_dict(); self._emit(run,"planning",{"stage":"plan_ready","goal":plan.goal,"steps":len(plan.steps),"cache_hit":bool(getattr(plan,"cache_hit",False)),"planner_fallback":bool(getattr(plan,"planner_fallback",False))},on_event)
         # 规划器是本次运行的第一笔真实开销（除非命中 Plan Cache），这里立刻反映到账本上。
@@ -156,7 +185,75 @@ class AgentRuntime:
 
     def _build_plan(self, run: AgentRun, context: AgentContext, candidate_tools: list[dict[str, Any]], all_tools: list[dict[str, Any]], plan_override: AgentPlan | None) -> AgentPlan:
         if plan_override is not None: return plan_override
+        # ★ Phase D：复杂任务在 `_escalate` 已发起过一次远程战略指导（见 `_escalate`，
+        #   结果挂在 context.task_context["remote_guidance"]）。若这里再走旧 Planner 的
+        #   `build_plan_resilient`，会对复杂任务再调一次远程 LLM（`_llm_plan` →
+        #   `llm.structured_output`）—— 这就成了「Remote Decision + Remote Planner」双重远程，
+        #   正是 Phase D 要消除的反模式。已有远程指导时，改用**本地规则规划**并把指导
+        #   并入计划 goal，保证复杂任务全程**最多一次远程调用**（那次已在 _escalate 完成）。
+        guidance = (context.task_context or {}).get("remote_guidance")
+        if guidance:
+            plan = self.planner.rule_plan(run.user_request, context)
+            plan.goal = f"{plan.goal}\n\n（远程战略指导：{str(guidance)[:300]}）"
+            return plan
         return self.planner.build_plan_resilient(run.user_request, context, candidate_tools, all_tools=all_tools)
+
+    def _local_direct_plan(self, run: AgentRun, session: AgentSession, context: AgentContext, candidate_tools: list[dict[str, Any]]) -> AgentPlan | None:
+        """本地 Router 已高置信度识别的简单任务，直接构造单步 Plan 执行（控制权归位）。
+
+        这是本次外科手术的核心：让「Local Router 判断正确」变成「Runtime 真正按它执行」，
+        而不是让旧 Rule Planner 用关键词再猜一遍把语义结果覆盖掉（如「看看这批数据的分布」
+        被规则规划器改成 dataset.inspect + eda.describe）。
+
+        触发条件（**全部满足才直连**，任一不满足就退回旧 Planner）：
+        1. ``_understand`` 已产出 TaskSpec，且 ``entities["tool"]`` 是本地 Router 的选择；
+        2. 复杂度 hint ∈ {``simple``, ``medium``}（本地有把握；medium 是「先X再Y」这类
+           本地多步编排，由 ``_run_dynamic`` 循环推进，同样不升级远程 / 不退回关键词规划）；
+        3. 来源是 ``local_router`` / ``local_model``（不是规则 / 远程强塞）；
+        4. 该工具在当前候选工具集里（不越权引用未注入工具）；
+        5. 工具已绑定的数据集场景下能解析出必填参数（dataset_id 单一可确定）。
+
+        返回 None 表示「本地不足以直连，交回旧 Planner 兜底」。
+        """
+        task_spec = (context.task_context or {}).get("task_spec") or {}
+        tool = task_spec.get("entities", {}).get("tool") if isinstance(task_spec, dict) else None
+        if not tool:
+            return None
+        complexity = task_spec.get("complexity_hint") if isinstance(task_spec, dict) else None
+        source = task_spec.get("source") if isinstance(task_spec, dict) else ""
+        # simple 与 medium 都走本地直连（medium = 本地多步，交给 _run_dynamic 循环推进）。
+        if complexity not in ("simple", "medium"):
+            return None
+        if source not in ("local_router", "local_model"):
+            return None
+        # 工具必须在候选集里（与 _validate 同口径，不越权）。
+        candidate_names = {t.get("name") for t in candidate_tools}
+        if tool not in candidate_names:
+            return None
+        # 解析必填参数：仅 dataset_id（本地 Router 反问规则只认这个，且规划阶段拿不到列名）。
+        tool_def = self.registry.get(tool)
+        arguments: dict[str, Any] = {}
+        if tool_def is not None:
+            required = (tool_def.input_schema or {}).get("required") or []
+            ids = context.dataset_ids()
+            if "dataset_id" in required:
+                if len(ids) == 1:
+                    arguments["dataset_id"] = ids[0]
+                elif not ids:
+                    # 未绑定数据集但工具需要：本地不足以补齐，交回 Planner（会触发反问/提示）。
+                    return None
+                else:
+                    return None
+        # 记录到 DecisionTrace：这一步由本地模型决定执行该工具（真实 decision source）。
+        trace = self._decision_traces.get(run.id)
+        if trace is not None:
+            trace.decision_made = {"action": "execute_tool", "tool": tool, "source": source}
+            trace.decision_source = source
+            trace.record_decision({"step": "act", "action": "execute_tool", "tool": tool,
+                                   "source": source, "confidence": task_spec.get("confidence")})
+        return AgentPlan(goal=task_spec.get("goal") or run.user_request,
+                         steps=[PlanStep(tool=tool, arguments=arguments, expected_output=task_spec.get("sub_goal") or "")])
+
 
     def _datasets_without_version(self, context: AgentContext) -> list[str]:
         """会话里「还没有任何数据版本」的数据集名称。
@@ -561,6 +658,143 @@ class AgentRuntime:
         if permanent_failure:self._fail(run,permanent_failure,on_event)
         else:self._complete(run,session,on_event)
 
+    def _run_dynamic(self, run: AgentRun, session: AgentSession, context: AgentContext, *, on_event: EventCallback | None, first_tool: str | None = None, allow_loop: bool = False) -> None:
+        """Observe → Decide → Act 动态循环（任务 5.5 / 6）。
+
+        与 ``_run_plan``（静态 for 循环）的区别：这里每一步执行完，都把
+        ``ToolResult.signals`` + ``last_tool`` 反馈进下一轮 ``DecisionContext``，
+        由 ``DecisionRouter``（Signal → LocalModel）动态决定下一步 —— 不靠预先写死的
+        计划链条。复用既有 ``AgentContext`` + ``DecisionContext`` + ``executor``，
+        **不新建 State/Context 系统**。
+
+        适用场景：本地 Router 已判定为「多步本地决策」的任务（如「先看分布，再根据
+        结果分析异常」）。简单单步任务仍走 ``_local_direct_plan``（更快），复杂任务
+        走远程战略规划，这里只承载「本地能自己循环推进」的中间地带。
+
+        终止条件（任一满足即停，防死循环）：
+        1. DecisionRouter 给出 STOP / CHAT / ASK_USER / ESCALATE；
+        2. 下一步工具与上一步重复（本地 Router 只会单轮判断，重复=没有新信息）；
+        3. 达到 ``AGENT_MAX_STEPS`` 上限；
+        4. 工具执行失败（交给既有 Replanner 口径，这里简化为终止并如实失败）。
+        """
+        from app.agent.decision.provider import DecisionAction, DecisionContext
+
+        tool_ctx = self._tool_context(session, self._role_of(run), user_request=run.user_request)
+        services = self._services()
+        bound_dataset_id = session.dataset_ids[0] if session.dataset_ids else None
+        executed: list[str] = []
+        signals: dict[str, Any] = {}
+        task_spec = (context.task_context or {}).get("task_spec") or {}
+        # 可见列名：从真实 schema 取（与 _preflight 同口径，只读列结构不读数据行）。
+        # 拿不到就留空 —— 本地 Router 的 request_text 只编码「可见列数」，空列表是
+        # 诚实表达「规划阶段看不到列名」，不臆造。
+        available_columns = [c.get("name", "") for c in (self._column_schema(bound_dataset_id) if bound_dataset_id else [])]
+
+        for step_no in range(settings.AGENT_MAX_STEPS):
+            if run.cancel_requested:
+                self._fail(run, "运行已被用户取消", on_event)
+                return
+            # Observe → Decide：用当前 signals + 已执行工具 构造决策上下文。
+            # 首步：若调用方给了 first_tool（多步任务拆解出的首步），直接用，
+            # 不再对原文重新路由（原文会命中 multi_step 升级，导致首步无法确定）。
+            if step_no == 0 and first_tool and not executed:
+                decision = self._decision_for_first_step(run, context, task_spec, first_tool, bound_dataset_id)
+            else:
+                decision = self.decision_router.route(
+                    DecisionContext(
+                        user_request=run.user_request,
+                        task_spec=task_spec,
+                        bound_dataset_id=bound_dataset_id,
+                        available_columns=available_columns,
+                        recent_tools=list(executed),
+                        signals=dict(signals),
+                        attempts=step_no,
+                    ),
+                    allow_remote=False,  # 动态循环只在本地推进，升级留给复杂任务入口
+                )
+            if decision.action != DecisionAction.EXECUTE_TOOL or decision.tool is None:
+                # STOP / CHAT / ASK_USER / ESCALATE：本地循环结束，交给常规路径收尾。
+                break
+            tool = decision.tool
+            if executed and tool == executed[-1]:
+                # 下一步与上一步相同：本地 Router 无新信息，终止循环避免空转。
+                break
+
+            # Act：执行工具（复用 executor + 必填参数补全口径，与 _run_plan 一致）。
+            step = PlanStep(tool=tool, arguments={}, expected_output="")
+            try:
+                step = self._resolve_step_arguments(step, run, session, context)
+            except (ValidationException, PlanInvalidError) as exc:
+                # 本地循环里「下一步缺参数」是正常终止条件：本地拿不到的信息（如单列工具
+                # 需要的 column），不再强行推进，用已执行步骤的真实结果收尾，而不是把
+                # 整次运行打成 failed。首步失败才如实失败（下面 tool_calls 为空时兜底）。
+                if not executed:
+                    self._fail(run, f"第 1 步参数解析失败：{getattr(exc, 'message', str(exc))}", on_event)
+                    return
+                self._emit(run, "planning", {"stage": "dynamic_stop", "reason": f"下一步 {tool} 缺参数，本地无法继续", "detail": getattr(exc, "message", str(exc))}, on_event)
+                break
+            abs_idx = step_no
+            self._emit(run, "tool_call", {"step_index": abs_idx, "tool": tool, "arguments": step.arguments, "source": decision.source, "confidence": decision.confidence}, on_event)
+            record = self.executor.execute_step(step, tool_ctx, services, confirmed=False, attempt=1, step_index=abs_idx)
+            run.tool_calls.append(record)
+            if record.status == "needs_confirmation":
+                run.status = RunStatus.WAITING_CONFIRMATION
+                run.pending_confirmation = {"call": record, "step_index": abs_idx}
+                self._emit(run, "permission", {"stage": "confirmation_required", "tool": tool, "reason": record.error, "step_index": abs_idx}, on_event)
+                return
+            if record.status == "needs_clarification":
+                clarification = record.clarification.to_dict() if hasattr(record.clarification, "to_dict") else {}
+                run.status = RunStatus.WAITING_CLARIFICATION
+                run.pending_clarification = {**clarification, "step_index": abs_idx, "tool": tool}
+                self._emit(run, "clarification", {**clarification, "stage": "clarification_required", "tool": tool, "step_index": abs_idx}, on_event)
+                self.store.persist(force=True)
+                return
+            if record.status != "ok":
+                self._fail(run, f"第 {step_no + 1} 步工具 {tool} 执行失败：{record.error or '未知错误'}", on_event)
+                return
+
+            executed.append(tool)
+            # Observe：提取真实 signals 反馈进下一轮（数据通路真正打通）。
+            result_signals = list(getattr(record.result, "signals", []) or [])
+            signals = {s: True for s in result_signals}
+            self._emit(run, "tool_result", {"step_index": abs_idx, "tool": tool, "status": record.status, "summary": record.result.summary if record.result else "", "signals": result_signals}, on_event)
+            # 记录到 DecisionTrace：这一跳由谁决定执行（真实 decision source）。
+            trace = self._decision_traces.get(run.id)
+            if trace is not None:
+                trace.record_decision({"step": "act", "action": "execute_tool", "tool": tool,
+                                       "source": decision.source, "confidence": decision.confidence,
+                                       "signals": result_signals})
+            # simple 任务只跑首步：执行完即收尾，不进入信号驱动的后续循环
+            # （否则「分布→异常→分布…」会交替空转）。只有 medium（多步编排）
+            # 才允许信号驱动下一步。
+            if not allow_loop:
+                break
+
+        self._complete(run, session, on_event)
+
+    def _decision_for_first_step(self, run: AgentRun, context: AgentContext, task_spec: Any, first_tool: str, bound_dataset_id: int | None):
+        """动态循环首步的决策：直接用 `_local_direct_plan` 已识别的首步工具。
+
+        多步任务（medium，如「先看分布再分析异常」）的**原文**会再次命中
+        local_router 的 multi_step 升级（L0 规则先于 L1），若对原文重新路由
+        会拿不到首步工具、循环在第一轮就空转终止。首步工具是 `_understand`
+        阶段从第一个分句可靠识别出来的，这里把它固化为首步决策，后续步骤
+        仍走 signals 驱动的正常路由。
+        """
+        from app.agent.decision.provider import AgentDecision, DecisionSource
+
+        # 从 TaskSpec 拿置信度与来源（与 _local_direct_plan 同口径）。
+        conf = float(task_spec.get("confidence") or 0.0) if isinstance(task_spec, dict) else 0.0
+        source = task_spec.get("source") if isinstance(task_spec, dict) else DecisionSource.LOCAL_ROUTER
+        return AgentDecision(
+            action="execute_tool",
+            tool=first_tool,
+            source=source or DecisionSource.LOCAL_ROUTER,
+            confidence=conf,
+            reasons=[f"本地 Router 拆解多步任务，首步工具 {first_tool}"],
+            evidence={"first_step": True},
+        )
+
     def _resolve_step_arguments(self,step:PlanStep,run:AgentRun,session:AgentSession,context:AgentContext)->PlanStep:
         tool=self.registry.get(step.tool); schema=tool.input_schema or {}
         # 先解析 {{stepN.field}} 结构化依赖（后续工具消费前一步输出），再做必填补全
@@ -789,12 +1023,17 @@ class AgentRuntime:
         try: self._emit(run,"usage",{"token_usage":run.token_ledger.to_dict()},on_event)
         except Exception: pass  # noqa: BLE001 — 账本上报失败绝不能影响主流程
     def _compose_answer(self,run:AgentRun)->str:
-        views=[];summaries=[]
+        views=[]
         for call in run.tool_calls:
             if call.status!="ok" or call.result is None:continue
-            summaries.append(f"{call.tool}：{call.result.summary}");view=self._result_for_llm(run,call,compact=True)
+            view=self._result_for_llm(run,call,compact=True)
             if view is not None:views.append({"tool":call.tool,"result":view})
-        fallback=f"已完成 {len(summaries)} 个真实数据工具步骤。\n"+"\n".join(f"{i}. {s}" for i,s in enumerate(summaries,1)) if summaries else "任务没有产生有效的数据处理结果。"
+        # ★ 无远程模型时，基于**真实 ToolResult.data** 生成本地结果，而不是一句
+        #   「已完成 N 个步骤」。数据本身是真实工具跑出来的，这里只做统一的结构化渲染。
+        def _local_fallback():
+            from app.agent.local_chat import local_result_summary
+            return local_result_summary(run.tool_calls)
+        fallback=_local_fallback()
         # 无远程模型 ⇒ 汇总也是规则拼的，如实标注（数据本身仍是真实工具跑出来的）。
         if self.llm is None:
             run.answer_source=PLATFORM_RULES_SUMMARY

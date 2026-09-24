@@ -30,15 +30,17 @@ from app.agent.decision.provider import (
 from app.agent.decision.rule import RuleDecisionProvider
 from app.agent.decision.local_model import LocalModelDecisionProvider
 from app.agent.decision.remote import RemoteLLMDecisionProvider
+from app.agent.decision.signal import SignalDecisionProvider
 
 
 class DecisionRouter:
-    """统一决策入口。优先级：Rule（确定性）→ LocalModel → Remote（升级）。"""
+    """统一决策入口。优先级：Rule（确定性）→ Signal（数据信号）→ LocalModel → Remote（升级）。"""
 
     def __init__(
         self,
         *,
         rule: DecisionProvider | None = None,
+        signal: DecisionProvider | None = None,
         local_model: DecisionProvider | None = None,
         remote: DecisionProvider | None = None,
         llm: Any | None = None,
@@ -47,6 +49,7 @@ class DecisionRouter:
         confidence_threshold: float = 0.0,
     ) -> None:
         self.rule = rule or RuleDecisionProvider()
+        self.signal = signal or SignalDecisionProvider()
         self.local_model = local_model or LocalModelDecisionProvider()
         self.remote = remote or RemoteLLMDecisionProvider(llm)
         self.llm = llm
@@ -58,15 +61,19 @@ class DecisionRouter:
         ``allow_remote=False`` 时禁止升级远程（用于 PoC「简单任务零远程调用」验证）。
         """
         # 1) 确定性规则（零模型调用，命中即返回）。
-        #    RuleDecisionProvider 只在三类情况表态：明确的取消/停止命令、
-        #    规则可判定的必填参数缺失（反问）、确定性边界（超限终止）。
-        #    它给出确定性动作（confidence == 1.0）时直接采纳。
         rule_decision = self.rule.decide(context)
         if rule_decision.action in (DecisionAction.STOP, DecisionAction.ASK_USER) and \
            rule_decision.confidence >= 1.0:
             return rule_decision
 
-        # 2) 本地模型（真正参与运行，不是摆设）。
+        # 2) 数据信号（Observe→Decide→Act 的「Observe」：上一步 ToolResult.signals
+        #    驱动的确定性下一步）。首轮无 signals 时它不表态（confidence=0），自然跳过。
+        signal_decision = self.signal.decide(context)
+        if signal_decision.action == DecisionAction.EXECUTE_TOOL and \
+           signal_decision.tool is not None:
+            return signal_decision
+
+        # 3) 本地模型（真正参与运行，不是摆设）。
         local = self.local_model.decide(context)
 
         # 本地成功决定工具 → 直接返回。
@@ -81,7 +88,7 @@ class DecisionRouter:
         if not allow_remote or self.llm is None:
             return local  # 保留本地的「升级」结论（诚实：本地确实没把握）
 
-        # 3) 远程战略指导（仅复杂任务升级时调用一次）。
+        # 4) 远程战略指导（仅复杂任务升级时调用一次）。
         remote = self.remote.decide(context)
         # 远程给出的是方向性指导；若远程也没结论，保留本地升级结论。
         if remote.action == DecisionAction.ESCALATE and remote.confidence == 0.0:
@@ -101,6 +108,7 @@ __all__ = [
     "DecisionSource",
     "AgentDecision",
     "RuleDecisionProvider",
+    "SignalDecisionProvider",
     "LocalModelDecisionProvider",
     "RemoteLLMDecisionProvider",
 ]

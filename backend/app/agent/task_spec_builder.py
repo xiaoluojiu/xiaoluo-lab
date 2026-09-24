@@ -76,6 +76,31 @@ class TaskSpecBuilder:
             allow_remote=False,
         )
 
+        # ★ multi_step 是「本地多步编排」信号，不是「远程复杂」信号（控制权归位核心）。
+        # 本地 Router 对「先X再Y」这类连词句会升级为 escalate::multi_step 且不选工具
+        # （L0 规则先于 L1 模型触发）。但这类任务是**本地可循环推进**的：首步工具能从
+        # 第一个分句识别出来，后续步骤由 ToolResult.signals 驱动（_run_dynamic）。
+        # 若原样交给下游，会被当成 complexity=complex → 走旧 Rule Planner 覆盖语义结果。
+        # 这里把 multi_step 拆成「首步工具 + medium 复杂度」，让本地动态循环接管，
+        # 而不是升级远程 / 退回关键词规划。
+        if decision.action == DecisionAction.ESCALATE and \
+                str(decision.evidence.get("escalate_reason")) == "multi_step":
+            first_clause = _split_first_clause(user_request)
+            if first_clause and first_clause != user_request:
+                first_decision = self.router.route(
+                    DecisionContext(
+                        user_request=first_clause,
+                        bound_dataset_id=bound_dataset_id,
+                        available_columns=list(available_columns or []),
+                    ),
+                    allow_remote=False,
+                )
+                if first_decision.action == DecisionAction.EXECUTE_TOOL and first_decision.tool:
+                    decision = first_decision
+                    # 标记为本地多步：首步工具 + 循环推进（_run_dynamic 消费）。
+                    decision.evidence["multi_step"] = True
+                    decision.evidence["first_clause"] = first_clause
+
         # 3) 组装 TaskSpec（静态任务描述）。
         #    domain 优先从 Router 预测的工具反推（工具→能力域比关键词更可靠；
         #    实测「看看这批数据的分布」被关键词规则误判为 DATASET，而 Router 正确给出
@@ -154,10 +179,46 @@ def _infer_complexity(decision: Any, user_request: str) -> Complexity:
         return Complexity.SIMPLE
     if decision.action == DecisionAction.ESCALATE:
         return Complexity.COMPLEX
+    # ★ 本地多步编排（multi_step 拆解后）：medium → 本地动态循环推进，不升级远程。
+    if decision.evidence.get("multi_step"):
+        return Complexity.MEDIUM
     # 置信度低的本地决定 → medium（需要更谨慎的循环决策）。
     if decision.confidence < 0.5:
         return Complexity.MEDIUM
     return Complexity.SIMPLE
+
+
+# 多步编排的分句连词（与 local_router/escalation_rules.SEQUENCE_MARKERS 同源，但只取
+# 「后置分句开头」这类能稳定切分首句的标记；「先」通常位于句首，不用于切分）。
+_SEQUENCE_SPLIT_MARKERS: tuple[str, ...] = (
+    "再", "然后", "接着", "之后", "最后", "同时",
+)
+
+
+def _split_first_clause(user_request: str) -> str:
+    """把「先X再Y」拆出第一个分句 X。
+
+    用于 multi_step 任务的本地拆解：首步工具从 X 识别，后续由 signals 驱动。
+    只做**保守切分**：找到第一个分句连词，取它之前的部分；切不出或切后为空
+    则返回原句（调用方据此判断「未拆解成功」）。
+    """
+    text = (user_request or "").strip()
+    if not text:
+        return ""
+    # 逐个连词找最早出现位置，取最小值切分。
+    cut = len(text)
+    for marker in _SEQUENCE_SPLIT_MARKERS:
+        idx = text.find(marker)
+        if 0 < idx < cut:
+            cut = idx
+    if cut < len(text):
+        text = text[:cut]
+    text = text.strip()
+    # 去掉句首的「先」前缀（「先看看数据分布」→「看看数据分布」），并清理尾部分句标点。
+    if text.startswith("先"):
+        text = text[1:].strip()
+    text = text.rstrip("，,。；;、：: ")
+    return text if text else user_request.strip()
 
 
 def _alternatives(decision: Any) -> list[TaskSpec]:
