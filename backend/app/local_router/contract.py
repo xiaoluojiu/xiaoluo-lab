@@ -69,6 +69,8 @@ _CATEGORY_TO_INTENT: dict[str, Intent] = {
     "ml": Intent.ML,
     "workflow": Intent.WORKFLOW,
     "report": Intent.REPORT,
+    # connector 是「外部数据源接入」，归属数据集能力域（数据接入）。
+    "connector": Intent.DATASET,
 }
 
 # 工具名前缀 -> intent。作为 category 缺失时的回退来源。
@@ -81,6 +83,7 @@ _INTENT_BY_PREFIX: dict[str, Intent] = {
     "ml": Intent.ML,
     "workflow": Intent.WORKFLOW,
     "report": Intent.REPORT,
+    "connector": Intent.DATASET,
 }
 
 
@@ -110,12 +113,32 @@ def tool_specs() -> list[dict[str, Any]]:
     return TOOL_REGISTRY.list()
 
 
+#: 不进入 Router 标签空间的工具 category。这些是 Agent **内部**工具，
+#: 用户不会主动请求它们（例如 ``agent.clarify`` 是计划执行中的反问通道），
+#: 让 Router 学「预测反问」会把内部编排动作误当成用户意图 —— 语义上无解。
+#: 排除后模型标签空间只含「用户真实可请求」的能力，staleness 也不会因
+#: 新增内部工具而无谓失效。
+_NON_ROUTABLE_CATEGORIES = frozenset({"agent"})
+
+
+def is_routable_tool(name: str) -> bool:
+    """该工具是否属于「用户可请求」能力（决定是否进入 Router 标签空间）。"""
+    spec = tool_spec(name)
+    if spec is None:
+        return False
+    return str(spec.get("category", "")) not in _NON_ROUTABLE_CATEGORIES
+
+
 def tool_label_space() -> list[str]:
-    """工具标签空间（已排序，训练与评测必须共用同一份）。"""
+    """工具标签空间（已排序，训练与评测必须共用同一份）。
+
+    只含「用户可请求」的工具（排除 ``agent.clarify`` 这类内部反问通道），
+    避免模型把内部编排动作当成用户意图去学。
+    """
     _ensure_registered()
     from app.tools.registry import TOOL_REGISTRY
 
-    return TOOL_REGISTRY.names()
+    return [name for name in TOOL_REGISTRY.names() if is_routable_tool(name)]
 
 
 def tool_spec(name: str) -> dict[str, Any] | None:

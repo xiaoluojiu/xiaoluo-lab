@@ -3,12 +3,12 @@
   {
    "name": "majority(holdout)",
    "n": 132,
-   "route_acc": 0.0076,
-   "kind_acc": 0.8788,
+   "route_acc": 0.007576,
+   "kind_acc": 0.878788,
    "capability": {
     "executable_decision": {
      "n": 122,
-     "acc": 0.0082
+     "acc": 0.008197
     },
     "semantic_gate": {
      "n": 10,
@@ -51,8 +51,8 @@
    },
    "tool": {
     "n": 122,
-    "tool_acc": 0.0082,
-    "tool_acc_given_kind": 0.0082
+    "tool_acc": 0.008197,
+    "tool_acc_given_kind": 0.008197
    },
    "escalation": {
     "gold_escalate": 5,
@@ -94,7 +94,7 @@
     },
     "routing": {
      "n": 113,
-     "route_acc": 0.0088
+     "route_acc": 0.00885
     },
     "slot_missing": {
      "n": 6,
@@ -165,12 +165,12 @@
   {
    "name": "tfidf_svc(holdout)",
    "n": 132,
-   "route_acc": 0.8788,
-   "kind_acc": 0.9394,
+   "route_acc": 0.878788,
+   "kind_acc": 0.939394,
    "capability": {
     "executable_decision": {
      "n": 122,
-     "acc": 0.8934
+     "acc": 0.893443
     },
     "semantic_gate": {
      "n": 10,
@@ -213,8 +213,8 @@
    },
    "tool": {
     "n": 122,
-    "tool_acc": 0.918,
-    "tool_acc_given_kind": 0.8934
+    "tool_acc": 0.918033,
+    "tool_acc_given_kind": 0.893443
    },
    "escalation": {
     "gold_escalate": 5,
@@ -256,11 +256,11 @@
     },
     "routing": {
      "n": 113,
-     "route_acc": 0.9381
+     "route_acc": 0.938053
     },
     "slot_missing": {
      "n": 6,
-     "route_acc": 0.3333
+     "route_acc": 0.333333
     }
    },
    "top_kind_confusions": [
@@ -322,12 +322,12 @@
   {
    "name": "hybrid(holdout)",
    "n": 132,
-   "route_acc": 0.8939,
-   "kind_acc": 0.9545,
+   "route_acc": 0.893939,
+   "kind_acc": 0.954545,
    "capability": {
     "executable_decision": {
      "n": 122,
-     "acc": 0.918
+     "acc": 0.918033
     },
     "semantic_gate": {
      "n": 10,
@@ -370,8 +370,8 @@
    },
    "tool": {
     "n": 122,
-    "tool_acc": 0.918,
-    "tool_acc_given_kind": 0.918
+    "tool_acc": 0.918033,
+    "tool_acc_given_kind": 0.918033
    },
    "escalation": {
     "gold_escalate": 5,
@@ -413,11 +413,11 @@
     },
     "routing": {
      "n": 113,
-     "route_acc": 0.9381
+     "route_acc": 0.938053
     },
     "slot_missing": {
      "n": 6,
-     "route_acc": 0.8333
+     "route_acc": 0.833333
     }
    },
    "top_kind_confusions": [
@@ -479,16 +479,16 @@
   {
    "name": "tfidf_svc(groupCV)",
    "n": 844,
-   "route_acc": 0.7026,
-   "kind_acc": 0.9028,
+   "route_acc": 0.702607,
+   "kind_acc": 0.902844,
    "capability": {
     "executable_decision": {
      "n": 785,
-     "acc": 0.7096
+     "acc": 0.709554
     },
     "semantic_gate": {
      "n": 59,
-     "acc": 0.661
+     "acc": 0.661017
     }
    },
    "by_kind": {
@@ -527,19 +527,19 @@
    },
    "tool": {
     "n": 785,
-    "tool_acc": 0.7656,
-    "tool_acc_given_kind": 0.7096
+    "tool_acc": 0.765605,
+    "tool_acc_given_kind": 0.709554
    },
    "escalation": {
     "gold_escalate": 29,
     "gold_local": 815,
     "unnecessary_escalation_rate": 0.0,
-    "missed_escalation_rate": 0.6552,
-    "reason_acc": 0.2414,
+    "missed_escalation_rate": 0.655172,
+    "reason_acc": 0.241379,
     "by_reason_recall": {
      "ambiguous": {
       "n": 6,
-      "recall": 0.1667
+      "recall": 0.166667
      },
      "conflict": {
       "n": 5,
@@ -551,7 +551,7 @@
      },
      "out_of_scope": {
       "n": 9,
-      "recall": 0.2222
+      "recall": 0.222222
      },
      "param_dependency": {
       "n": 4,
@@ -562,15 +562,15 @@
    "by_category": {
     "chat": {
      "n": 30,
-     "route_acc": 0.9667
+     "route_acc": 0.966667
     },
     "escalate": {
      "n": 29,
-     "route_acc": 0.2414
+     "route_acc": 0.241379
     },
     "follow_up": {
      "n": 12,
-     "route_acc": 0.4167
+     "route_acc": 0.416667
     },
     "implicit": {
      "n": 16,
@@ -578,7 +578,7 @@
     },
     "routing": {
      "n": 719,
-     "route_acc": 0.7538
+     "route_acc": 0.753825
     },
     "slot_missing": {
      "n": 38,
@@ -674,16 +674,16 @@
   {
    "name": "hybrid(groupCV)",
    "n": 844,
-   "route_acc": 0.7844,
-   "kind_acc": 0.9562,
+   "route_acc": 0.78436,
+   "kind_acc": 0.956161,
    "capability": {
     "executable_decision": {
      "n": 785,
-     "acc": 0.7975
+     "acc": 0.797452
     },
     "semantic_gate": {
      "n": 59,
-     "acc": 0.661
+     "acc": 0.661017
     }
    },
    "by_kind": {
@@ -722,19 +722,19 @@
    },
    "tool": {
     "n": 785,
-    "tool_acc": 0.8013,
-    "tool_acc_given_kind": 0.7975
+    "tool_acc": 0.801274,
+    "tool_acc_given_kind": 0.797452
    },
    "escalation": {
     "gold_escalate": 29,
     "gold_local": 815,
     "unnecessary_escalation_rate": 0.0,
-    "missed_escalation_rate": 0.6552,
-    "reason_acc": 0.2414,
+    "missed_escalation_rate": 0.655172,
+    "reason_acc": 0.241379,
     "by_reason_recall": {
      "ambiguous": {
       "n": 6,
-      "recall": 0.1667
+      "recall": 0.166667
      },
      "conflict": {
       "n": 5,
@@ -746,7 +746,7 @@
      },
      "out_of_scope": {
       "n": 9,
-      "recall": 0.2222
+      "recall": 0.222222
      },
      "param_dependency": {
       "n": 4,
@@ -757,15 +757,15 @@
    "by_category": {
     "chat": {
      "n": 30,
-     "route_acc": 0.9667
+     "route_acc": 0.966667
     },
     "escalate": {
      "n": 29,
-     "route_acc": 0.2414
+     "route_acc": 0.241379
     },
     "follow_up": {
      "n": 12,
-     "route_acc": 0.4167
+     "route_acc": 0.416667
     },
     "implicit": {
      "n": 16,
@@ -773,11 +773,11 @@
     },
     "routing": {
      "n": 719,
-     "route_acc": 0.8067
+     "route_acc": 0.806676
     },
     "slot_missing": {
      "n": 38,
-     "route_acc": 0.7895
+     "route_acc": 0.789474
     }
    },
    "top_kind_confusions": [
@@ -864,16 +864,16 @@
   {
    "name": "abstain-top1(groupCV)",
    "n": 844,
-   "route_acc": 0.7512,
-   "kind_acc": 0.9064,
+   "route_acc": 0.751185,
+   "kind_acc": 0.906398,
    "capability": {
     "executable_decision": {
      "n": 785,
-     "acc": 0.7656
+     "acc": 0.765605
     },
     "semantic_gate": {
      "n": 59,
-     "acc": 0.8305
+     "acc": 0.830508
     }
    },
    "by_kind": {
@@ -912,19 +912,19 @@
    },
    "tool": {
     "n": 785,
-    "tool_acc": 0.7694,
-    "tool_acc_given_kind": 0.7656
+    "tool_acc": 0.769427,
+    "tool_acc_given_kind": 0.765605
    },
    "escalation": {
     "gold_escalate": 29,
     "gold_local": 815,
-    "unnecessary_escalation_rate": 0.0687,
-    "missed_escalation_rate": 0.3103,
-    "reason_acc": 0.1379,
+    "unnecessary_escalation_rate": 0.068712,
+    "missed_escalation_rate": 0.310345,
+    "reason_acc": 0.137931,
     "by_reason_recall": {
      "ambiguous": {
       "n": 6,
-      "recall": 0.6667
+      "recall": 0.666667
      },
      "conflict": {
       "n": 5,
@@ -936,7 +936,7 @@
      },
      "out_of_scope": {
       "n": 9,
-      "recall": 0.6667
+      "recall": 0.666667
      },
      "param_dependency": {
       "n": 4,
@@ -947,11 +947,11 @@
    "by_category": {
     "chat": {
      "n": 30,
-     "route_acc": 0.9667
+     "route_acc": 0.966667
     },
     "escalate": {
      "n": 29,
-     "route_acc": 0.1379
+     "route_acc": 0.137931
     },
     "follow_up": {
      "n": 12,
@@ -963,11 +963,11 @@
     },
     "routing": {
      "n": 719,
-     "route_acc": 0.7775
+     "route_acc": 0.777469
     },
     "slot_missing": {
      "n": 38,
-     "route_acc": 0.7632
+     "route_acc": 0.763158
     }
    },
    "top_kind_confusions": [
@@ -1059,16 +1059,16 @@
   {
    "name": "abstain-margin(groupCV)",
    "n": 844,
-   "route_acc": 0.6955,
-   "kind_acc": 0.8021,
+   "route_acc": 0.695498,
+   "kind_acc": 0.802133,
    "capability": {
     "executable_decision": {
      "n": 785,
-     "acc": 0.7096
+     "acc": 0.709554
     },
     "semantic_gate": {
      "n": 59,
-     "acc": 0.7966
+     "acc": 0.79661
     }
    },
    "by_kind": {
@@ -1107,15 +1107,15 @@
    },
    "tool": {
     "n": 785,
-    "tool_acc": 0.7134,
-    "tool_acc_given_kind": 0.7096
+    "tool_acc": 0.713376,
+    "tool_acc_given_kind": 0.709554
    },
    "escalation": {
     "gold_escalate": 29,
     "gold_local": 815,
-    "unnecessary_escalation_rate": 0.1767,
-    "missed_escalation_rate": 0.3103,
-    "reason_acc": 0.1034,
+    "unnecessary_escalation_rate": 0.176687,
+    "missed_escalation_rate": 0.310345,
+    "reason_acc": 0.103448,
     "by_reason_recall": {
      "ambiguous": {
       "n": 6,
@@ -1131,7 +1131,7 @@
      },
      "out_of_scope": {
       "n": 9,
-      "recall": 0.4444
+      "recall": 0.444444
      },
      "param_dependency": {
       "n": 4,
@@ -1146,7 +1146,7 @@
     },
     "escalate": {
      "n": 29,
-     "route_acc": 0.1034
+     "route_acc": 0.103448
     },
     "follow_up": {
      "n": 12,
@@ -1158,11 +1158,11 @@
     },
     "routing": {
      "n": 719,
-     "route_acc": 0.7191
+     "route_acc": 0.719054
     },
     "slot_missing": {
      "n": 38,
-     "route_acc": 0.7105
+     "route_acc": 0.710526
     }
    },
    "top_kind_confusions": [
@@ -1254,16 +1254,16 @@
   {
    "name": "hier(groupCV)",
    "n": 844,
-   "route_acc": 0.7607,
-   "kind_acc": 0.9431,
+   "route_acc": 0.760664,
+   "kind_acc": 0.943128,
    "capability": {
     "executable_decision": {
      "n": 785,
-     "acc": 0.8038
+     "acc": 0.803822
     },
     "semantic_gate": {
      "n": 59,
-     "acc": 0.3051
+     "acc": 0.305085
     }
    },
    "by_kind": {
@@ -1302,19 +1302,19 @@
    },
    "tool": {
     "n": 785,
-    "tool_acc": 0.8076,
-    "tool_acc_given_kind": 0.8038
+    "tool_acc": 0.807643,
+    "tool_acc_given_kind": 0.803822
    },
    "escalation": {
     "gold_escalate": 29,
     "gold_local": 815,
     "unnecessary_escalation_rate": 0.0,
-    "missed_escalation_rate": 0.7586,
+    "missed_escalation_rate": 0.758621,
     "reason_acc": 0.0,
     "by_reason_recall": {
      "ambiguous": {
       "n": 6,
-      "recall": 0.1667
+      "recall": 0.166667
      },
      "conflict": {
       "n": 5,
@@ -1326,7 +1326,7 @@
      },
      "out_of_scope": {
       "n": 9,
-      "recall": 0.1111
+      "recall": 0.111111
      },
      "param_dependency": {
       "n": 4,
@@ -1337,7 +1337,7 @@
    "by_category": {
     "chat": {
      "n": 30,
-     "route_acc": 0.3667
+     "route_acc": 0.366667
     },
     "escalate": {
      "n": 29,
@@ -1353,11 +1353,11 @@
     },
     "routing": {
      "n": 719,
-     "route_acc": 0.8108
+     "route_acc": 0.810848
     },
     "slot_missing": {
      "n": 38,
-     "route_acc": 0.8158
+     "route_acc": 0.815789
     }
    },
    "top_kind_confusions": [
@@ -1629,8 +1629,8 @@
    "classifier": "LinearSVC(C=1.0)",
    "n_features": 8326,
    "model_bytes": 3455490,
-   "train_seconds": 0.157,
-   "infer_ms_per_sample": 0.008,
+   "train_seconds": 0.17,
+   "infer_ms_per_sample": 0.015,
    "learned_classes_full": 36,
    "learned_classes_abstain": 32
   },
@@ -1680,6 +1680,6 @@
   "label_space": "route 串由 eval_harness.route_label 派生，工具名零硬编码 ⇒ 不可能输出不存在的工具。",
   "hard_negatives_note": "dataset/hard_negatives.jsonl 是工具混淆对诊断，未参与训练/评估。"
  },
- "table_markdown": "| 指标 | majority(holdout) | tfidf_svc(holdout) | hybrid(holdout) | tfidf_svc(groupCV) | hybrid(groupCV) | abstain-top1(groupCV) | abstain-margin(groupCV) | hier(groupCV) |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| 样本数 | 132 | 132 | 132 | 844 | 844 | 844 | 844 | 844 |\n| **整条决策准确率** | 0.8% | 87.9% | 89.4% | 70.3% | 78.4% | 75.1% | 69.5% | 76.1% |\n| 决策类型准确率 | 87.9% | 93.9% | 95.5% | 90.3% | 95.6% | 90.6% | 80.2% | 94.3% |\n| ① 可执行决策准确率 | 0.8% | 89.3% | 91.8% | 71.0% | 79.8% | 76.6% | 71.0% | 80.4% |\n| ② 语义闸门准确率 | 0.0% | 70.0% | 60.0% | 66.1% | 66.1% | 83.0% | 79.7% | 30.5% |\n| 工具选择准确率 | 0.8% | 91.8% | 91.8% | 76.6% | 80.1% | 76.9% | 71.3% | 80.8% |\n| · 类型对时工具对 | 0.8% | 89.3% | 91.8% | 71.0% | 79.8% | 76.6% | 71.0% | 80.4% |\n| chat F1 | 0.0% | 90.9% | 90.9% | 76.3% | 80.6% | 84.1% | 79.4% | 53.7% |\n| call F1 | 93.5% | 96.6% | 97.5% | 95.2% | 97.9% | 95.0% | 88.5% | 97.0% |\n| ask F1 | 0.0% | 50.0% | 90.9% | 0.0% | 87.3% | 85.7% | 83.6% | 88.9% |\n| escalate F1 | 0.0% | 57.1% | 33.3% | 51.3% | 51.3% | 38.1% | 20.7% | 38.9% |\n| 无谓升级率 ↓ | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 6.9% | 17.7% | 0.0% |\n| 漏升级率 ↓ | 100.0% | 60.0% | 80.0% | 65.5% | 65.5% | 31.0% | 31.0% | 75.9% |\n| 升级理由准确率 | 0.0% | 40.0% | 20.0% | 24.1% | 24.1% | 13.8% | 10.3% | 0.0% |",
- "generated_at_epoch": 1790045485
+ "table_markdown": "| 指标 | majority(holdout) | tfidf_svc(holdout) | hybrid(holdout) | tfidf_svc(groupCV) | hybrid(groupCV) | abstain-top1(groupCV) | abstain-margin(groupCV) | hier(groupCV) |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| 样本数 | 132 | 132 | 132 | 844 | 844 | 844 | 844 | 844 |\n| **整条决策准确率** | 0.8% | 87.9% | 89.4% | 70.3% | 78.4% | 75.1% | 69.5% | 76.1% |\n| 决策类型准确率 | 87.9% | 93.9% | 95.5% | 90.3% | 95.6% | 90.6% | 80.2% | 94.3% |\n| ① 可执行决策准确率 | 0.8% | 89.3% | 91.8% | 71.0% | 79.7% | 76.6% | 71.0% | 80.4% |\n| ② 语义闸门准确率 | 0.0% | 70.0% | 60.0% | 66.1% | 66.1% | 83.1% | 79.7% | 30.5% |\n| 工具选择准确率 | 0.8% | 91.8% | 91.8% | 76.6% | 80.1% | 76.9% | 71.3% | 80.8% |\n| · 类型对时工具对 | 0.8% | 89.3% | 91.8% | 71.0% | 79.7% | 76.6% | 71.0% | 80.4% |\n| chat F1 | 0.0% | 90.9% | 90.9% | 76.3% | 80.6% | 84.1% | 79.4% | 53.7% |\n| call F1 | 93.5% | 96.6% | 97.5% | 95.2% | 97.9% | 95.0% | 88.5% | 97.0% |\n| ask F1 | 0.0% | 50.0% | 90.9% | 0.0% | 87.3% | 85.7% | 83.6% | 88.9% |\n| escalate F1 | 0.0% | 57.1% | 33.3% | 51.3% | 51.3% | 38.1% | 20.7% | 38.9% |\n| 无谓升级率 ↓ | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 6.9% | 17.7% | 0.0% |\n| 漏升级率 ↓ | 100.0% | 60.0% | 80.0% | 65.5% | 65.5% | 31.0% | 31.0% | 75.9% |\n| 升级理由准确率 | 0.0% | 40.0% | 20.0% | 24.1% | 24.1% | 13.8% | 10.3% | 0.0% |",
+ "generated_at_epoch": 1790242973
 }

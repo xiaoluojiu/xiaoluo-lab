@@ -1,9 +1,9 @@
 {
- "sample_total": 844,
+ "sample_total": 971,
  "files": {
-  "samples.jsonl": 844,
-  "holdout.jsonl": 132,
-  "hard_negatives.jsonl": 73,
+  "samples.jsonl": 971,
+  "holdout.jsonl": 153,
+  "hard_negatives.jsonl": 108,
   "boundary.jsonl": 8,
   "combo_violations.jsonl": 6
  },
@@ -12,38 +12,38 @@
   "escalate": 29,
   "follow_up": 12,
   "implicit": 16,
-  "routing": 719,
-  "slot_missing": 38
+  "routing": 843,
+  "slot_missing": 41
  },
  "by_split": {
-  "eval": 74,
-  "holdout": 132,
-  "train": 638
+  "eval": 87,
+  "holdout": 153,
+  "train": 731
  },
- "holdout_ids_sha1": "e5fcbb2356ea898d7fcec70a0f57311e7e4c4b27",
+ "holdout_ids_sha1": "65703ae1972ec09e3353383ea700eabd7a5dde02",
  "coverage": {
-  "tools_total": 30,
-  "tools_with_samples": 30,
+  "tools_total": 35,
+  "tools_with_samples": 35,
   "tools_without_samples": [],
   "tools_without_templates": [],
-  "templates_total": 336,
-  "required_params_total": 40,
+  "templates_total": 386,
+  "required_params_total": 46,
   "boundary_passed": 8,
   "boundary_total": 8,
   "required_param_coverage": {
-   "total": 40,
-   "covered": 40,
+   "total": 46,
+   "covered": 46,
    "missing": []
   },
   "optional_param_coverage": {
-   "total": 68,
+   "total": 91,
    "covered": 1,
    "note": "可选参数未覆盖属预期：本阶段只教工具选择与必填槽位"
   }
  },
  "escalation": {
   "positive": 29,
-  "negative": 815,
+  "negative": 942,
   "reasons_covered": [
    "ambiguous",
    "conflict",

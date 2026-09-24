@@ -1660,6 +1660,123 @@ class DistributionAnalyzer(EdaModule):
         }
 
 
+class DistributionOverviewAnalyzer(EdaModule):
+    """数据集级分布总览 —— 「看看这批数据的分布」的**正确**落点。
+
+    与 ``DistributionAnalyzer``（单列分布，需 ``column``）的区别：
+    * 本类**不需要 column**，一次给出**全表**的分布概况；
+    * 输出结构（任务 13.2）区分 ``numeric_columns`` / ``categorical_columns``，
+      每列带真实计算结果（均值 / 中位数 / 偏态方向 / 直方图摘要 / Top 类别）。
+
+    这修复了一个真实缺陷：早先「看看这批数据的分布」会被关键词规则路由到
+    ``dataset.inspect``（只看元信息，不看分布），或被迫猜一个 column 去跑单列分布。
+    数据集级分布总览不该猜列 —— 它应该扫全表并如实报告每列的形状。
+    """
+
+    name = "distribution_overview"
+
+    def analyze(self, df: pl.DataFrame, **options: Any) -> dict[str, Any]:
+        top_n = max(1, min(int(options.get("top_n", 10)), 50))
+        bins = max(1, min(int(options.get("bins", 10)), 100))
+
+        numeric_columns: list[dict[str, Any]] = []
+        categorical_columns: list[dict[str, Any]] = []
+
+        for column, dtype in df.schema.items():
+            if dtype.is_numeric():
+                numeric_columns.append(
+                    self._numeric_summary(df, column, bins=bins)
+                )
+            else:
+                categorical_columns.append(
+                    self._categorical_summary(df, column, top_n=top_n)
+                )
+
+        return {
+            "numeric_columns": numeric_columns,
+            "categorical_columns": categorical_columns,
+            "signals": self._signals(df, numeric_columns),
+        }
+
+    def _numeric_summary(self, df: pl.DataFrame, column: str, bins: int) -> dict[str, Any]:
+        s = df[column]
+        clean = s.drop_nulls()
+        missing = int(s.null_count())
+        if clean.len() == 0:
+            return {"column": column, "mean": None, "median": None,
+                    "skew_direction": "无数据", "missing": missing,
+                    "histogram_summary": "无有效值"}
+
+        mean = float(clean.mean())
+        median = float(clean.median())
+        # 偏态方向：均值 vs 中位数（不用三阶矩，避免对离群点过度敏感）。
+        if mean > median:
+            skew_direction = "右偏（均值>中位数，可能有高值离群）"
+        elif mean < median:
+            skew_direction = "左偏（均值<中位数，可能有低值离群）"
+        else:
+            skew_direction = "近似对称"
+
+        mn, mx = float(clean.min()), float(clean.max())
+        hist_summary = "单值常量"
+        if mn != mx and clean.len() >= 2:
+            width = (mx - mn) / bins
+            idx = ((clean - mn) / width).floor().clip(0, bins - 1).cast(pl.Int64)
+            counts = idx.value_counts()
+            count_map = {int(row[0]): int(row[1]) for row in counts.iter_rows()}
+            peak = max(count_map.values()) if count_map else 0
+            hist_summary = (
+                f"范围 [{_fmt(mn)}, {_fmt(mx)}]，{bins} 桶，峰值桶 {peak} 条"
+            )
+
+        return {
+            "column": column,
+            "mean": json_safe(mean),
+            "median": json_safe(median),
+            "skew_direction": skew_direction,
+            "missing": missing,
+            "histogram_summary": hist_summary,
+        }
+
+    def _categorical_summary(self, df: pl.DataFrame, column: str, top_n: int) -> dict[str, Any]:
+        s = df[column]
+        counts = s.drop_nulls().value_counts(sort=True).head(top_n)
+        top_categories = [
+            {"value": json_safe(row[0]), "count": int(row[1])}
+            for row in counts.iter_rows()
+        ]
+        return {
+            "column": column,
+            "top_categories": top_categories,
+            "unique_count": _safe_n_unique(s),
+            "missing": int(s.null_count()),
+        }
+
+    def _signals(self, df: pl.DataFrame, numeric: list[dict[str, Any]]) -> list[str]:
+        """提炼可被 Agent 消费的 signals（驱动下一步决策，任务 7）。
+
+        这些 signals 不是自然语言，是结构化标记：``high_missing`` / ``high_skew`` /
+        ``constant_column`` 等，后续 DecisionProvider 据此决定「要不要进一步分析」。
+        """
+        signals: list[str] = []
+        n_rows = max(df.height, 1)
+        for item in numeric:
+            missing = int(item.get("missing", 0))
+            if missing / n_rows >= 0.3:
+                signals.append("high_missing")
+            skew = str(item.get("skew_direction", ""))
+            if skew.startswith(("右偏", "左偏")):
+                signals.append("high_skew")
+        return signals
+
+
+def _fmt(x: float) -> str:
+    """数值格式化：避免长浮点尾巴。"""
+    if abs(x) >= 1e6 or (abs(x) > 0 and abs(x) < 1e-4):
+        return f"{x:.3g}"
+    return f"{x:,.4g}"
+
+
 def _bin_label_format(mn: float, mx: float) -> str:
     """按数据量级选分桶标签的有效数字。
 

@@ -12,12 +12,31 @@ from app.analysis import (
     CorrelationAnalyzer,
     DescriptiveAnalyzer,
     DistributionAnalyzer,
+    DistributionOverviewAnalyzer,
     EdaOutlierAnalyzer,
     VisualizationBuilder,
 )
 from app.tools.base import Tool, ToolServices
 from app.tools.context import ToolExecutionContext
 from app.tools.result import ToolResult
+
+
+def _extract_signals(result: Any) -> list[str]:
+    """从分析结果里提取结构化 signals（供 DecisionProvider 驱动下一步）。
+
+    只认**机器可读**的 signal 标记，不解析自然语言。分析器若已显式产出
+    ``signals`` 字段则直接采用；否则按结果结构做确定性推断。
+    """
+    if not isinstance(result, dict):
+        return []
+    # 分析器已显式产出 signals（如 DistributionOverviewAnalyzer）。
+    explicit = result.get("signals")
+    if isinstance(explicit, list):
+        return [str(s) for s in explicit]
+    # 其他分析器的确定性推断（异常值检测 → outliers_detected）。
+    if "outliers" in result or "outlier_count" in result:
+        return ["outliers_detected"]
+    return []
 
 
 class _EdaTool(Tool):
@@ -39,7 +58,11 @@ class _EdaTool(Tool):
             k: v for k, v in params.items() if k not in ("dataset_id", "version")
         }
         result = self.module().analyze(df, **options)
-        return ToolResult.ok(result, summary=f"{self.description}")
+        # 结构化 signals（任务 7）：从分析结果里提取可被 DecisionProvider 消费的标记。
+        # 例如 distribution_overview 会产出 high_missing / high_skew，驱动「下一步
+        # 是否要深入缺失/异常分析」。不是自然语言，是机器可读信号。
+        signals = _extract_signals(result)
+        return ToolResult.ok(result, summary=f"{self.description}", signals=signals)
 
 
 class EdaDescribeTool(_EdaTool):
@@ -72,6 +95,28 @@ class EdaDistributionTool(_EdaTool):
             "top_n": {"type": "integer", "default": 10},
         },
         "required": ["dataset_id", "column"],
+    }
+    output_schema = {"type": "object"}
+
+
+class EdaDistributionOverviewTool(_EdaTool):
+    """数据集级分布总览（「看看这批数据的分布」的正确落点，无需 column）。"""
+
+    name = "eda.distribution_overview"
+    description = (
+        "数据集级分布总览：一次给出全表数值列（均值/中位数/偏态/直方图摘要）"
+        "与类别列（Top 类别/唯一值数）的分布概况，无需指定列。"
+    )
+    module = DistributionOverviewAnalyzer
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "dataset_id": {"type": "integer"},
+            "version": {"type": "integer"},
+            "bins": {"type": "integer", "default": 10},
+            "top_n": {"type": "integer", "default": 10},
+        },
+        "required": ["dataset_id"],
     }
     output_schema = {"type": "object"}
 

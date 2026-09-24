@@ -26,17 +26,25 @@ EVENT_TYPES = (
 @dataclass
 class AgentTokenLedger:
     llm_calls:int=0; actual_input_tokens:int=0; actual_output_tokens:int=0; actual_total_tokens:int=0; estimated_context_saved_tokens:int=0; estimated_result_saved_tokens:int=0; avoided_planner_calls:int=0; cache_hits:int=0
+    # ★ 远程升级次数（Phase 4）：与 ``llm_calls`` 区分。``llm_calls`` 统计**所有** LLM
+    # 调用（规划 / 汇总 / 闲聊），而 ``remote_escalations`` 只统计「本地能力不足 → 升级远程
+    # 做一次战略指导」这类调用 —— 它是「改造前 vs 改造后远程调用是否下降」的直接口径。
+    remote_escalations:int=0
     def check_budget(self):
         if self.llm_calls>=settings.AGENT_LLM_MAX_CALLS: raise RuntimeError(f"Agent LLM 调用次数已达到本次任务上限 {settings.AGENT_LLM_MAX_CALLS}")
         if self.actual_total_tokens>=settings.AGENT_LLM_MAX_TOTAL_TOKENS: raise RuntimeError(f"Agent Token 预算已达到本次任务上限 {settings.AGENT_LLM_MAX_TOTAL_TOKENS}")
     def record_usage(self,usage):
         usage=usage or {};self.llm_calls+=1;inp=int(usage.get("input_tokens",usage.get("prompt_tokens",0)) or 0);out=int(usage.get("output_tokens",usage.get("completion_tokens",0)) or 0);total=usage.get("total_tokens");self.actual_input_tokens+=inp;self.actual_output_tokens+=out;self.actual_total_tokens+=int(total if total is not None else inp+out)
+    def record_escalation(self,usage=None):
+        """记录一次远程升级调用。usage 已由 ``record_usage`` 计入，这里只累计次数。"""
+        self.remote_escalations+=1
     def record_context_saving(self,tokens:int):self.estimated_context_saved_tokens+=max(int(tokens or 0),0)
     def record_result_saving(self,tokens:int):self.estimated_result_saved_tokens+=max(int(tokens or 0),0)
     def record_cache_hit(self):self.cache_hits+=1;self.avoided_planner_calls+=1
     def to_dict(self):
         return {
             "llm_calls": self.llm_calls,
+            "remote_escalations": self.remote_escalations,
             "actual": {"input_tokens": self.actual_input_tokens, "output_tokens": self.actual_output_tokens, "total_tokens": self.actual_total_tokens},
             "budget": {
                 "max_llm_calls": int(settings.AGENT_LLM_MAX_CALLS),
@@ -246,7 +254,7 @@ class AgentStore:
                 # 未完整序列化、无法恢复授权流程，保留该状态只会让会话永久 409。
                 interrupted=status in {RunStatus.PENDING,RunStatus.PLANNING,RunStatus.RUNNING,RunStatus.WAITING_CONFIRMATION,RunStatus.WAITING_CLARIFICATION}
                 if interrupted: status=RunStatus.FAILED
-                r=AgentRun(id=x["id"],session_id=x.get("session_id",""),user_id=x.get("user_id","anonymous"),user_request=x.get("user_request",""),status=status,plan=x.get("plan"),final_answer=x.get("final_answer",""),error=(x.get("error","") or "") if not interrupted else "后端进程重启，上一轮 Agent Turn 被中断；原执行过程已保留，可重新发起任务。",created_at=float(x.get("created_at",time.time())),started_at=x.get("started_at"),finished_at=x.get("finished_at") or (time.time() if interrupted else None),pending_clarification=(x.get("pending_clarification") or None));u=x.get("token_usage",{});a=u.get("actual",{});o=u.get("optimization",{});r.token_ledger=AgentTokenLedger(llm_calls=int(u.get("llm_calls",0)),actual_input_tokens=int(a.get("input_tokens",0)),actual_output_tokens=int(a.get("output_tokens",0)),actual_total_tokens=int(a.get("total_tokens",0)),estimated_context_saved_tokens=int(o.get("estimated_context_saved_tokens",0)),estimated_result_saved_tokens=int(o.get("estimated_result_saved_tokens",0)),avoided_planner_calls=int(o.get("avoided_planner_calls",0)),cache_hits=int(o.get("plan_cache_hits",0)))
+                r=AgentRun(id=x["id"],session_id=x.get("session_id",""),user_id=x.get("user_id","anonymous"),user_request=x.get("user_request",""),status=status,plan=x.get("plan"),final_answer=x.get("final_answer",""),error=(x.get("error","") or "") if not interrupted else "后端进程重启，上一轮 Agent Turn 被中断；原执行过程已保留，可重新发起任务。",created_at=float(x.get("created_at",time.time())),started_at=x.get("started_at"),finished_at=x.get("finished_at") or (time.time() if interrupted else None),pending_clarification=(x.get("pending_clarification") or None));u=x.get("token_usage",{});a=u.get("actual",{});o=u.get("optimization",{});r.token_ledger=AgentTokenLedger(llm_calls=int(u.get("llm_calls",0)),actual_input_tokens=int(a.get("input_tokens",0)),actual_output_tokens=int(a.get("output_tokens",0)),actual_total_tokens=int(a.get("total_tokens",0)),estimated_context_saved_tokens=int(o.get("estimated_context_saved_tokens",0)),estimated_result_saved_tokens=int(o.get("estimated_result_saved_tokens",0)),avoided_planner_calls=int(o.get("avoided_planner_calls",0)),cache_hits=int(o.get("plan_cache_hits",0)),remote_escalations=int(u.get("remote_escalations",0)))
                 for e in x.get("events",[]):r.events.append(AgentEvent(seq=int(e.get("seq",len(r.events)+1)),run_id=r.id,type=e.get("type","planning"),payload=dict(e.get("payload") or {}),created_at=float(e.get("created_at",time.time()))))
                 for c in x.get("tool_calls",[]):
                     q=ToolCallRecord(step_index=int(c.get("step_index",0)),tool=str(c.get("tool","")),arguments=dict(c.get("arguments") or {}),attempt=int(c.get("attempt",1)));q.status=str(c.get("status","ok"));q.error=str(c.get("error",""));z=c.get("result")

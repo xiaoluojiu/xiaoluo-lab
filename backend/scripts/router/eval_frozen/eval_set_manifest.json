@@ -1,0 +1,21 @@
+{
+ "frozen_at": "2026-09-24 17:50:04",
+ "held_out_eval": {
+  "samples.jsonl": {
+   "bytes": 483504,
+   "sha256_16": "6a34321907e5147c",
+   "lines": 954
+  },
+  "holdout.jsonl": {
+   "bytes": 77867,
+   "sha256_16": "c412d310a8a23a54",
+   "lines": 152
+  }
+ },
+ "real_user_logs": {
+  "agent_store.json": {
+   "bytes": 13994834,
+   "sha256_16": "6dde1a2fad725dda"
+  }
+ }
+}

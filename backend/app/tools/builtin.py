@@ -5,7 +5,7 @@ from app.agent.clarify import ClarifyTool
 from app.tools.connector_tools import ConnectorImportTool, ConnectorListTool, ConnectorPreviewTool, ConnectorTablesTool
 from app.tools.data_tools import DataAggregateTool, DataCleanTool, DataFilterTool, DataMergeTool, DataTransformTool
 from app.tools.dataset_tools import DatasetInspectTool, DatasetListTool, DatasetPreviewTool, DatasetProfileTool, DatasetQualityTool, DatasetSchemaTool
-from app.tools.eda_tools import EdaCorrelationTool, EdaDescribeTool, EdaDistributionTool, EdaOutlierTool, EdaVisualizeTool
+from app.tools.eda_tools import EdaCorrelationTool, EdaDescribeTool, EdaDistributionTool, EdaDistributionOverviewTool, EdaOutlierTool, EdaVisualizeTool
 from app.tools.ml_tools import MlCompareTool, MlDetectTaskTool, MlEvaluateTool, MlExplainConfigTool, MlExplainTool, MlPredictTool, MlPrepareTool, MlTrainTool
 from app.tools.workflow_tools import WorkflowBuildAndRunTool, WorkflowCreateTool, WorkflowInspectTool, WorkflowListTool, WorkflowRunTool
 from app.tools.report_tools import ReportGenerateTool
@@ -16,7 +16,7 @@ _BUILTIN_TOOLS = (
     ClarifyTool,
     DatasetListTool, DatasetInspectTool, DatasetPreviewTool, DatasetSchemaTool, DatasetProfileTool, DatasetQualityTool,
     DataFilterTool, DataCleanTool, DataTransformTool, DataAggregateTool, DataMergeTool,
-    EdaDescribeTool, EdaDistributionTool, EdaCorrelationTool, EdaOutlierTool, EdaVisualizeTool,
+    EdaDescribeTool, EdaDistributionTool, EdaDistributionOverviewTool, EdaCorrelationTool, EdaOutlierTool, EdaVisualizeTool,
     MlDetectTaskTool, MlPrepareTool, MlTrainTool, MlPredictTool, MlEvaluateTool, MlCompareTool, MlExplainTool,
     MlExplainConfigTool,
     WorkflowListTool, WorkflowCreateTool, WorkflowInspectTool, WorkflowRunTool, WorkflowBuildAndRunTool,

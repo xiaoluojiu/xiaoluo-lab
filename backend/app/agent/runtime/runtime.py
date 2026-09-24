@@ -1,6 +1,7 @@
 """Agent Runtime：对话路由 -> 元数据上下文 -> 工具检索 -> 规划 -> 工具执行 -> 结果汇总。"""
 from __future__ import annotations
 import json
+import logging
 import time
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -37,6 +38,7 @@ from app.tools.context import ToolExecutionContext
 from app.tools.registry import TOOL_REGISTRY, ToolRegistry
 
 EventCallback = Callable[[AgentEvent], None]
+logger = logging.getLogger("xiaoluo.agent.runtime")
 
 # 一次运行允许的事件数上限（终态事件不计），见 `_emit` 里的说明。
 MAX_EVENTS_PER_RUN = 2000
@@ -53,6 +55,14 @@ class AgentRuntime:
         # 于是「服务端跑正常、脚本/测试里跑被截断」这类不一致很难定位。
         default_planner = AgentPlanner(llm, max_steps=settings.AGENT_MAX_STEPS)
         self.registry = registry or TOOL_REGISTRY; self.planner = planner or default_planner; self.validator = validator or AgentResultValidator(); self.replanner = replanner or Replanner(limits); self.limits = limits or ReplanLimits(); self.executor = AgentExecutor(self.registry)
+        # ★ 统一决策入口（Phase 1/2/4）：Rule → LocalModel → Remote 的合成决策器。
+        # 与 planner 分工：planner 产「整份计划」，decision_router 产「这一步怎么走」。
+        # 远程升级（Phase 4）经它触达 —— 只有本地确实不足时才发起**一次**战略指导。
+        from app.agent.decision.router import DecisionRouter
+        self.decision_router = DecisionRouter(llm=llm)
+        # DecisionTrace 运行期承载：run_id -> DecisionTrace。不写进 AgentRun 序列化
+        # （那是 UI 运行记录），只用于运行结束后把完整决策链落成训练数据（Phase 5）。
+        self._decision_traces: dict[str, Any] = {}
 
     def _usage_scope(self, run: AgentRun):
         if self.llm is None: return nullcontext()
@@ -73,6 +83,8 @@ class AgentRuntime:
         self.store.add_run(run)  # add_run 内部已把 run.id 幂等挂到 session.run_ids
         if run.id not in session.run_ids: session.run_ids.append(run.id)
         session.history.append({"role":"user","content":run.user_request}); run.started_at=time.time()
+        # Phase 5：为本轮运行建立 DecisionTrace（训练数据闭环的数据出口）。
+        self._begin_trace(run)
         try:
             with self._usage_scope(run):
                 self._set_status(run, RunStatus.PLANNING)
@@ -93,7 +105,7 @@ class AgentRuntime:
         # 不能被包成一句 `Agent 运行异常：...` 之后再让用户猜到底是哪里坏了。
         except LLMException as exc: self._fail(run,exc.message,on_event)
         except Exception as exc: self._fail(run,f"Agent 运行异常：{exc}",on_event)
-        finally: run.finished_at=time.time(); self._trace_outcome(run, session)
+        finally: run.finished_at=time.time(); self._trace_outcome(run, session); self._end_trace(run)
         return run
 
     def _agent_turn(self, run: AgentRun, session: AgentSession, intent, *, confirmed: bool, plan_override: AgentPlan | None, on_event: EventCallback | None) -> None:
@@ -104,6 +116,16 @@ class AgentRuntime:
         共用同一段代码，避免两处逻辑漂移。
         """
         context=self._build_context(run,session); self._emit(run,"planning",{"stage":"context_ready","data_access":"metadata_only"},on_event)
+        # ★ 本地理解（Phase 1 架构接通）：用 TaskSpecBuilder 产出 TaskSpec，挂到
+        #   context.task_context，让本地 Router 模型真正参与「理解」而非仅 shadow。
+        #   不改变下面的 chat/agent 分支逻辑（那是既有的稳定路径），只把理解结果
+        #   结构化地交给规划器与 DecisionTrace。
+        if plan_override is None:
+            self._understand(run, session, context)
+            # ★ Phase 4：本地理解判「复杂」时，发起一次远程战略指导（local-first →
+            #   escalate → remote guidance → local execution）。简单任务不会触发，
+            #   保证「简单任务零远程调用」。结果挂到 context.task_context 供规划器参考。
+            self._escalate(run, session, context)
         # ★ 空数据集是**正常业务状态**：建了数据集还没导入数据时，给一句明确提示就结束，
         # 不进 Pre-flight、不规划、更不把它当成异常把整次运行打成 failed。
         if plan_override is None:
@@ -569,6 +591,144 @@ class AgentRuntime:
         return view
 
     def _build_context(self,run:AgentRun,session:AgentSession)->AgentContext: return ContextBuilder(self.data_engine).build(run.user_request,dataset_ids=session.dataset_ids,role=self._role_of(run),history=session.history[:-1])
+
+    # ---- DecisionTrace（Phase 5 数据闭环）---------------------------------
+    def _begin_trace(self, run: AgentRun) -> None:
+        """为本轮运行建立 DecisionTrace（不写盘，运行结束统一落）。"""
+        try:
+            from app.agent.trace.decision_trace import DecisionTrace
+            self._decision_traces[run.id] = DecisionTrace(trace_id=run.id, request=run.user_request)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("DecisionTrace 初始化失败：%s", exc)
+
+    def _end_trace(self, run: AgentRun) -> None:
+        """运行结束：把 DecisionTrace 补全（最终回答/成功/用量）并落盘。"""
+        try:
+            trace = self._decision_traces.pop(run.id, None)
+            if trace is None:
+                return
+            trace.final_answer = run.final_answer or ""
+            trace.answer_source = run.answer_source or ""
+            trace.success = run.status.value == "completed" if hasattr(run.status, "value") else str(run.status) == "completed"
+            trace.remote_calls = int(run.token_ledger.llm_calls)
+            trace.remote_escalations = int(run.token_ledger.remote_escalations)
+            trace.local_calls = int(getattr(run, "tool_call_count", 0))
+            trace.latency_ms = int(run.elapsed() * 1000)
+            trace.tool_calls = [c.to_dict() for c in run.tool_calls]
+            trace.tool_results_summary = [
+                {"tool": c.tool, "status": c.status, "summary": c.result.summary if c.result else "",
+                 "signals": list(c.result.signals) if c.result else []}
+                for c in run.tool_calls
+            ]
+            from app.agent.trace.decision_trace import write_trace
+            write_trace(trace)
+        except Exception as exc:  # noqa: BLE001 — 埋点失败不得影响运行
+            logger.warning("DecisionTrace 写入失败：%s", exc)
+
+    def _understand(self, run: AgentRun, session: AgentSession, context: AgentContext) -> None:
+        """本地理解：把用户语言转成 TaskSpec，挂到 context.task_context。
+
+        Phase 1 的架构接通点。用 TaskSpecBuilder（本地 Router 模型 + intent 分类）
+        产出 TaskSpec，写入 ``context.task_context["task_spec"]``，并记录一条
+        ``understanding`` 事件供 UI / Trace 观测。
+
+        不改变既有 chat/agent 分支（那是稳定路径），只补上「本地模型真正参与理解」
+        这一环 —— 之前本地 Router 只在 shadow 模式记录，从未进入运行链路。
+        """
+        try:
+            from app.agent.task_spec_builder import TaskSpecBuilder
+
+            # 复用运行期 decision_router（携带 llm），使本地理解阶段在本地 Router 判
+            # 「本地不足」时也能**真正触发一次远程升级**（Phase 4），而非只产出空壳。
+            builder = TaskSpecBuilder(router=self.decision_router)
+            understanding = builder.understand(
+                run.user_request,
+                bound_dataset_id=(session.dataset_ids[0] if session.dataset_ids else None),
+                intent_decision=classify(run.user_request, has_datasets=bool(session.dataset_ids)),
+            )
+            # TaskSpec 挂到 task_context（AgentContext 的可变状态里最贴切的位置）。
+            context.task_context = {
+                **(context.task_context or {}),
+                "task_spec": understanding.spec.to_dict(),
+                "understanding": understanding.to_dict(),
+            }
+            # 记录进 DecisionTrace：task_spec + router 候选（训练数据出口）。
+            trace = self._decision_traces.get(run.id)
+            if trace is not None:
+                trace.task_spec = understanding.spec.to_dict()
+                evidence = understanding.evidence or {}
+                router_decision = evidence.get("router_decision") or {}
+                trace.router_candidates = [{
+                    "candidate": router_decision.get("tool"),
+                    "score": router_decision.get("confidence"),
+                    "source": router_decision.get("source"),
+                }]
+                trace.decision_source = understanding.source or ""
+                trace.decision_made = {"action": "understand", "tool": understanding.spec.entities.get("tool"),
+                                       "source": understanding.source}
+                trace.record_decision({"step": "understand", "action": "understand",
+                                       "tool": understanding.spec.entities.get("tool"),
+                                       "source": understanding.source,
+                                       "confidence": understanding.spec.confidence})
+            # 记录一次「本地理解」事件（不进落盘白名单，避免写放大）。
+            self._emit(run, "planning", {
+                "stage": "task_understood",
+                "task_spec": understanding.spec.to_dict(),
+                "source": understanding.source,
+                "needs_clarification": understanding.needs_clarification,
+            }, on_event=None)
+        except Exception as exc:  # noqa: BLE001 — 本地理解失败不得拖垮主流程
+            logger.warning("本地理解失败（%s）：%s", type(exc).__name__, exc)
+
+    def _escalate(self, run: AgentRun, session: AgentSession, context: AgentContext) -> dict[str, Any]:
+        """Phase 4 远程升级：本地不足时发起**一次**远程战略指导，本地仍负责执行。
+
+        触发条件（由本地理解 / 本地 Router 判定，而非本方法自行猜）：
+        ``context.task_context["task_spec"]["complexity_hint"] == "complex"``，
+        即本地 Router 明确给出「升级」判定。简单 / 一般任务**不会**走到这里
+        （PoC「简单任务零远程调用」的关键保证）。
+
+        职责边界（任务 10）：只做一次远程调用，拿战略级方向（下一步最该做什么），
+        **不控制工具执行循环**。产出写进 ``context.task_context["remote_guidance"]``
+        供规划器参考，并如实记录进 DecisionTrace 与账本（remote_escalations）。
+        远程失败不吞错：走 ``fallback_allowed`` 同口径 —— 允许降级就保留本地结论，
+        不允许就抛出，让这次运行如实失败。
+        """
+        if self.llm is None:
+            return {"escalated": False, "reason": "no_llm"}
+        task_spec = (context.task_context or {}).get("task_spec") or {}
+        if str(task_spec.get("complexity_hint")) != "complex":
+            return {"escalated": False, "reason": "not_complex"}
+        from app.agent.decision.provider import DecisionContext
+        from app.agent.llm.base import LLMException, LLMMessage, fallback_allowed
+
+        try:
+            decision = self.decision_router.route(
+                DecisionContext(
+                    user_request=run.user_request,
+                    task_spec=task_spec,
+                    bound_dataset_id=(session.dataset_ids[0] if session.dataset_ids else None),
+                ),
+                allow_remote=True,
+            )
+            guidance = (decision.evidence or {}).get("remote_guidance")
+            if not guidance:
+                return {"escalated": False, "reason": "no_guidance"}
+            run.token_ledger.record_escalation()
+            context.task_context = {**(context.task_context or {}), "remote_guidance": guidance}
+            self._emit(run, "planning", {"stage": "remote_escalated", "guidance": str(guidance)[:200]}, on_event=None)
+            trace = self._decision_traces.get(run.id)
+            if trace is not None:
+                trace.record_decision({"step": "escalate", "action": "escalate",
+                                       "source": decision.source, "guidance": str(guidance)[:200]})
+            return {"escalated": True, "source": decision.source, "guidance": str(guidance)[:200]}
+        except LLMException as exc:
+            if not fallback_allowed(exc):
+                raise
+            # 允许降级：远程这次不可用，保留本地结论继续（不静默吞成「已升级」）。
+            logger.warning("远程升级失败（%s），按本地结论继续：%s", type(exc).__name__, exc)
+            return {"escalated": False, "reason": f"llm_failed:{type(exc).__name__}"}
+
     def _fill_tools(self,context:AgentContext,tools:list[dict[str,Any]])->None: ContextBuilder(self.data_engine).with_tools(context,tools,registry=self.registry)
     def _role_of(self,run:AgentRun)->str:return "analyst"
     def _tool_context(self, session: AgentSession, role: str, *, user_request: str = "") -> ToolExecutionContext:

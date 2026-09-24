@@ -74,6 +74,15 @@ class Settings(BaseSettings):
     # 与 LLM_API_KEY 刻意解耦：关闭时凭据仍保留在进程内，重新开启无需重填。
     LLM_REMOTE_ENABLED: bool = True
 
+    # 本地生成式推理模型（Phase 3 预留；实现见 app/agent/llm/local.py）。
+    # 当前仅保留接口与最小实现，未接入真实后端（Qwen 等），默认关闭。
+    # enabled=False 时不构造 LocalReasoningProvider，Agent 不依赖本地生成模型。
+    LOCAL_REASONING_MODEL_ENABLED: bool = False
+    # 未来接入时使用的模型名（如 qwen / qwen2.5-7b-instruct）。
+    LOCAL_REASONING_MODEL_NAME: str = "qwen"
+    # 未来接入时使用的模型权重路径（留空表示尚未指定）。
+    LOCAL_REASONING_MODEL_PATH: str = ""
+
     # 本地 Router（本地小模型路由；实现见 app/local_router/）
     # 三档模式：
     #   off    = 完全关闭：不加载模型、不写 trace（默认值，零风险）

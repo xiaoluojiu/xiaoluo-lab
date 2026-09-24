@@ -1,0 +1,2686 @@
+{
+ "generated_at": "2026-09-24 17:50:06",
+ "data_sources": {
+  "held_out_eval": {
+   "n_groupcv": 954,
+   "n_holdout": 152
+  },
+  "real_user_logs": {
+   "n": 315,
+   "n_unique": 5
+  },
+  "historical": {
+   "neural_l1": {
+    "source": "dataset/l1_report_chroberta-L4H256.md",
+    "route_acc_pure": 0.73,
+    "route_acc_with_rules": 0.795,
+    "tool_acc": 0.79,
+    "semantic_gate_acc": 0.915,
+    "params": 8773663,
+    "infer_ms_per_sample": 4.19,
+    "note": "chroberta-L4H256，cuda，需 torch；本环境无 torch，仅引用历史报告（frozen）。"
+   },
+   "fusion": {
+    "source": "dataset/fusion_report_L4H256.md",
+    "route_acc_alpha_0_5": 0.836,
+    "route_acc_alpha_0_75": 0.857,
+    "route_acc_alpha_0": 0.795,
+    "route_acc_alpha_1": 0.807,
+    "tool_acc": 0.833,
+    "semantic_gate_acc": 0.966,
+    "disagreement_route_level": 203,
+    "perfect_selector_upper": 0.89,
+    "note": "词法+神经融合，需 torch；本环境无 torch，仅引用历史报告（frozen）。"
+   }
+  }
+ },
+ "tfidf": {
+  "groupcv": {
+   "name": "tfidf_svc(groupCV)",
+   "n": 954,
+   "route_acc": 0.807128,
+   "kind_acc": 0.98218,
+   "capability": {
+    "executable_decision": {
+     "n": 895,
+     "acc": 0.798883
+    },
+    "semantic_gate": {
+     "n": 59,
+     "acc": 0.966102
+    }
+   },
+   "by_kind": {
+    "chat": {
+     "precision": 0.7838,
+     "recall": 0.9667,
+     "f1": 0.8657,
+     "tp": 29,
+     "fp": 8,
+     "fn": 1
+    },
+    "call": {
+     "precision": 0.993,
+     "recall": 0.9907,
+     "f1": 0.9918,
+     "tp": 849,
+     "fp": 6,
+     "fn": 8
+    },
+    "ask": {
+     "precision": 0.9118,
+     "recall": 0.8158,
+     "f1": 0.8611,
+     "tp": 31,
+     "fp": 3,
+     "fn": 7
+    },
+    "escalate": {
+     "precision": 1.0,
+     "recall": 0.9655,
+     "f1": 0.9825,
+     "tp": 28,
+     "fp": 0,
+     "fn": 1
+    }
+   },
+   "tool": {
+    "n": 895,
+    "tool_acc": 0.802235,
+    "tool_acc_given_kind": 0.798883
+   },
+   "escalation": {
+    "gold_escalate": 29,
+    "gold_local": 925,
+    "unnecessary_escalation_rate": 0.0,
+    "missed_escalation_rate": 0.034483,
+    "reason_acc": 0.896552,
+    "by_reason_recall": {
+     "ambiguous": {
+      "n": 6,
+      "recall": 1.0
+     },
+     "conflict": {
+      "n": 5,
+      "recall": 0.8
+     },
+     "multi_step": {
+      "n": 5,
+      "recall": 1.0
+     },
+     "out_of_scope": {
+      "n": 9,
+      "recall": 1.0
+     },
+     "param_dependency": {
+      "n": 4,
+      "recall": 1.0
+     }
+    }
+   },
+   "by_category": {
+    "chat": {
+     "n": 30,
+     "route_acc": 0.966667
+    },
+    "escalate": {
+     "n": 29,
+     "route_acc": 0.896552
+    },
+    "follow_up": {
+     "n": 12,
+     "route_acc": 0.416667
+    },
+    "implicit": {
+     "n": 16,
+     "route_acc": 0.75
+    },
+    "routing": {
+     "n": 829,
+     "route_acc": 0.80579
+    },
+    "slot_missing": {
+     "n": 38,
+     "route_acc": 0.789474
+    }
+   },
+   "top_kind_confusions": [
+    [
+     "call",
+     "chat",
+     6
+    ],
+    [
+     "ask",
+     "call",
+     5
+    ],
+    [
+     "call",
+     "ask",
+     2
+    ],
+    [
+     "ask",
+     "chat",
+     2
+    ],
+    [
+     "chat",
+     "ask",
+     1
+    ],
+    [
+     "escalate",
+     "call",
+     1
+    ]
+   ],
+   "top_route_confusions": [
+    [
+     "call::workflow.build_and_run",
+     "call::workflow.create",
+     7
+    ],
+    [
+     "call::dataset.inspect",
+     "call::dataset.preview",
+     7
+    ],
+    [
+     "call::ml.explain",
+     "call::ml.predict",
+     6
+    ],
+    [
+     "call::dataset.preview",
+     "call::connector.preview",
+     6
+    ],
+    [
+     "call::dataset.preview",
+     "call::dataset.inspect",
+     5
+    ],
+    [
+     "call::ml.predict",
+     "call::ml.evaluate",
+     4
+    ],
+    [
+     "call::connector.import",
+     "call::connector.preview",
+     4
+    ],
+    [
+     "call::eda.describe",
+     "call::dataset.profile",
+     4
+    ]
+   ],
+   "errors": []
+  },
+  "holdout": {
+   "name": "tfidf_svc(holdout)",
+   "n": 152,
+   "route_acc": 0.921053,
+   "kind_acc": 0.986842,
+   "capability": {
+    "executable_decision": {
+     "n": 142,
+     "acc": 0.915493
+    },
+    "semantic_gate": {
+     "n": 10,
+     "acc": 1.0
+    }
+   },
+   "by_kind": {
+    "chat": {
+     "precision": 0.8333,
+     "recall": 1.0,
+     "f1": 0.9091,
+     "tp": 5,
+     "fp": 1,
+     "fn": 0
+    },
+    "call": {
+     "precision": 0.9926,
+     "recall": 0.9926,
+     "f1": 0.9926,
+     "tp": 135,
+     "fp": 1,
+     "fn": 1
+    },
+    "ask": {
+     "precision": 1.0,
+     "recall": 0.8333,
+     "f1": 0.9091,
+     "tp": 5,
+     "fp": 0,
+     "fn": 1
+    },
+    "escalate": {
+     "precision": 1.0,
+     "recall": 1.0,
+     "f1": 1.0,
+     "tp": 5,
+     "fp": 0,
+     "fn": 0
+    }
+   },
+   "tool": {
+    "n": 142,
+    "tool_acc": 0.915493,
+    "tool_acc_given_kind": 0.915493
+   },
+   "escalation": {
+    "gold_escalate": 5,
+    "gold_local": 147,
+    "unnecessary_escalation_rate": 0.0,
+    "missed_escalation_rate": 0.0,
+    "reason_acc": 1.0,
+    "by_reason_recall": {
+     "conflict": {
+      "n": 2,
+      "recall": 1.0
+     },
+     "multi_step": {
+      "n": 1,
+      "recall": 1.0
+     },
+     "out_of_scope": {
+      "n": 2,
+      "recall": 1.0
+     }
+    }
+   },
+   "by_category": {
+    "chat": {
+     "n": 5,
+     "route_acc": 1.0
+    },
+    "escalate": {
+     "n": 5,
+     "route_acc": 1.0
+    },
+    "follow_up": {
+     "n": 2,
+     "route_acc": 0.0
+    },
+    "implicit": {
+     "n": 1,
+     "route_acc": 1.0
+    },
+    "routing": {
+     "n": 133,
+     "route_acc": 0.932331
+    },
+    "slot_missing": {
+     "n": 6,
+     "route_acc": 0.833333
+    }
+   },
+   "top_kind_confusions": [
+    [
+     "call",
+     "chat",
+     1
+    ],
+    [
+     "ask",
+     "call",
+     1
+    ]
+   ],
+   "top_route_confusions": [
+    [
+     "call::dataset.inspect",
+     "call::dataset.preview",
+     2
+    ],
+    [
+     "call::connector.tables",
+     "call::connector.preview",
+     2
+    ],
+    [
+     "call::eda.describe",
+     "call::report.generate",
+     1
+    ],
+    [
+     "call::eda.correlation",
+     "call::ml.train",
+     1
+    ],
+    [
+     "call::ml.compare",
+     "call::ml.evaluate",
+     1
+    ],
+    [
+     "call::workflow.build_and_run",
+     "call::workflow.create",
+     1
+    ],
+    [
+     "call::dataset.list",
+     "call::connector.list",
+     1
+    ],
+    [
+     "call::dataset.inspect",
+     "call::eda.describe",
+     1
+    ]
+   ],
+   "errors": []
+  }
+ },
+ "eda_subintent": {
+  "n": 196,
+  "labels": [
+   "describe",
+   "distribution",
+   "correlation",
+   "outlier",
+   "profile",
+   "其他"
+  ],
+  "matrix": {
+   "describe": {
+    "describe": 18,
+    "distribution": 0,
+    "correlation": 0,
+    "outlier": 0,
+    "profile": 4,
+    "其他": 3
+   },
+   "distribution": {
+    "describe": 0,
+    "distribution": 42,
+    "correlation": 0,
+    "outlier": 0,
+    "profile": 0,
+    "其他": 0
+   },
+   "correlation": {
+    "describe": 0,
+    "distribution": 0,
+    "correlation": 24,
+    "outlier": 0,
+    "profile": 0,
+    "其他": 3
+   },
+   "outlier": {
+    "describe": 0,
+    "distribution": 0,
+    "correlation": 0,
+    "outlier": 17,
+    "profile": 0,
+    "其他": 6
+   },
+   "profile": {
+    "describe": 4,
+    "distribution": 2,
+    "correlation": 0,
+    "outlier": 0,
+    "profile": 8,
+    "其他": 8
+   },
+   "其他": {
+    "describe": 0,
+    "distribution": 0,
+    "correlation": 0,
+    "outlier": 0,
+    "profile": 0,
+    "其他": 57
+   }
+  },
+  "note": "金标为 EDA 能力域样本（groupCV 折外预测），gold 与 pred 均为工具名归一化后的子意图。"
+ },
+ "shadow": {
+  "n": 315,
+  "n_unique_requests": 5,
+  "verdicts": {
+   "待确认(反问)": 259,
+   "会出错(误判闲聊)": 56
+  },
+  "verdict_ratio": {
+   "待确认(反问)": 0.8222,
+   "会出错(误判闲聊)": 0.1778
+  },
+  "confidence_mean": 0.6441,
+  "detail": [
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看数据",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.preview",
+    "confidence": 0.5081,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "检查一下数据质量",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::dataset.quality",
+    "confidence": 0.9095,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "帮我训练一个分类模型",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::ml.train",
+    "confidence": 0.4591,
+    "verdict": "待确认(反问)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "查看结果",
+    "executed_tool": "ml.evaluate",
+    "router_route": "chat",
+    "confidence": 0.3046,
+    "verdict": "会出错(误判闲聊)"
+   },
+   {
+    "request": "看看这批数据的分布",
+    "executed_tool": "dataset.inspect",
+    "router_route": "ask::eda.distribution",
+    "confidence": 0.8524,
+    "verdict": "待确认(反问)"
+   }
+  ],
+  "note": "executed_tool 是当时规则路由的产物（可能本身有错），非 ground truth；此表只回答「本地 Router 若接管会怎样」，不是准确率。"
+ },
+ "frozen": {
+  "frozen_at": "2026-09-24 17:50:04",
+  "held_out_eval": {
+   "samples.jsonl": {
+    "bytes": 483504,
+    "sha256_16": "6a34321907e5147c",
+    "lines": 954
+   },
+   "holdout.jsonl": {
+    "bytes": 77867,
+    "sha256_16": "c412d310a8a23a54",
+    "lines": 152
+   }
+  },
+  "real_user_logs": {
+   "agent_store.json": {
+    "bytes": 13994834,
+    "sha256_16": "6dde1a2fad725dda"
+   }
+  },
+  "_written": "D:\\xiaoluodataweb\\xiaoluoAIdata\\xiaoluo-lab\\backend\\scripts\\router\\eval_frozen\\eval_set_manifest.json"
+ }
+}

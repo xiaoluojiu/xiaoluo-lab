@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-22 13:19:55",
+ "generated_at": "2026-09-24 18:13:36",
  "gates": {
   "input_parity": true,
   "online_equals_offline": true,
@@ -8,35 +8,39 @@
  },
  "gates_passed": true,
  "input_parity": {
-  "n": 844,
+  "n": 971,
   "mismatches": []
  },
  "equivalence": {
-  "n": 844,
+  "n": 971,
   "mismatches": []
  },
  "roundtrip": {
-  "n": 844,
+  "n": 971,
   "staleness": null,
   "mismatches": [],
   "max_proba_sum_error": 6.661338147750939e-16
  },
  "metrics": {
-  "route_acc_design": 0.808057,
-  "route_acc_baseline_recompute": 0.806872,
-  "route_acc_shadow_no_columns": 0.808057,
-  "n_eval": 844
+  "route_acc_design": 0.802266,
+  "route_acc_baseline_recompute": 0.802266,
+  "route_acc_shadow_no_columns": 0.803296,
+  "n_eval": 971
  },
  "model": {
   "artifact": "D:\\xiaoluodataweb\\xiaoluoAIdata\\xiaoluo-lab\\backend\\models\\local_router\\lexical_l1.pkl",
-  "size_bytes": 2190004,
-  "n_features": 8088,
-  "n_classes": 31,
+  "size_bytes": 2729547,
+  "n_features": 8780,
+  "n_classes": 36,
   "missing_classes": [],
-  "fit_seconds_full": 0.1896,
-  "infer_ms_per_sample": 0.6822,
+  "fit_seconds_full": 0.1594,
+  "infer_ms_per_sample": 0.4458,
   "label_space": [
    "chat",
+   "call::connector.import",
+   "call::connector.list",
+   "call::connector.preview",
+   "call::connector.tables",
    "call::data.aggregate",
    "call::data.clean",
    "call::data.filter",
@@ -51,6 +55,7 @@
    "call::eda.correlation",
    "call::eda.describe",
    "call::eda.distribution",
+   "call::eda.distribution_overview",
    "call::eda.outlier",
    "call::eda.visualize",
    "call::ml.compare",
@@ -69,23 +74,23 @@
    "call::workflow.run"
   ],
   "written": "D:\\xiaoluodataweb\\xiaoluoAIdata\\xiaoluo-lab\\backend\\models\\local_router\\lexical_l1.pkl",
-  "written_size_bytes": 2192258
+  "written_size_bytes": 2732167
  },
  "data": {
-  "n_all": 844,
-  "n_trainable": 815,
+  "n_all": 971,
+  "n_trainable": 942,
   "dataset_signature": {}
  },
  "reports": [
   {
    "name": "词法 Router(设计口径)",
-   "n": 844,
-   "route_acc": 0.808057,
-   "kind_acc": 0.977488,
+   "n": 971,
+   "route_acc": 0.802266,
+   "kind_acc": 0.985582,
    "capability": {
     "executable_decision": {
-     "n": 785,
-     "acc": 0.798726
+     "n": 912,
+     "acc": 0.79386
     },
     "semantic_gate": {
      "n": 59,
@@ -94,26 +99,26 @@
    },
    "by_kind": {
     "chat": {
-     "precision": 0.725,
+     "precision": 0.8286,
      "recall": 0.9667,
-     "f1": 0.8286,
+     "f1": 0.8923,
      "tp": 29,
-     "fp": 11,
+     "fp": 6,
      "fn": 1
     },
     "call": {
-     "precision": 0.9919,
-     "recall": 0.9866,
-     "f1": 0.9893,
-     "tp": 737,
+     "precision": 0.9931,
+     "recall": 0.9943,
+     "f1": 0.9937,
+     "tp": 866,
      "fp": 6,
-     "fn": 10
+     "fn": 5
     },
     "ask": {
-     "precision": 0.9394,
-     "recall": 0.8158,
-     "f1": 0.8732,
-     "tp": 31,
+     "precision": 0.9444,
+     "recall": 0.8293,
+     "f1": 0.8831,
+     "tp": 34,
      "fp": 2,
      "fn": 7
     },
@@ -127,13 +132,13 @@
     }
    },
    "tool": {
-    "n": 785,
-    "tool_acc": 0.802548,
-    "tool_acc_given_kind": 0.798726
+    "n": 912,
+    "tool_acc": 0.797149,
+    "tool_acc_given_kind": 0.79386
    },
    "escalation": {
     "gold_escalate": 29,
-    "gold_local": 815,
+    "gold_local": 942,
     "unnecessary_escalation_rate": 0.0,
     "missed_escalation_rate": 0.034483,
     "reason_acc": 0.896552,
@@ -171,31 +176,31 @@
     },
     "follow_up": {
      "n": 12,
-     "route_acc": 0.5
+     "route_acc": 0.25
     },
     "implicit": {
      "n": 16,
-     "route_acc": 0.6875
+     "route_acc": 0.5625
     },
     "routing": {
-     "n": 719,
-     "route_acc": 0.806676
+     "n": 843,
+     "route_acc": 0.807829
     },
     "slot_missing": {
-     "n": 38,
-     "route_acc": 0.789474
+     "n": 41,
+     "route_acc": 0.756098
     }
    },
    "top_kind_confusions": [
     [
-     "call",
-     "chat",
-     9
-    ],
-    [
      "ask",
      "call",
      5
+    ],
+    [
+     "call",
+     "chat",
+     4
     ],
     [
      "ask",
@@ -220,19 +225,19 @@
    ],
    "top_route_confusions": [
     [
-     "call::workflow.create",
-     "call::workflow.build_and_run",
-     8
-    ],
-    [
      "call::dataset.inspect",
      "call::dataset.preview",
      7
     ],
     [
-     "call::dataset.preview",
-     "call::dataset.inspect",
-     7
+     "call::ml.explain",
+     "call::ml.evaluate",
+     6
+    ],
+    [
+     "call::data.clean",
+     "call::dataset.quality",
+     6
     ],
     [
      "call::dataset.inspect",
@@ -240,37 +245,37 @@
      6
     ],
     [
+     "call::workflow.inspect",
+     "call::workflow.run",
+     6
+    ],
+    [
+     "call::dataset.quality",
+     "call::data.clean",
+     5
+    ],
+    [
+     "call::dataset.preview",
      "call::dataset.inspect",
-     "call::dataset.schema",
-     6
+     5
     ],
     [
-     "call::data.clean",
-     "call::dataset.quality",
-     6
-    ],
-    [
-     "call::workflow.build_and_run",
-     "call::workflow.create",
-     6
-    ],
-    [
-     "call::dataset.quality",
-     "call::data.clean",
-     4
+     "call::dataset.preview",
+     "call::connector.preview",
+     5
     ]
    ],
    "errors": []
   },
   {
    "name": "词法基线(对账口径)",
-   "n": 844,
-   "route_acc": 0.806872,
-   "kind_acc": 0.977488,
+   "n": 971,
+   "route_acc": 0.802266,
+   "kind_acc": 0.984552,
    "capability": {
     "executable_decision": {
-     "n": 785,
-     "acc": 0.797452
+     "n": 912,
+     "acc": 0.79386
     },
     "semantic_gate": {
      "n": 59,
@@ -279,26 +284,26 @@
    },
    "by_kind": {
     "chat": {
-     "precision": 0.725,
+     "precision": 0.8056,
      "recall": 0.9667,
-     "f1": 0.8286,
+     "f1": 0.8788,
      "tp": 29,
-     "fp": 11,
+     "fp": 7,
      "fn": 1
     },
     "call": {
-     "precision": 0.9919,
-     "recall": 0.9866,
-     "f1": 0.9893,
-     "tp": 737,
+     "precision": 0.9931,
+     "recall": 0.9931,
+     "f1": 0.9931,
+     "tp": 865,
      "fp": 6,
-     "fn": 10
+     "fn": 6
     },
     "ask": {
-     "precision": 0.9394,
-     "recall": 0.8158,
-     "f1": 0.8732,
-     "tp": 31,
+     "precision": 0.9444,
+     "recall": 0.8293,
+     "f1": 0.8831,
+     "tp": 34,
      "fp": 2,
      "fn": 7
     },
@@ -312,13 +317,13 @@
     }
    },
    "tool": {
-    "n": 785,
-    "tool_acc": 0.801274,
-    "tool_acc_given_kind": 0.797452
+    "n": 912,
+    "tool_acc": 0.797149,
+    "tool_acc_given_kind": 0.79386
    },
    "escalation": {
     "gold_escalate": 29,
-    "gold_local": 815,
+    "gold_local": 942,
     "unnecessary_escalation_rate": 0.0,
     "missed_escalation_rate": 0.034483,
     "reason_acc": 0.896552,
@@ -356,26 +361,26 @@
     },
     "follow_up": {
      "n": 12,
-     "route_acc": 0.416667
+     "route_acc": 0.25
     },
     "implicit": {
      "n": 16,
-     "route_acc": 0.6875
+     "route_acc": 0.5625
     },
     "routing": {
-     "n": 719,
-     "route_acc": 0.806676
+     "n": 843,
+     "route_acc": 0.807829
     },
     "slot_missing": {
-     "n": 38,
-     "route_acc": 0.789474
+     "n": 41,
+     "route_acc": 0.756098
     }
    },
    "top_kind_confusions": [
     [
      "call",
      "chat",
-     9
+     5
     ],
     [
      "ask",
@@ -405,19 +410,24 @@
    ],
    "top_route_confusions": [
     [
-     "call::workflow.create",
-     "call::workflow.build_and_run",
-     8
-    ],
-    [
      "call::dataset.inspect",
      "call::dataset.preview",
      7
     ],
     [
-     "call::dataset.preview",
-     "call::dataset.inspect",
-     7
+     "call::ml.explain",
+     "call::ml.evaluate",
+     6
+    ],
+    [
+     "call::dataset.quality",
+     "call::data.clean",
+     6
+    ],
+    [
+     "call::data.clean",
+     "call::dataset.quality",
+     6
     ],
     [
      "call::dataset.inspect",
@@ -425,37 +435,32 @@
      6
     ],
     [
+     "call::workflow.inspect",
+     "call::workflow.run",
+     6
+    ],
+    [
+     "call::dataset.preview",
      "call::dataset.inspect",
-     "call::dataset.schema",
-     6
+     5
     ],
     [
-     "call::data.clean",
-     "call::dataset.quality",
-     6
-    ],
-    [
-     "call::workflow.build_and_run",
-     "call::workflow.create",
-     6
-    ],
-    [
-     "call::dataset.quality",
-     "call::data.clean",
-     4
+     "call::dataset.preview",
+     "call::connector.preview",
+     5
     ]
    ],
    "errors": []
   },
   {
    "name": "词法 Router(shadow 口径·无列)",
-   "n": 844,
-   "route_acc": 0.808057,
-   "kind_acc": 0.979858,
+   "n": 971,
+   "route_acc": 0.803296,
+   "kind_acc": 0.985582,
    "capability": {
     "executable_decision": {
-     "n": 785,
-     "acc": 0.798726
+     "n": 912,
+     "acc": 0.794956
     },
     "semantic_gate": {
      "n": 59,
@@ -464,26 +469,26 @@
    },
    "by_kind": {
     "chat": {
-     "precision": 0.7632,
+     "precision": 0.8286,
      "recall": 0.9667,
-     "f1": 0.8529,
+     "f1": 0.8923,
      "tp": 29,
-     "fp": 9,
+     "fp": 6,
      "fn": 1
     },
     "call": {
-     "precision": 0.9919,
-     "recall": 0.9893,
-     "f1": 0.9906,
-     "tp": 739,
+     "precision": 0.9931,
+     "recall": 0.9943,
+     "f1": 0.9937,
+     "tp": 866,
      "fp": 6,
-     "fn": 8
+     "fn": 5
     },
     "ask": {
-     "precision": 0.9394,
-     "recall": 0.8158,
-     "f1": 0.8732,
-     "tp": 31,
+     "precision": 0.9444,
+     "recall": 0.8293,
+     "f1": 0.8831,
+     "tp": 34,
      "fp": 2,
      "fn": 7
     },
@@ -497,13 +502,13 @@
     }
    },
    "tool": {
-    "n": 785,
-    "tool_acc": 0.802548,
-    "tool_acc_given_kind": 0.798726
+    "n": 912,
+    "tool_acc": 0.798246,
+    "tool_acc_given_kind": 0.794956
    },
    "escalation": {
     "gold_escalate": 29,
-    "gold_local": 815,
+    "gold_local": 942,
     "unnecessary_escalation_rate": 0.0,
     "missed_escalation_rate": 0.034483,
     "reason_acc": 0.896552,
@@ -541,31 +546,31 @@
     },
     "follow_up": {
      "n": 12,
-     "route_acc": 0.416667
+     "route_acc": 0.25
     },
     "implicit": {
      "n": 16,
-     "route_acc": 0.6875
+     "route_acc": 0.5625
     },
     "routing": {
-     "n": 719,
-     "route_acc": 0.808067
+     "n": 843,
+     "route_acc": 0.807829
     },
     "slot_missing": {
-     "n": 38,
-     "route_acc": 0.789474
+     "n": 41,
+     "route_acc": 0.780488
     }
    },
    "top_kind_confusions": [
     [
-     "call",
-     "chat",
-     7
-    ],
-    [
      "ask",
      "call",
      5
+    ],
+    [
+     "call",
+     "chat",
+     4
     ],
     [
      "ask",
@@ -590,19 +595,24 @@
    ],
    "top_route_confusions": [
     [
-     "call::workflow.create",
-     "call::workflow.build_and_run",
-     8
-    ],
-    [
      "call::dataset.inspect",
      "call::dataset.preview",
      7
     ],
     [
-     "call::dataset.preview",
-     "call::dataset.inspect",
-     7
+     "call::ml.explain",
+     "call::ml.evaluate",
+     6
+    ],
+    [
+     "call::dataset.quality",
+     "call::data.clean",
+     6
+    ],
+    [
+     "call::data.clean",
+     "call::dataset.quality",
+     6
     ],
     [
      "call::dataset.inspect",
@@ -610,28 +620,23 @@
      6
     ],
     [
+     "call::workflow.inspect",
+     "call::workflow.run",
+     6
+    ],
+    [
+     "call::dataset.preview",
      "call::dataset.inspect",
-     "call::dataset.schema",
-     6
+     5
     ],
     [
-     "call::data.clean",
-     "call::dataset.quality",
-     6
-    ],
-    [
-     "call::workflow.build_and_run",
-     "call::workflow.create",
-     6
-    ],
-    [
-     "call::dataset.quality",
-     "call::data.clean",
-     4
+     "call::dataset.preview",
+     "call::connector.preview",
+     5
     ]
    ],
    "errors": []
   }
  ],
- "table_markdown": "| 指标 | 词法 Router(设计口径) | 词法基线(对账口径) | 词法 Router(shadow 口径·无列) |\n| --- | --- | --- | --- |\n| 样本数 | 844 | 844 | 844 |\n| **整条决策准确率** | 80.8% | 80.7% | 80.8% |\n| 决策类型准确率 | 97.7% | 97.7% | 98.0% |\n| ① 可执行决策准确率 | 79.9% | 79.7% | 79.9% |\n| ② 语义闸门准确率 | 96.6% | 96.6% | 96.6% |\n| 工具选择准确率 | 80.3% | 80.1% | 80.3% |\n| · 类型对时工具对 | 79.9% | 79.7% | 79.9% |\n| chat F1 | 82.9% | 82.9% | 85.3% |\n| call F1 | 98.9% | 98.9% | 99.1% |\n| ask F1 | 87.3% | 87.3% | 87.3% |\n| escalate F1 | 98.2% | 98.2% | 98.2% |\n| 无谓升级率 ↓ | 0.0% | 0.0% | 0.0% |\n| 漏升级率 ↓ | 3.4% | 3.4% | 3.4% |\n| 升级理由准确率 | 89.7% | 89.7% | 89.7% |"
+ "table_markdown": "| 指标 | 词法 Router(设计口径) | 词法基线(对账口径) | 词法 Router(shadow 口径·无列) |\n| --- | --- | --- | --- |\n| 样本数 | 971 | 971 | 971 |\n| **整条决策准确率** | 80.2% | 80.2% | 80.3% |\n| 决策类型准确率 | 98.6% | 98.5% | 98.6% |\n| ① 可执行决策准确率 | 79.4% | 79.4% | 79.5% |\n| ② 语义闸门准确率 | 96.6% | 96.6% | 96.6% |\n| 工具选择准确率 | 79.7% | 79.7% | 79.8% |\n| · 类型对时工具对 | 79.4% | 79.4% | 79.5% |\n| chat F1 | 89.2% | 87.9% | 89.2% |\n| call F1 | 99.4% | 99.3% | 99.4% |\n| ask F1 | 88.3% | 88.3% | 88.3% |\n| escalate F1 | 98.2% | 98.2% | 98.2% |\n| 无谓升级率 ↓ | 0.0% | 0.0% | 0.0% |\n| 漏升级率 ↓ | 3.4% | 3.4% | 3.4% |\n| 升级理由准确率 | 89.7% | 89.7% | 89.7% |"
 }

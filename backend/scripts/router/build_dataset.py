@@ -70,6 +70,9 @@ SLOT_SPEC: dict[str, dict[str, Any]] = {
     "chart": {"param": "chart", "values": list(T.CHART_WORDS), "encode": T.CHART_WORDS},
     "model": {"param": "model", "values": list(T.MODEL_WORDS), "encode": T.MODEL_WORDS},
     "mltopic": {"param": "topic", "values": list(T.TOPIC_WORDS), "encode": T.TOPIC_WORDS},
+    "connector_id": {"param": "connector_id", "values": [1, 2, 3, 5],
+                     "display": "{}号连接器"},
+    "table": {"param": "table", "values": ["orders", "users", "sales", "products"]},
 }
 
 

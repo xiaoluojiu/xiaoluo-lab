@@ -15,8 +15,103 @@
   "param_dependency",
   "conflict"
  ],
- "tool_count": 30,
+ "tool_count": 35,
  "tools": [
+  {
+   "name": "connector.import",
+   "description": "把数据库连接器中的表 / 查询抽取为平台内的数据集版本（会写入数据，可能需要较长时间）。抽取按批进行，可处理远超上传上限的数据量。",
+   "intent": "dataset",
+   "declared_category": "connector",
+   "risk_level": "low",
+   "requires_confirmation": true,
+   "required": [
+    "connector_id",
+    "table"
+   ],
+   "optional": [
+    "schema_name",
+    "columns",
+    "where",
+    "order_by",
+    "keyset_column",
+    "max_rows",
+    "dataset_id",
+    "dataset_name"
+   ],
+   "param_types": {
+    "connector_id": "integer",
+    "table": "string",
+    "schema_name": "string",
+    "columns": "array",
+    "where": "string",
+    "order_by": "string",
+    "keyset_column": "string",
+    "max_rows": "integer",
+    "dataset_id": "integer",
+    "dataset_name": "string"
+   }
+  },
+  {
+   "name": "connector.list",
+   "description": "列出已配置的数据库连接器（外部数据源），查看其类型与最近一次连接状态。",
+   "intent": "dataset",
+   "declared_category": "connector",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [],
+   "optional": [
+    "page",
+    "page_size"
+   ],
+   "param_types": {
+    "page": "integer",
+    "page_size": "integer"
+   }
+  },
+  {
+   "name": "connector.preview",
+   "description": "预览数据库表的前若干行（只读，不导入数据），用于确认字段含义。",
+   "intent": "dataset",
+   "declared_category": "connector",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "connector_id",
+    "table"
+   ],
+   "optional": [
+    "schema_name",
+    "columns",
+    "where",
+    "limit"
+   ],
+   "param_types": {
+    "connector_id": "integer",
+    "table": "string",
+    "schema_name": "string",
+    "columns": "array",
+    "where": "string",
+    "limit": "integer"
+   }
+  },
+  {
+   "name": "connector.tables",
+   "description": "列出某个数据库连接器中的表与视图，用于确定要导入哪张表。",
+   "intent": "dataset",
+   "declared_category": "connector",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "connector_id"
+   ],
+   "optional": [
+    "schema"
+   ],
+   "param_types": {
+    "connector_id": "integer",
+    "schema": "string"
+   }
+  },
   {
    "name": "data.aggregate",
    "description": "分组聚合统计（count/sum/mean/median/min/max/std）。",
@@ -209,7 +304,7 @@
   },
   {
    "name": "dataset.quality",
-   "description": "数据质量检查（缺失、重复、异常值、Schema）。",
+   "description": "数据质量检查（缺失、重复、异常值、Schema）。传 target 时该列只做描述、不产出清洗建议；异常值方法会按字段语义标注适用性。",
    "intent": "dataset",
    "declared_category": "dataset",
    "risk_level": "low",
@@ -218,11 +313,13 @@
     "dataset_id"
    ],
    "optional": [
-    "version"
+    "version",
+    "target"
    ],
    "param_types": {
     "dataset_id": "integer",
-    "version": "integer"
+    "version": "integer",
+    "target": "string"
    }
   },
   {
@@ -310,6 +407,28 @@
    }
   },
   {
+   "name": "eda.distribution_overview",
+   "description": "数据集级分布总览：一次给出全表数值列（均值/中位数/偏态/直方图摘要）与类别列（Top 类别/唯一值数）的分布概况，无需指定列。",
+   "intent": "eda",
+   "declared_category": "eda",
+   "risk_level": "low",
+   "requires_confirmation": false,
+   "required": [
+    "dataset_id"
+   ],
+   "optional": [
+    "version",
+    "bins",
+    "top_n"
+   ],
+   "param_types": {
+    "dataset_id": "integer",
+    "version": "integer",
+    "bins": "integer",
+    "top_n": "integer"
+   }
+  },
+  {
    "name": "eda.outlier",
    "description": "数值列异常检测（IQR / Z-Score）。",
    "intent": "eda",
@@ -386,7 +505,7 @@
   },
   {
    "name": "ml.detect_task",
-   "description": "根据目标列类型与数据分布判断 ML 任务类型，并给出理由。",
+   "description": "根据目标列类型与数据分布判断 ML 任务类型，并给出理由。未指定 target 时按「显式指定 > 命名约定(target/label/y/class) > 诉求语义匹配 > 排除日历·时间·标识列后的唯一候选」分级推断目标列，理由写在 reasons 里；推断不出来才失败并回传 target_candidates，绝不默认按聚类处理监督任务。",
    "intent": "ml",
    "declared_category": "ml",
    "risk_level": "low",
@@ -397,13 +516,15 @@
    "optional": [
     "version",
     "target",
-    "infer_target"
+    "infer_target",
+    "goal"
    ],
    "param_types": {
     "dataset_id": "integer",
     "version": "integer",
     "target": "string",
-    "infer_target": "boolean"
+    "infer_target": "boolean",
+    "goal": "string"
    }
   },
   {
@@ -502,7 +623,7 @@
   },
   {
    "name": "ml.train",
-   "description": "在数据集版本上训练模型：创建 Experiment 并运行，返回评估指标。",
+   "description": "在数据集版本上训练模型：创建 Experiment 并运行，返回评估指标。model 填 auto 表示按任务类型自动选择（分类→logistic_regression，回归→linear_regression，聚类→kmeans）。监督任务未给 target 时，会调用 ml.detect_task 按「命名约定 → 诉求语义 → 排除日历·时间·标识列后的唯一候选」自动推断目标列，并把推断依据一并回传（target_inferred）；确实推断不出来才会失败并回传候选目标列，而不会默认按聚类执行。",
    "intent": "ml",
    "declared_category": "ml",
    "risk_level": "high",
@@ -514,8 +635,11 @@
    "optional": [
     "version",
     "target",
+    "task",
+    "goal",
     "params",
     "preprocessing",
+    "excluded_columns",
     "test_size",
     "seed",
     "description"
@@ -524,9 +648,12 @@
     "dataset_id": "integer",
     "version": "integer",
     "target": "string",
+    "task": "string",
+    "goal": "string",
     "model": "string",
     "params": "object",
     "preprocessing": "object",
+    "excluded_columns": "array",
     "test_size": "number",
     "seed": "integer",
     "description": "string"
@@ -534,7 +661,7 @@
   },
   {
    "name": "report.generate",
-   "description": "基于真实数据质量、EDA 和相关分析结果生成并保存一份完整的结构化分析报告，报告自动嵌入多张图表（分布直方图、类别柱状图、相关系数热力图、相关性散点图、正态 Q-Q 图、累积分布图），并由大模型针对真实数值撰写章节正文与结论。request 参数建议填写用户的原始诉求，模型会据此组织正文侧重点。返回 report_key 用于在报告中心打开。",
+   "description": "基于真实数据质量、EDA 和相关分析结果生成并保存一份完整的结构化分析报告，报告自动嵌入多张图表（分布直方图、类别柱状图、相关系数热力图、相关性散点图、正态 Q-Q 图、累积分布图），并自动关联该数据集最近的 Experiment / Run，写入「建模与评估」「关联实验」两章（若尚未训练则明确标注该章未生成及原因，而不是静默跳号）。章节正文与结论由大模型针对真实数值撰写。request 参数建议填写用户的原始诉求，模型会据此组织正文侧重点。返回 report_key 用于在报告中心打开。",
    "intent": "report",
    "declared_category": "report",
    "risk_level": "low",
@@ -675,16 +802,28 @@
     "type": "string"
    }
   },
-  "description": "Router 的输出。字段全部受限，可直接约束解码。",
+  "description": "Router 的输出。字段全部受限，可直接约束解码。\n\n`intent` 允许为空，且**只在升级决策时为空**：`escalate` 由 L0 结构规则先于模型触发\n（见 `escalation_rules.detect_escalation`），此时「用户想干什么」**尚未判定**。\n填一个猜测值（例如强行写 `chat`）会让下游与日志把它读成真实结论 —— 空值表达「无信息」比假值诚实。",
   "properties": {
    "intent": {
-    "$ref": "#/$defs/Intent"
+    "anyOf": [
+     {
+      "$ref": "#/$defs/Intent"
+     },
+     {
+      "type": "null"
+     }
+    ],
+    "default": null
    },
    "tool": {
     "anyOf": [
      {
       "type": "string",
       "enum": [
+       "connector.import",
+       "connector.list",
+       "connector.preview",
+       "connector.tables",
        "data.aggregate",
        "data.clean",
        "data.filter",
@@ -699,6 +838,7 @@
        "eda.correlation",
        "eda.describe",
        "eda.distribution",
+       "eda.distribution_overview",
        "eda.outlier",
        "eda.visualize",
        "ml.compare",
@@ -756,9 +896,6 @@
     "type": "number"
    }
   },
-  "required": [
-   "intent"
-  ],
   "title": "RouterDecision",
   "type": "object"
  }

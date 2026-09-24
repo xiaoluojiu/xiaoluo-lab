@@ -1,6 +1,5 @@
 {
  "tools": [
-  "agent.clarify",
   "connector.import",
   "connector.list",
   "connector.preview",
@@ -19,6 +18,7 @@
   "eda.correlation",
   "eda.describe",
   "eda.distribution",
+  "eda.distribution_overview",
   "eda.outlier",
   "eda.visualize",
   "ml.compare",
@@ -37,11 +37,10 @@
   "workflow.run"
  ],
  "intent_of_tool": {
-  "agent.clarify": null,
-  "connector.import": null,
-  "connector.list": null,
-  "connector.preview": null,
-  "connector.tables": null,
+  "connector.import": "dataset",
+  "connector.list": "dataset",
+  "connector.preview": "dataset",
+  "connector.tables": "dataset",
   "data.aggregate": "data_transform",
   "data.clean": "data_transform",
   "data.filter": "data_transform",
@@ -56,6 +55,7 @@
   "eda.correlation": "eda",
   "eda.describe": "eda",
   "eda.distribution": "eda",
+  "eda.distribution_overview": "eda",
   "eda.outlier": "eda",
   "eda.visualize": "eda",
   "ml.compare": "ml",
@@ -74,10 +74,6 @@
   "workflow.run": "workflow"
  },
  "required_params": {
-  "agent.clarify": [
-   "code",
-   "question"
-  ],
   "connector.import": [
    "connector_id",
    "table"
@@ -137,6 +133,9 @@
    "dataset_id",
    "column"
   ],
+  "eda.distribution_overview": [
+   "dataset_id"
+  ],
   "eda.outlier": [
    "dataset_id"
   ],
@@ -189,12 +188,6 @@
   ]
  },
  "optional_params": {
-  "agent.clarify": [
-   "options",
-   "default",
-   "severity",
-   "context"
-  ],
   "connector.import": [
    "schema_name",
    "columns",
@@ -275,6 +268,11 @@
    "bins",
    "top_n"
   ],
+  "eda.distribution_overview": [
+   "version",
+   "bins",
+   "top_n"
+  ],
   "eda.outlier": [
    "version",
    "columns",
@@ -349,7 +347,6 @@
  },
  "label_space": [
   "chat",
-  "call::agent.clarify",
   "call::connector.import",
   "call::connector.list",
   "call::connector.preview",
@@ -368,6 +365,7 @@
   "call::eda.correlation",
   "call::eda.describe",
   "call::eda.distribution",
+  "call::eda.distribution_overview",
   "call::eda.outlier",
   "call::eda.visualize",
   "call::ml.compare",
@@ -386,6 +384,6 @@
   "call::workflow.run"
  ],
  "category_inconsistencies": [],
- "source_sha1": "154392f35293e9b6f5eba6d3ca3d0a45bcaaae5b",
- "generated_at_epoch": 1790152009
+ "source_sha1": "9f72482393257d60d9c737528a1afd39adffbce9",
+ "generated_at_epoch": 1790244795
 }
