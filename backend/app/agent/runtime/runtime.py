@@ -182,6 +182,10 @@ class AgentRuntime:
         pending = run.pending_clarification
         if run.status != RunStatus.WAITING_CLARIFICATION or pending is None:
             raise ValidationException("该运行不在等待澄清状态")
+        # 空回答不是「接受默认值」，而是没答：直接往下走会用一个空串去填参数，
+        # 得到看似成功实则答非所问的结果。要默认值就显式把 default 发回来。
+        if not str(answer or "").strip():
+            raise ValidationException("澄清回答不能为空")
         code = str(pending.get("code") or "")
         run.clarification_answers[code] = str(answer or "").strip()
         step_index = pending.get("step_index")
@@ -313,24 +317,53 @@ class AgentRuntime:
         finally:run.finished_at=time.time()
         return run
 
+    #: 两个等待态各自的终止文案。共用一条 deny 路径，但**不能共用一句文案**：
+    #: 「拒绝授权」和「不回答澄清」对用户的含义不同，混在一起会让界面显示错误原因。
+    _DENY_MESSAGES = {
+        RunStatus.WAITING_CONFIRMATION: "用户拒绝授权，运行终止",
+        RunStatus.WAITING_CLARIFICATION: "用户未回答澄清问题，运行终止",
+    }
+
     def deny(self, run_id: str, *, on_event: EventCallback | None = None) -> AgentRun:
-        """用户拒绝高风险操作：终止该运行并释放会话（否则 run 永远停在 WAITING_CONFIRMATION，会话被 409 锁死）。"""
+        """放弃等待：终止运行并释放会话（否则 run 永远停在等待态，会话被 409 锁死）。
+
+        覆盖两种等待态，且**只清自己那一份载荷**：
+
+            WAITING_CONFIRMATION  -> pending_confirmation（问「这个高风险操作做不做」）
+            WAITING_CLARIFICATION -> pending_clarification（问「信息不全，请补一个参数」）
+
+        早先的实现用 ``pending_confirmation is None`` 做统一门禁，于是澄清态
+        （载荷在 pending_clarification 里）被判定为「无需处理」直接返回——
+        用户点取消/拒绝后运行毫无反应，会话永久锁死。
+        """
         run = self.store.get_run(run_id)
-        if run.status not in (RunStatus.WAITING_CONFIRMATION, RunStatus.WAITING_CLARIFICATION) or run.pending_confirmation is None:
+
+        if run.status == RunStatus.WAITING_CLARIFICATION:
+            if run.pending_clarification is None:
+                return run
+            run.pending_clarification = None
+        elif run.status == RunStatus.WAITING_CONFIRMATION:
+            if run.pending_confirmation is None:
+                return run
+            run.pending_confirmation = None
+        else:
             return run
-        run.pending_confirmation = None
-        self._fail(run, "用户拒绝授权，运行终止", on_event)
+
+        self._fail(run, self._DENY_MESSAGES[run.status], on_event)
         self.store.persist(force=True)
         return run
 
     def cancel(self, run_id: str) -> AgentRun:
-        """请求取消运行：设置标记，_run_plan 在当前步骤结束后停止。"""
+        """请求取消运行：设置标记，_run_plan 在当前步骤结束后停止。
+
+        等待态下取消等价于放弃等待（确认 → 拒绝授权，澄清 → 不回答），
+        必须真的终止，否则会话一直被 ACTIVE_STATUSES 锁住。
+        """
         run = self.store.get_run(run_id)
         if run.status in (RunStatus.PENDING, RunStatus.PLANNING, RunStatus.RUNNING):
             run.cancel_requested = True
             self.store.persist(force=True)
-        elif run.status == RunStatus.WAITING_CLARIFICATION:
-            # 等待澄清时取消等价于「不回答」：终止并释放会话
+        elif run.status in (RunStatus.WAITING_CONFIRMATION, RunStatus.WAITING_CLARIFICATION):
             run = self.deny(run_id)
         return run
 
@@ -354,14 +387,21 @@ class AgentRuntime:
         tool_ctx=self._tool_context(session,role,user_request=run.user_request)
         # 本轮已回答的反问注入工具上下文（保持 `_tool_context` 原签名不变：
         # 它是既有测试替身的重写点，改签名会连带打断它们）。
+        # ★ 必须**赋值**而不是 ``setdefault``：``_tool_context`` 总是预置一个空 dict，
+        # setdefault 因此永远不生效，工具拿到的 answers 恒为空 —— 用户回答后
+        # agent.clarify 会原样再问一遍，形成「回答 → 继续 → 再问」的死循环。
         extra = getattr(tool_ctx, "extra", None)
         if isinstance(extra, dict):
-            extra.setdefault(ANSWERS_KEY, dict(run.clarification_answers or {}))
+            extra[ANSWERS_KEY] = dict(run.clarification_answers or {})
         services=self._services(); current=plan; permanent_failure=""; total_steps=max(len(plan.steps),1); replans=0
         while current.steps:
-            # ① 重规划总闸：与单步尝试上限互补，任何原因的循环到这里都会被截断
-            if replans>=self.replanner.limits.max_replans:
-                permanent_failure=f"重规划已达上限 {self.replanner.limits.max_replans} 次，判定为不可恢复的循环，已终止。"; break
+            # ① 重规划总闸：与单步尝试上限互补，任何原因的循环到这里都会被截断。
+            #    阈值只在 ``Replanner.assert_replan_budget`` 定义一处——早先这里内联了
+            #    一份同样的判断，两边一旦漂移就会出现「测试过的闸不是线上那个」。
+            try:
+                self.replanner.assert_replan_budget(replans)
+            except AgentLimitExceeded as exc:
+                permanent_failure = str(exc); break
             replanned=False
             for i,raw_step in enumerate(current.steps):
                 if run.cancel_requested:
@@ -387,9 +427,14 @@ class AgentRuntime:
                 if record.status=="needs_clarification":
                     # 计划执行中的结构化反问（agent.clarify）：记下步号，
                     # 用户回答后从这一步继续，前面的重型步骤不重跑。
+                    #
+                    # ★ 载荷必须落在 ``pending_clarification``。曾经错写成
+                    # ``pending_confirmation``，而 ``answer_clarification`` 只读
+                    # ``pending_clarification`` —— 结果是计划内反问**永远无法被回答**，
+                    # 运行卡在 WAITING_CLARIFICATION 直到进程重启（会话期间一直 409）。
                     clarification=record.clarification.to_dict() if hasattr(record.clarification,"to_dict") else {}
                     run.status=RunStatus.WAITING_CLARIFICATION
-                    run.pending_confirmation={**clarification,"step_index":abs_idx,"tool":step.tool}
+                    run.pending_clarification={**clarification,"step_index":abs_idx,"tool":step.tool}
                     self._emit(run,"clarification",{**clarification,"stage":"clarification_required","tool":step.tool,"step_index":abs_idx},on_event)
                     self.store.persist(force=True); return
                 if record.status=="denied": permanent_failure=f"第 {abs_idx} 步被拒绝：{record.error}"; break

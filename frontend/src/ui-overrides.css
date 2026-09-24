@@ -23,11 +23,6 @@ body,
   width: var(--ui-sidebar-width);
 }
 
-.sidebar .logo {
-  padding: 18px 18px;
-  font-size: 19px;
-}
-
 .sidebar nav a,
 .sidebar .nav-group-title {
   min-height: 42px;
@@ -41,10 +36,6 @@ body,
   width: 14px;
   height: 14px;
   flex: 0 0 14px;
-}
-
-.page-header h1 {
-  font-size: clamp(28px, 2vw, var(--ui-title-size));
 }
 
 .page-header p,
@@ -167,16 +158,6 @@ body,
 .analysis-results {
   min-height: 620px;
   overflow: hidden;
-}
-
-.analysis-tabs {
-  overflow-x: auto;
-  scrollbar-width: thin;
-}
-
-.analysis-tab {
-  flex: 0 0 auto;
-  white-space: nowrap;
 }
 
 .analysis-preview-wrap {
@@ -433,10 +414,6 @@ body,
   min-width: 0 !important;
 }
 
-.learning-lesson-grid > * {
-  min-width: 0;
-}
-
 .learning-lesson-body .recharts-responsive-container {
   min-width: 0 !important;
 }
@@ -632,10 +609,6 @@ html[data-theme="dark"] .learning-lesson-body code {
 .content .processing-workspace,
 .dialog {
   border-radius: var(--radius-lg);
-}
-
-.dialog {
-  box-shadow: var(--shadow-lg);
 }
 
 /* 卡片 hover 只改边框颜色与轻投影，禁止浮起位移 */

@@ -12,7 +12,10 @@ import app.models.experiment_run  # noqa: F401
 import app.models.file  # noqa: F401
 import app.models.learning  # noqa: F401
 import app.models.operation  # noqa: F401
+import os
+
 import pytest
+from app.core.config import settings
 from app.core.database import Base
 from app.data_engine.cache import VersionFrameCache
 from app.main import app
@@ -43,6 +46,24 @@ def _isolate_version_frame_cache():
     cache.clear()
     yield cache
     cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _offline_llm(monkeypatch):
+    """测试默认**不访问真实大模型**，保证离线可复现。
+
+    为什么必须有这条：本地 ``backend/.env`` 里若配置了 ``LLM_API_KEY``，Agent 用例
+    会真的去打线上接口。余额不足（402）时工具走降级路径，连续失败还会触发
+    **服务熔断**，把后面无关的用例一起拖成 failed —— 表现为「改了 A 处，B 处用例挂了」，
+    排查成本极高，且同一份代码在不同机器上结论不同。
+
+    需要验真实远程链路时显式打开：``XIAOLUO_TESTS_REMOTE_LLM=1``。
+    """
+    if os.getenv("XIAOLUO_TESTS_REMOTE_LLM") == "1":
+        yield
+        return
+    monkeypatch.setattr(settings, "LLM_REMOTE_ENABLED", False)
+    yield
 
 
 @pytest.fixture()

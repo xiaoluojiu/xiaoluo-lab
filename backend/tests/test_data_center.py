@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import polars as pl
+import pytest
 
 from app.analysis import (
     CorrelationAnalyzer,
@@ -258,9 +259,11 @@ def test_outlier_analyzer_real_detection():
     df = pl.DataFrame({"flat": [5.0] * 10, "spike": [1.0, 1, 1, 1, 1, 1, 1, 1, 1, 99]})
     iqr = EdaOutlierAnalyzer().analyze(df, method="iqr")
     iqr_by = {c["column"]: c for c in iqr["columns"]}
-    # IQR 下常数列边界退化为 [5,5]，但确实没有离群值 → ok / 0 个
-    assert iqr_by["flat"]["status"] == "ok"
+    # 常数列（方差为 0）在**两种**方法下都跳过，并给出明确原因：
+    # 前端因此不必区分「有结果 / 无结果」两种行结构，用户也知道为什么没有数值。
+    assert iqr_by["flat"]["status"] == "skipped"
     assert iqr_by["flat"]["outlier_count"] == 0
+    assert iqr_by["flat"]["reason"]
     # IQR=0 时对稀疏离群仍能检出（spike 的 99 被标为离群）
     assert iqr_by["spike"]["status"] == "ok"
     assert iqr_by["spike"]["outlier_count"] == 1
@@ -268,8 +271,9 @@ def test_outlier_analyzer_real_detection():
 
     z = EdaOutlierAnalyzer().analyze(df, method="zscore")
     z_by = {c["column"]: c for c in z["columns"]}
+    # 跳过原因按平台口径为中文（前端直接展示），不再比对英文字符串
     assert z_by["flat"]["status"] == "skipped"
-    assert z_by["flat"]["reason"] == "constant column"
+    assert "常数列" in z_by["flat"]["reason"]
 
 
 def test_quality_build_report_real_issues():
@@ -284,12 +288,11 @@ def test_quality_build_report_real_issues():
 
 def test_quality_missing_checker_rejects_unknown_columns():
     df = pl.DataFrame({"b": [1, 2, 3]})
-    try:
+    # 业务错误统一走 ValidationException（422），不是裸 ValueError：
+    # 未知列名是「请求参数不合法」而非程序错误，必须能作为业务错误返回给前端。
+    with pytest.raises(ValidationException) as excinfo:
         MissingChecker(columns=["nope"]).check(df)
-    except ValueError as exc:
-        assert "nope" in str(exc)
-    else:
-        raise AssertionError("expected ValueError for unknown columns")
+    assert "nope" in str(excinfo.value)
 
 
 def test_profiling_real_schema_and_profile():
@@ -340,12 +343,11 @@ def test_visualization_builder_all_chart_types_real():
     ar = vb.analyze(df, chart="area", column="age", bins=5)
     assert ar["chart"] == "area" and ar["y"][-1] == 1.0 and ar["total"] == df.height
 
-    try:
+    # 不支持的图表类型属于「请求参数不合法」⇒ ValidationException（422），
+    # 不是数据处理异常（TransformError）。用例早先按 TransformError 编写，
+    # 与平台统一的业务错误契约不一致，这里对齐到契约。
+    with pytest.raises(ValidationException):
         vb.analyze(df, chart="not_a_chart")
-    except TransformError:
-        pass
-    else:
-        raise AssertionError("expected TransformError for unsupported chart")
 
 
 # ---------------- 透视 / 逆透视（Task #24：预览 400）----------------

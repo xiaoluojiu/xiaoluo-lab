@@ -6,22 +6,6 @@
 /* 字阶与 :root 已上收敛至 styles/tokens.css（全站唯一事实源） */
 
 /* ---------- 全局工作区 ---------- */
-html,
-body,
-#root {
-  font-size: var(--ui-body-size);
-}
-
-.content {
-  width: 100%;
-  max-width: none;
-  margin: 0;
-  padding: 24px var(--content-gutter) 40px;
-}
-
-.page-header {
-  margin-bottom: 18px;
-}
 
 .page-header h1 {
   font-size: var(--ui-title-size);
@@ -51,15 +35,6 @@ body,
   padding: 20px;
 }
 
-.content .card h3 {
-  font-size: 19px;
-  line-height: 1.35;
-}
-
-.content .card h4 {
-  font-size: 17px;
-}
-
 .content .btn {
   min-height: 40px;
   padding: 8px 15px;
@@ -75,14 +50,6 @@ body,
 }
 
 /* ---------- 侧边栏 ---------- */
-.sidebar {
-  width: 200px;
-}
-
-.sidebar .logo {
-  padding: 20px 20px;
-  font-size: 20px;
-}
 
 .sidebar nav {
   padding: 10px 0;
@@ -384,10 +351,6 @@ body,
   padding: 8px 10px;
   font-size: 14px;
   font-weight: 700;
-}
-
-.processing-op {
-  padding: 10px 11px;
 }
 
 .processing-op-title {

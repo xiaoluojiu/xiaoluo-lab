@@ -7,37 +7,42 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import math
 import pickle
+import sys
 import time
 from typing import Any, Callable
 
+import numpy as np
 import polars as pl
+import sklearn
 from sqlalchemy import func as sa_func
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.exceptions import NotFoundException, ValidationException
 from app.ml_engine.evaluation import (
-    evaluate_classification as eval_classification,
-)
-from app.ml_engine.evaluation import evaluate_clustering
-from app.ml_engine.evaluation import evaluate_regression as eval_regression
-from app.ml_engine.evaluation import (
     classification_report,
     confusion_matrix,
+    evaluate_clustering,
     regression_residuals,
 )
+from app.ml_engine.evaluation import (
+    evaluate_classification as eval_classification,
+)
+from app.ml_engine.evaluation import evaluate_regression as eval_regression
 from app.ml_engine.exceptions import MLEngineException
 from app.ml_engine.inference import batch_predict, batch_predict_proba
+from app.ml_engine.metadata import PIPELINE_STEPS
 from app.ml_engine.preprocessing import (
     PreprocessingPipeline,
     build_pipeline,
     cap_training_rows,
     default_preprocessing_config,
 )
-from app.ml_engine.metadata import PIPELINE_STEPS
 from app.ml_engine.registry import MODEL_REGISTRY
 from app.ml_engine.threshold import (
     DEFAULT_THRESHOLD,
@@ -116,6 +121,53 @@ def _jsonable(value: Any) -> Any:
         except Exception:  # noqa: BLE001
             return value
     return value
+
+
+def library_versions() -> dict[str, str]:
+    """软件版本快照。
+
+    同一份数据 + 同一个 seed，在不同版本的 sklearn/polars 上也可能跑出不同结果
+    （默认参数调整、数值实现变化）。记录版本不是形式主义，而是让「上次和这次
+    指标不一样」这类问题有第一条可查的线索。
+    """
+    return {
+        "python": sys.version.split()[0],
+        "polars": pl.__version__,
+        "numpy": np.__version__,
+        "scikit_learn": sklearn.__version__,
+    }
+
+
+def dataset_snapshot(version_row: DatasetVersion) -> dict[str, Any]:
+    """实验所用**不可变数据快照**的指纹。
+
+    回答的问题只有一个：这次结果究竟是用哪一份数据跑出来的。因此必须绑到
+    ``DatasetVersion`` 而不是 ``dataset_id`` —— 数据集会持续产生新版本，
+    只记 dataset_id 的话，三个月后回看完全无法还原当时的输入。
+
+    刻意做**轻量指纹**（版本行元数据）而不是读整个 Parquet 算内容摘要：
+    千万行表上那是一次全量 IO，而本地应用场景下「哪个版本 + 多少行 +
+    什么 schema」已足以定位输入。
+    """
+    schema = version_row.schema_json or {}
+    payload = "|".join(
+        [
+            str(version_row.id),
+            str(version_row.dataset_id),
+            str(version_row.version),
+            str(version_row.row_count),
+            str(version_row.column_count),
+            json.dumps(schema, sort_keys=True, ensure_ascii=False),
+        ]
+    )
+    return {
+        "dataset_id": version_row.dataset_id,
+        "dataset_version_id": version_row.id,
+        "version": version_row.version,
+        "row_count": version_row.row_count,
+        "column_count": version_row.column_count,
+        "fingerprint": hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16],
+    }
 
 
 class ExperimentService:
@@ -493,6 +545,12 @@ class ExperimentService:
             model_features = list(pipeline.feature_names_out_)
 
         artifacts = {
+            # ---- 可复现性快照（§可复现性）：数据 / 参数 / 切分 / 版本 ----
+            "dataset_snapshot": dataset_snapshot(
+                self.db.get(DatasetVersion, exp.dataset_version_id)
+            ),
+            "seed": exp.seed,
+            "library_versions": library_versions(),
             "model": exp.model,
             "task": exp.task,
             "features": list(X.columns),  # T0-1: 排除后实际参与训练的列

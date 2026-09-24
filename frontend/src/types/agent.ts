@@ -78,6 +78,17 @@ export interface AnswerSource {
 
 export interface PermissionRequest { tool: string; arguments: Record<string, unknown>; step_index: number; reason: string; }
 
+/** 聊天消息。定义在 types 里而不是组件里：会话历史、事件流、Hook 都要读写它。 */
+export interface ChatMessage {
+  role: string;
+  content: string;
+  /** 回答来源（后端判定后下发，前端不猜）。 */
+  source?: AnswerSource | null;
+}
+
+/** 运行面板页签。事件流会主动切页签（如出现工具调用时切到「活动」），故提升到类型层。 */
+export type InspectorTab = "overview" | "activity" | "chain" | "token" | "budget";
+
 export interface AgentSession {
   id: string;
   user_id: string;

@@ -30,7 +30,6 @@ body { overflow-x: hidden; }
 /* 旧 .sidebar .logo::before 渐变标记已废弃：实侧栏 Logo 标记由 .logo-mark 渲染（见 components.css），此处硬编码渐变移除 */
 .sidebar nav a { position: relative; transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast); }
 /* 激活态只用 3px 实色竖条，去掉 inset 20px 的“内发光” */
-.sidebar nav a.active { box-shadow: inset 3px 0 0 var(--sidebar-active); }
 .sidebar .nav-group-title { width: 100%; border: 0; background: transparent; font: inherit; text-align: left; }
 .sidebar .nav-group-title:hover { background: var(--sidebar-hover); border-radius: 6px; }
 .sidebar .nav-group-arrow { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex: 0 0 16px; }
@@ -43,7 +42,6 @@ body { overflow-x: hidden; }
 a.card, .card a.settings-option { transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast); }
 a.card:hover, .card a.settings-option:hover { text-decoration: none; }
 .card:has(a:hover), a.card:hover { border-color: color-mix(in srgb, var(--primary) 32%, var(--border)); box-shadow: var(--shadow-hover); }
-a.card:hover { transform: translateY(-1px); }
 .btn { box-shadow: var(--shadow-xs); }
 .btn:hover:not(:disabled) { box-shadow: var(--shadow); }
 /* 发光只留主 CTA 一处，且扩散 ≤12px、透明度 ≤18%；danger 用底色/边框变化表达，不发光 */
@@ -54,13 +52,9 @@ a.card:hover { transform: translateY(-1px); }
 .data-table, .kv-grid, .badge { font-variant-numeric: tabular-nums; }
 .data-table td, .data-table th { vertical-align: middle; }
 .data-table th { position: sticky; top: 0; z-index: 1; white-space: nowrap; }
-.data-table tbody tr { transition: background-color var(--transition-fast); }
-.data-table tbody tr:hover { background: var(--surface-hover); }
 .data-table-wrap, .analysis-preview-wrap, .ai-session-list, .chat-messages, .processing-sidebar { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted) 45%, transparent) transparent; }
 .data-table-wrap::-webkit-scrollbar, .analysis-preview-wrap::-webkit-scrollbar, .ai-session-list::-webkit-scrollbar, .chat-messages::-webkit-scrollbar, .processing-sidebar::-webkit-scrollbar { width: 8px; height: 8px; }
 .data-table-wrap::-webkit-scrollbar-thumb, .analysis-preview-wrap::-webkit-scrollbar-thumb, .ai-session-list::-webkit-scrollbar-thumb, .chat-messages::-webkit-scrollbar-thumb, .processing-sidebar::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 30%, transparent); border-radius: 999px; }
-
-.analysis-tabs { scrollbar-width: thin; }
 .analysis-tab { font-weight: 600; }
 .analysis-tab:hover { transform: translateY(-1px); }
 .analysis-tab.active { box-shadow: 0 3px 10px color-mix(in srgb, var(--primary) 16%, transparent); }
@@ -74,7 +68,6 @@ a.card:hover { transform: translateY(-1px); }
 .analysis-workspace > *, .processing-layout > *, .processing-operation-shell > *, .ai-workspace > *, .learning-grid > *, .learning-lesson-grid > * { min-width: 0; }
 .resizable-panel { min-width: 180px; min-height: 120px; overflow: auto; resize: horizontal; }
 .data-table-wrap { max-width: 100%; overflow: auto; border-radius: var(--radius); }
-.data-table { border-collapse: separate; border-spacing: 0; }
 .dataset-tabs, .analysis-tabs { min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
 .dataset-tabs { display: flex; flex-wrap: nowrap; align-items: stretch; gap: 4px; }
 .dataset-tab, .analysis-tab { flex: 0 0 auto; white-space: nowrap; }
@@ -185,7 +178,6 @@ html, body, #root { font-family: var(--app-font-family); font-size: var(--app-fo
   cursor: pointer;
   transition: all 0.15s ease;
 }
-.sidebar-toggle:hover { background: var(--sidebar-active-bg); color: var(--sidebar-active-text); }
 .sidebar-toggle svg { transition: transform 0.18s ease; }
 .layout.nav-collapsed .sidebar-toggle svg { transform: rotate(180deg); }
 
@@ -205,7 +197,6 @@ html, body, #root { font-family: var(--app-font-family); font-size: var(--app-fo
   padding-bottom: 11px !important;
 }
 .sidebar .nav-icon { flex: 0 0 auto; opacity: 0.85; }
-.sidebar nav a.active .nav-icon, .sidebar .nav-group-title.group-active .nav-icon { opacity: 1; }
 
 .layout.nav-collapsed .sidebar .nav-label,
 .layout.nav-collapsed .sidebar .nav-group-arrow { display: none; }

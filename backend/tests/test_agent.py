@@ -28,14 +28,23 @@ from fastapi.testclient import TestClient
 TOOL_DESCRIBES = TOOL_REGISTRY.list()
 
 
-def make_df() -> pl.DataFrame:
+def make_df(rows: int = 10) -> pl.DataFrame:
+    """玩具数据。``rows`` 可调：低于 50 行时 Pre-flight 的 `scale_sanity`
+    会合法地反问「样本量太小是否继续」，建模类用例必须用 >=50 行才能走到
+    「规划 → 高风险工具待确认」这一段。
+    """
+    half = max(rows // 2, 1)
     return pl.DataFrame(
         {
-            "x1": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
-            "x2": [10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0],
-            "target": ["pos", "pos", "pos", "pos", "pos", "neg", "neg", "neg", "neg", "neg"],
+            "x1": [float(i + 1) for i in range(rows)],
+            "x2": [float(rows - i) for i in range(rows)],
+            "target": ["pos" if i < half else "neg" for i in range(rows)],
         }
     )
+
+
+#: Pre-flight 不会因样本量反问的最小规模（见 preflight._c_scale 的 50 行阈值）。
+MODELING_ROWS = 60
 
 
 @pytest.fixture()
@@ -44,6 +53,17 @@ def env(db, storage):
     ds = DatasetService(db, storage)
     dataset = ds.create("toy", "玩具数据")
     ds.create_version(dataset.id, make_df())
+    engine = DataEngineService(ds)
+    exp = ExperimentService(db, ds)
+    return {"ds": ds, "engine": engine, "exp": exp, "dataset_id": dataset.id}
+
+
+@pytest.fixture()
+def env_large(db, storage):
+    """同上，但数据集规模足以让 Pre-flight 直接放行（建模链路用）。"""
+    ds = DatasetService(db, storage)
+    dataset = ds.create("toy-large", "规模足够的玩具数据")
+    ds.create_version(dataset.id, make_df(rows=MODELING_ROWS))
     engine = DataEngineService(ds)
     exp = ExperimentService(db, ds)
     return {"ds": ds, "engine": engine, "exp": exp, "dataset_id": dataset.id}
@@ -323,7 +343,13 @@ class TestRuntime:
         assert session.history[0]["role"] == "user"  # 用户消息入史
         assert session.history[-1]["role"] == "assistant"  # 完成后写入最终回答
 
-    def test_waiting_confirmation_and_resume(self, env):
+    def test_waiting_confirmation_and_resume(self, env_large):
+        """建模请求 → ml.train 高风险 → 等待确认 → 确认后继续 → 完成。
+
+        用 `env_large`：10 行的玩具数据会被 Pre-flight 的样本量检查拦下反问，
+        根本走不到「待确认」这一步（这条用例要钉的是授权闭环，不是反问闭环）。
+        """
+        env = env_large
         runtime = AgentRuntime(env["engine"], experiment_service=env["exp"])
         session = runtime.create_session(dataset_ids=[env["dataset_id"]])
         run = runtime.run(session, "帮我训练一个分类模型")
@@ -401,7 +427,7 @@ def api(db, storage):
 def api_dataset(db, storage):
     ds = DatasetService(db, storage)
     dataset = ds.create("api-toy", "API 玩具数据")
-    ds.create_version(dataset.id, make_df())
+    ds.create_version(dataset.id, make_df(rows=MODELING_ROWS))
     return dataset.id
 
 

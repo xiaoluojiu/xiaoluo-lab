@@ -608,10 +608,18 @@ def compute_outlier_bounds(
         q1 = float(clean.quantile(0.25, interpolation="linear"))
         q3 = float(clean.quantile(0.75, interpolation="linear"))
         iqr = q3 - q1
-        if iqr == 0 or iqr != iqr:
-            # 与 zscore 分支口径统一：IQR 为 0 说明列值在四分位范围内没有散布
-            # （典型为常数列）。此时 lower == upper，任何"异常"判定都无意义，
-            # 旧实现会静默返回该退化区间，前端表格看起来像"0 个异常"但其实没算。
+        if iqr != iqr:  # NaN（列内存在非数值 NaN）
+            return (
+                float("nan"),
+                float("nan"),
+                {"method": "iqr", "q1": q1, "q3": q3, "iqr": iqr, "k": k, "constant": True},
+            )
+        # ★ 「常数列」只能用**取值是否唯一**判定，不能用 iqr == 0 判定。
+        # 早先这里写的是 `if iqr == 0`，于是任何「超过一半取值相同」的列都被当成
+        # 常数列整列跳过 —— 9 个 1 加一个 99 这种**一眼可见**的离群点会被静默漏检
+        # （q1 == q3 == 1 ⇒ iqr == 0 ⇒ 整列 skipped，界面显示「无异常」）。
+        # 零膨胀 / 长尾列正是要靠退化区间 [q1, q1] 抓离群点的场景，不能不算。
+        if clean.n_unique() == 1:
             return (
                 float("nan"),
                 float("nan"),
@@ -619,6 +627,10 @@ def compute_outlier_bounds(
             )
         lower, upper = q1 - k * iqr, q3 + k * iqr
         info = {"method": "iqr", "q1": q1, "q3": q3, "iqr": iqr, "k": k}
+        if iqr == 0:
+            # 区间退化为一点：不等于 q1 的值全部落在区间外。如实标注，
+            # 让界面能解释「为什么这列异常比例偏高」。
+            info["zero_iqr"] = True
     else:  # zscore
         mean = float(clean.mean())
         # Polars 的 std(ddof=1) 在只有 1 个非空样本时返回 None，float(None) 会抛 TypeError。

@@ -1,18 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { AnswerSource } from "../../types/agent";
+import type { ChatMessage } from "../../types/agent";
 
-export interface ChatMessage {
-  role: string;
-  content: string;
-  /**
-   * 这条回答的**实际来源**（由后端判定后下发，前端不猜）。
-   *
-   * 为什么必须有：开关开着 ≠ 这次真的是模型在答 —— 远程调用失败时会退回平台内置规则，
-   * 两种来路在界面上长得一模一样。标注后用户一眼能分清「远程模型生成的」
-   * 与「平台规则 / 降级兜底的」。
-   */
-  source?: AnswerSource | null;
-}
+export type { ChatMessage };
 
 export function ChatPanel({
   messages,

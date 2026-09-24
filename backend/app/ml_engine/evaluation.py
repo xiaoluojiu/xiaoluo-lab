@@ -110,16 +110,17 @@ def confusion_matrix(y_true: pl.Series, y_pred: pl.Series) -> dict[str, Any]:
     """
     if y_true.len() != y_pred.len():
         raise MLEngineException("y_true 与 y_pred 长度不一致")
+    # 计数交给 sklearn（这里曾经手写了两重循环做同样的事）：
+    # 只需显式给出 labels 顺序，输出的行列语义（行=真实，列=预测）与手工版本一致。
     raw_labels = sorted(
         {_jsonable(v) for v in y_true.to_list()} | {_jsonable(v) for v in y_pred.to_list()},
         key=str,
     )
-    index = {label: i for i, label in enumerate(raw_labels)}
-    size = len(raw_labels)
-    matrix = [[0] * size for _ in range(size)]
-    for t, p in zip(y_true.to_list(), y_pred.to_list()):
-        matrix[index[_jsonable(t)]][index[_jsonable(p)]] += 1
-    return {"labels": [str(x) for x in raw_labels], "matrix": matrix}
+    matrix = sk_metrics.confusion_matrix(y_true, y_pred, labels=raw_labels)
+    return {
+        "labels": [str(x) for x in raw_labels],
+        "matrix": [[int(v) for v in row] for row in matrix],
+    }
 
 
 def classification_report(y_true: pl.Series, y_pred: pl.Series) -> dict[str, Any]:
@@ -185,15 +186,12 @@ def _histogram(values: "np.ndarray", bin_count: int = 12) -> list[dict[str, Any]
     low, high = float(values.min()), float(values.max())
     if low == high:
         return [{"range": f"{low:.3f}~{high:.3f}", "count": int(values.size)}]
-    width = (high - low) / bin_count
-    counts = [0] * bin_count
-    for v in values:
-        idx = min(bin_count - 1, int((float(v) - low) / width))
-        counts[idx] += 1
+    # 分桶交给 numpy（这里曾经手写逐元素累加做同样的事）。
+    counts, edges = np.histogram(values, bins=bin_count, range=(low, high))
     return [
         {
-            "range": f"{low + i * width:.3f}~{low + (i + 1) * width:.3f}",
-            "count": counts[i],
+            "range": f"{edges[i]:.3f}~{edges[i + 1]:.3f}",
+            "count": int(counts[i]),
         }
         for i in range(bin_count)
     ]

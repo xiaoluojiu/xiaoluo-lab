@@ -151,10 +151,14 @@ class TestAgentBenchmark:
     def env(self, db, storage):
         ds = DatasetService(db, storage)
         dataset = ds.create("agent-bench", "Agent 基准数据")
+        # 行数必须 >= 50：Pre-flight 的 `scale_sanity` 会对小样本建模请求发起反问，
+        # 那样「训练 → 待确认 → 确认后继续」这条基准场景根本走不到授权环节
+        # （表现是 success_rate=0、avg_tool_calls=0）。
+        rows = 60
         ds.create_version(dataset.id, pl.DataFrame({
-            "x1": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
-            "x2": [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
-            "target": ["a", "a", "a", "a", "a", "b", "b", "b", "b", "b"],
+            "x1": [float(i) for i in range(rows)],
+            "x2": [float(rows - i) for i in range(rows)],
+            "target": ["a" if i < rows // 2 else "b" for i in range(rows)],
         }))
         engine = DataEngineService(ds)
         exp = ExperimentService(db, ds)

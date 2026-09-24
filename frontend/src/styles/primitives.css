@@ -15,19 +15,12 @@
    ============================================================= */
 
 /* ---------- 按钮尺寸变体（.btn 本体仍在 index.css） ---------- */
-.btn-sm {
-  height: var(--control-height-sm);
-  padding: 0 var(--space-3);
-  font-size: 13px;
-  line-height: 1.2;
-}
 .btn-lg {
   height: var(--control-height-lg);
   padding: 0 var(--space-6);
   font-size: 15px;
   font-weight: 600;
 }
-.btn-block { width: 100%; }
 
 /* ---------- 栅格：全站统一，替代各处手写的 flex/grid ---------- */
 .grid { display: grid; gap: var(--space-4); min-width: 0; }

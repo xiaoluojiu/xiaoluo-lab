@@ -46,6 +46,7 @@ from pathlib import Path
 
 import polars as pl
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -66,6 +67,9 @@ from app.storage.service import StorageService
 _VERSION_CACHE_ENABLED = True
 # 列裁剪阈值：请求的列数低于总列数的该比例时才值得重新读盘（否则全量解码更划算）。
 _COLUMN_PRUNE_RATIO = 0.6
+# 版本号预留的最大重试次数。只有并发请求撞到同一版本号时才会 >1，
+# 正常路径循环一次即返回。
+_MAX_VERSION_RESERVE_ATTEMPTS = 5
 
 
 def _lazy_scan_enabled() -> bool:
@@ -242,7 +246,12 @@ class DatasetService:
         self,
         dataset_id: int,
     ) -> DatasetVersion | None:
-        """返回最新版本行；没有版本时返回 None。"""
+        """返回最新版本行；没有版本时返回 None。
+
+        ``with_for_update()`` 在 PostgreSQL 上对命中的行加排他锁，与
+        ``_reserve_version`` 的占位 INSERT 形成完整互斥；SQLite 方言不渲染
+        FOR UPDATE（无副作用），唯一性由唯一约束兜底，因此两种库都成立。
+        """
 
         stmt = (
             select(DatasetVersion)
@@ -254,6 +263,7 @@ class DatasetService:
                 DatasetVersion.version.desc(),
             )
             .limit(1)
+            .with_for_update()
         )
 
         return self.db.scalars(stmt).first()
@@ -266,11 +276,11 @@ class DatasetService:
     ) -> DatasetVersion:
         """创建不可变 DatasetVersion（数据已在内存时使用）。
 
-        DataFrame -> 临时 Parquet 文件 -> Storage -> DatasetVersion。
+        DataFrame -> 暂存 Parquet -> promote 进 Storage -> 补全版本行。
 
         改造要点：不再用 ``io.BytesIO`` 攒一份完整 Parquet 字节串。对 1 GB 级
         数据，那等于在「DataFrame 常驻」之外**再多占一份压缩后体积的内存峰值**，
-        而且写入 Storage 时还要再拷一次。改为落临时文件后 ``promote``
+        而且写入 Storage 时还要再拷一次。改为落暂存文件后 ``promote``
         （同盘为原子 rename，零拷贝）。
         """
 
@@ -285,27 +295,15 @@ class DatasetService:
                 code="INVALID_DATAFRAME",
             )
 
-        next_version, resolved_parent = self._reserve_version(
-            dataset_id, parent_version_id
-        )
-        storage_key = self._version_key(dataset_id, next_version)
+        with self.stage_version(dataset_id, parent_version_id) as staging:
+            df.write_parquet(staging.staging_path, compression="zstd")
+            staging.set_stats(
+                row_count=df.height,
+                column_count=df.width,
+                schema_json={name: str(dtype) for name, dtype in df.schema.items()},
+            )
 
-        tmp_path = self._temp_target(storage_key)
-        try:
-            df.write_parquet(tmp_path, compression="zstd")
-            self._promote_or_save(storage_key, tmp_path)
-        finally:
-            tmp_path.unlink(missing_ok=True)
-
-        return self._insert_version_row(
-            dataset_id=dataset_id,
-            version=next_version,
-            parent_version_id=resolved_parent,
-            storage_key=storage_key,
-            row_count=df.height,
-            column_count=df.width,
-            schema_json={name: str(dtype) for name, dtype in df.schema.items()},
-        )
+        return staging.version_row
 
     def create_version_from_source(
         self,
@@ -335,31 +333,17 @@ class DatasetService:
                 details={"source": str(source_path)},
             )
 
-        next_version, resolved_parent = self._reserve_version(
-            dataset_id, parent_version_id
-        )
-        storage_key = self._version_key(dataset_id, next_version)
-
-        tmp_path = self._temp_target(storage_key)
-        try:
+        with self.stage_version(dataset_id, parent_version_id) as staging:
             result = ingest_engine.ingest_to_parquet(
-                source_path, tmp_path, fmt=fmt, options=options
+                source_path, staging.staging_path, fmt=fmt, options=options
             )
-            self._promote_or_save(storage_key, tmp_path)
-        finally:
-            tmp_path.unlink(missing_ok=True)
+            staging.set_stats(
+                row_count=result.row_count,
+                column_count=result.column_count,
+                schema_json=result.schema,
+            )
 
-        version = self._insert_version_row(
-            dataset_id=dataset_id,
-            version=next_version,
-            parent_version_id=resolved_parent,
-            storage_key=storage_key,
-            row_count=result.row_count,
-            column_count=result.column_count,
-            schema_json=result.schema,
-        )
-
-        return version, result
+        return staging.version_row, result
 
     # ---------------------------------------------------------
     # 写路径内部工具
@@ -371,32 +355,35 @@ class DatasetService:
         dataset_id: int,
         parent_version_id: int | None = None,
     ) -> Iterator["VersionStaging"]:
-        """预留版本号 + 提供暂存路径的上下文管理器（写盘产出方统一入口）。
+        """预留版本号 + 提供暂存路径的上下文管理器（**所有写路径的唯一入口**）。
 
-        动机：除了「上传文件」和「DataFrame 已在内存」这两种写路径，还有
-        「外部数据源流式产出 Parquet」（数据库连接器抽取）这类场景。它们的
-        共同点是——**必须在写之前就确定最终存储 key**，否则暂存文件与目标
-        不在同一卷，无法用原子 rename 落地（大数据量下多一次全量拷贝）。
+        三条写路径（内存 DataFrame / 磁盘源文件 / 数据库连接器流式抽取）
+        都收敛到这里，避免「预定版本号 → 写快照 → 登记版本行」这套并发敏感的
+        逻辑在多个地方各写一遍。
 
         用法::
 
             with service.stage_version(dataset_id) as staging:
-                result = extract(..., staging.path)
+                result = extract(..., staging.staging_path)
                 staging.set_stats(row_count=result.row_count, ...)
-            # 无异常时退出即提交（promote + 写 DatasetVersion 行）
-            # 有异常时丢弃暂存文件，不产生任何版本
+            # 无异常退出即提交（promote 快照 + 补全版本行 + commit）
+            # 有异常则整体回滚：快照与版本行一起消失，不留下半成品
         """
         self.get(dataset_id)
 
-        version, resolved_parent = self._reserve_version(dataset_id, parent_version_id)
-        storage_key = self._version_key(dataset_id, version)
+        row = self._reserve_version(dataset_id, parent_version_id)
+        storage_key = row.storage_path
         tmp_path = self._temp_target(storage_key)
 
         staging = VersionStaging(
             staging_path=tmp_path,
-            version=version,
+            version=row.version,
             storage_key=storage_key,
         )
+
+        # 只有 promote 成功过，快照才算"本次创建的"，异常时才有权回收。
+        # 否则 ``VERSION_CONFLICT`` 保护的可能是**已存在的旧版本快照**。
+        promoted = False
 
         try:
             yield staging
@@ -409,34 +396,116 @@ class DatasetService:
                 )
 
             self._promote_or_save(storage_key, tmp_path)
+            promoted = True
 
-            staging.version_row = self._insert_version_row(
-                dataset_id=dataset_id,
-                version=version,
-                parent_version_id=resolved_parent,
-                storage_key=storage_key,
-                row_count=int(staging.row_count),
-                column_count=int(staging.column_count),
-                schema_json=staging.schema_json or {},
-            )
+            row.row_count = int(staging.row_count)
+            row.column_count = int(staging.column_count)
+            row.schema_json = staging.schema_json or {}
+
+            self.db.commit()
+            self.db.refresh(row)
+            staging.version_row = row
+        except BaseException:
+            self._abort_version(storage_key, drop_snapshot=promoted)
+            raise
         finally:
-            # 提交成功后 promote 已经把暂存文件移走；失败/异常时在这里清掉。
+            # 提交成功后 promote 已把暂存文件移走；失败/异常时在这里兜底清理。
             tmp_path.unlink(missing_ok=True)
 
     def _reserve_version(
         self,
         dataset_id: int,
         parent_version_id: int | None,
-    ) -> tuple[int, int | None]:
-        """计算下一个版本号并补默认父版本。"""
-        latest = self.latest_version(dataset_id)
+    ) -> DatasetVersion:
+        """占用下一个版本号：立即 INSERT 一行占位记录，**不提交**。
 
-        next_version = latest.version + 1 if latest is not None else 1
+        这是 DatasetVersion 并发正确性的支点，三个设计要点：
 
-        if parent_version_id is None and latest is not None:
-            parent_version_id = latest.id
+        1. **不用 Python 锁**。进程内锁挡不住多进程 / 多副本部署，而版本号唯一
+           属于数据正确性，必须落在数据库上。
+        2. **由 ``uq_dataset_versions_dataset_id_version`` 裁决**。并发双方会算出
+           同一个 version，但只有一方的 INSERT 成功；另一方收到 IntegrityError
+           后回滚重算，自然拿到下一个号。相比「先 SELECT max 再 INSERT」的读后写，
+           把判定权交给数据库后无需依赖 SQLite 的库级写锁语义，切到 PostgreSQL
+           同样成立。
+        3. **占位行的 INSERT 立即开启写事务**并持有到快照写完一起提交，于是
+           「预定版本号 → 写快照 → 提交」是一次原子操作：并发者要么看到提交后的
+           新版本（拿到 +1），要么被唯一约束挡下重试；不可能出现两个请求同时写
+           同一个 ``v000008.parquet``、后写者覆盖先写者快照的情况。
 
-        return next_version, parent_version_id
+        返回的 DatasetVersion 尚未填行列数；占位行未提交，对其它连接不可见，
+        因此不存在「半成品版本」被外部读到。
+        """
+        for _ in range(_MAX_VERSION_RESERVE_ATTEMPTS):
+            latest = self.latest_version(dataset_id)
+
+            version = latest.version + 1 if latest is not None else 1
+            parent = (
+                parent_version_id
+                if parent_version_id is not None
+                else (latest.id if latest is not None else None)
+            )
+
+            row = DatasetVersion(
+                dataset_id=dataset_id,
+                version=version,
+                parent_version_id=parent,
+                storage_path=self._version_key(dataset_id, version),
+                format="parquet",
+                row_count=0,
+                column_count=0,
+                schema_json={},
+            )
+
+            try:
+                self.db.add(row)
+                # flush 而非 commit：INSERT 立刻执行（唯一约束此刻裁决），
+                # 但整个事务仍由 stage_version 在快照写完后统一提交。
+                self.db.flush()
+                return row
+            except IntegrityError:
+                # 版本号被并发者抢走：回滚后重新读 max，拿下一个号。
+                self.db.rollback()
+                continue
+
+        raise DatasetException(
+            "无法为数据集分配版本号：并发冲突过多",
+            code="VERSION_RESERVATION_CONFLICT",
+            details={
+                "dataset_id": dataset_id,
+                "attempts": _MAX_VERSION_RESERVE_ATTEMPTS,
+            },
+        )
+
+    def _abort_version(
+        self,
+        storage_key: str,
+        *,
+        drop_snapshot: bool,
+    ) -> None:
+        """回滚版本创建：撤销未提交的占位行，并回收本次已提升的快照。
+
+        两条方向相反的一致性要求在这里汇合：
+
+        - DB 写入失败 -> 不能留下孤儿快照（磁盘有文件、库里没记录）
+        - 快照写入失败 -> 不能留下错误版本行（库里有记录、磁盘没文件）
+
+        占位行靠 ``rollback`` 撤销（它从未提交）；快照只有在确认是本次
+        promote 出来的之后才删除，避免误删已有版本的快照。
+        """
+        try:
+            self.db.rollback()
+        except Exception:
+            pass
+
+        if not drop_snapshot:
+            return
+
+        try:
+            if self.storage.exists(storage_key):
+                self.storage.delete(storage_key)
+        except Exception:
+            pass
 
     @staticmethod
     def _version_key(dataset_id: int, version: int) -> str:
@@ -474,44 +543,6 @@ class DatasetService:
             return
 
         self.storage.save_stream(storage_key, tmp_path)
-
-    def _insert_version_row(
-        self,
-        *,
-        dataset_id: int,
-        version: int,
-        parent_version_id: int | None,
-        storage_key: str,
-        row_count: int,
-        column_count: int,
-        schema_json: dict,
-    ) -> DatasetVersion:
-        """写入 DatasetVersion 行；DB 失败时回收已写入的 Storage 对象。"""
-        model = DatasetVersion(
-            dataset_id=dataset_id,
-            version=version,
-            parent_version_id=parent_version_id,
-            storage_path=storage_key,
-            format="parquet",
-            row_count=row_count,
-            column_count=column_count,
-            schema_json=schema_json,
-        )
-
-        try:
-            self.db.add(model)
-            self.db.commit()
-            self.db.refresh(model)
-            return model
-        except Exception:
-            # DB 写入失败时清理已经写入 Storage 的对象，避免产生「孤儿快照」。
-            try:
-                if self.storage.exists(storage_key):
-                    self.storage.delete(storage_key)
-            except Exception:
-                pass
-
-            raise
 
     def get_versions(
         self,

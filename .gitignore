@@ -30,15 +30,20 @@ env/
 node_modules/
 frontend/dist/
 frontend/.vite/
+# Vite 在解析 TS 配置时生成的临时文件（每次 build 都会留一个，不应入库）
+frontend/vite.config.js.timestamp-*.mjs
 
 # Runtime data
 backend/data/
 backend/models/
 backend/logs/
 
-data/
-models/
-logs/
+# 注意：以下三条必须锚定仓库根目录。
+# 若不锚定，宽匹配 `models/` 会连 `backend/app/models/`（SQLAlchemy 模型源码）一起忽略，
+# 导致干净 clone 后 `import app.main` 失败。backend/models/ 等运行时目录已在上方单独声明。
+/data/
+/models/
+/logs/
 
 # Database
 *.db
