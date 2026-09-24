@@ -10,6 +10,16 @@
  * - 切会话的去重从 `switchSeqRef`（每个 await 后手工比对）改成 effect 的
  *   `cancelled` 闭包，少一类「忘了比对」的隐患。
  * - 进度 / 阶段的计算从 3 处各写一遍收敛为 `progressOfRun` / `stageOfRun`。
+ *
+ * ★ 会话镜像 Effect 的依赖纪律（本轮修的两个 P0 都出在这里）：
+ * - 依赖数组里**只允许出现 `switchToken`**。页面传进来的 `onRunRestored` 是内联箭头
+ *   函数，每次 render 都是新引用；一旦进依赖数组，effect 就会在每次 render 重跑，
+ *   执行 `stopPolling() / abortStream() / clear() / setRun(null) / setInspectorTab("overview")`
+ *   —— 表现为「AI 不回应、运行消失、SSE 被自己掐断、Inspector 页签锁死在概览」。
+ * - 因此回调一律走 ref（`onRunRestoredRef` / `lastRunIdRef`），「会话切换」与
+ *   「恢复完成后通知页面」两件事拆开：前者由 effect 负责，后者只是成功后的一次调用。
+ * - `abortStream()` 只允许出现在三处：会话切换、组件卸载、新请求顶替旧请求。
+ *   SSE 收到事件 / usage / progress / stage / busy 变化 / 普通 rerender 都不得中断它。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -82,7 +92,16 @@ export function useAgentRun(opts: UseAgentRunOptions) {
   const [stage, setStage] = useState("等待任务");
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("overview");
+  const [inspectorTab, setInspectorTabState] = useState<InspectorTab>("overview");
+  /**
+   * 用户是否**手动**切过 Inspector 页签。
+   *
+   * 历史缺陷：`tool_call` 事件（切到「活动」）与 `refreshRun()`（按有无工具调用切到
+   * 「工具链 / 活动」）都会在用户不知情时改写页签。用户切到「Token」看用量，
+   * 下一个工具调用就把他弹回「活动」—— 页签永远停不住。
+   * 现在：用户点过一次之后，自动切换一律让位，直到新一轮任务 / 切会话才复位。
+   */
+  const tabPinnedRef = useRef(false);
 
   const { events, setEvents, push, clear } = useAgentEvents(tools);
   const { usage, live, history, resetHistory } = useAgentUsage(events, run, busy);
@@ -95,6 +114,26 @@ export function useAgentRun(opts: UseAgentRunOptions) {
   const autoAllowedRef = useRef<Set<string>>(new Set());
   /** 会话代次：任何 await 之后比对，不是最新一代就丢弃结果。 */
   const seqRef = useRef(0);
+
+  // ★ 页面传进来的回调每次 render 都是新引用。放进 effect 依赖数组就会让
+  // 「会话镜像 effect」每次 render 重跑（= 掐断 SSE + 清空面板），
+  // 所以这里一律用 ref 持有最新值，依赖数组里只留真正的变化源。
+  const onRunRestoredRef = useRef(onRunRestored);
+  onRunRestoredRef.current = onRunRestored;
+  const lastRunIdRef = useRef(lastRunId);
+  lastRunIdRef.current = lastRunId;
+
+  /** 用户手动切页签：置上「用户已选择」标记，之后不再被自动切换覆盖。 */
+  const setInspectorTab = useCallback((tab: InspectorTab) => {
+    tabPinnedRef.current = true;
+    setInspectorTabState(tab);
+  }, []);
+
+  /** 自动切页签（`tool_call` 事件 / 刷新运行详情）：用户没手动选过时才生效。 */
+  const autoInspectorTab = useCallback((tab: InspectorTab) => {
+    if (tabPinnedRef.current) return;
+    setInspectorTabState(tab);
+  }, []);
 
   // 运行中 SSE 事件已经带 run_id；流结束后才有 run 对象。二者取其一即可，
   // 不再单独维护一个需要在切会话时清空的 activeRunId。
@@ -117,12 +156,19 @@ export function useAgentRun(opts: UseAgentRunOptions) {
   const startPolling = useCallback(
     (runId: string) => {
       if (pollRef.current) window.clearInterval(pollRef.current);
+      const seq = seqRef.current;
       let failures = 0;
       // 后台标签页暂停轮询：`document.hidden` 为 true 时跳过本次请求，回到前台自动恢复。
       pollRef.current = window.setInterval(async () => {
         if (document.hidden) return;
         try {
           const full = await getRun(runId);
+          // ★ 轮询跨越了 await：这期间可能已经切了会话。把旧会话的结果写回界面
+          // 会把「新会话 + 旧运行」混在一起（`activeRunId` 也会跟着指向旧 run）。
+          if (seq !== seqRef.current) {
+            stopPolling();
+            return;
+          }
           failures = 0;
           setRun(full);
           setEvents(full.events ?? []);
@@ -157,12 +203,13 @@ export function useAgentRun(opts: UseAgentRunOptions) {
         setProgress(progressOfRun(full));
         setStage(stageOfRun(full));
         if (full.pending_confirmation) setPermission(full.pending_confirmation);
-        setInspectorTab(full.tool_calls.length ? "chain" : "activity");
+        // ★ 只做「用户没手动选过」时的自动定位，绝不把用户正在看的页签打回去。
+        autoInspectorTab(full.tool_calls.length ? "chain" : "activity");
       } catch {
         /* 流已结束，轮询会兜底 */
       }
     },
-    [setEvents],
+    [setEvents, autoInspectorTab],
   );
 
   /** 把一条事件的增量应用到界面。授权请求在这里触发自动放行判定。 */
@@ -171,7 +218,8 @@ export function useAgentRun(opts: UseAgentRunOptions) {
       if (fx.stage) setStage(fx.stage);
       if (fx.progress !== undefined) setProgress(fx.progress);
       if (fx.notice) onNotice(fx.notice);
-      if (fx.tab) setInspectorTab(fx.tab);
+      // ★ 收到 SSE 事件**不得**打断流，也不得把用户手动选中的页签改写掉。
+      if (fx.tab) autoInspectorTab(fx.tab);
       if (fx.append) appendMessage(fx.append);
       if (!fx.permission) return;
       const req = fx.permission;
@@ -188,7 +236,7 @@ export function useAgentRun(opts: UseAgentRunOptions) {
     },
     // autoAllow 在下方定义，此处读取的是最近一次渲染的闭包；它只用 ref 与 setter，行为稳定。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tools, appendMessage, onNotice],
+    [tools, appendMessage, onNotice, autoInspectorTab],
   );
 
   /** 设置页已把该工具设为「自动放行」时的免确认路径。失败回退为手动授权弹窗。 */
@@ -230,6 +278,9 @@ export function useAgentRun(opts: UseAgentRunOptions) {
       // 若把 setProgress(5) 放在它之前，切会话 effect 有可能在之后把进度清零。
       setBusy(true);
       onError(null);
+      // 新一轮任务：上一轮的「用户手动选过页签」只属于上一轮，这里复位，
+      // 让本轮的工具调用能自动定位到「活动 / 工具链」。
+      tabPinnedRef.current = false;
       let sid = sessionId;
       if (!sid) {
         sid = await ensureSession(content.slice(0, 30) || "数据分析会话");
@@ -373,8 +424,20 @@ export function useAgentRun(opts: UseAgentRunOptions) {
    * 会话镜像：切会话 / 新建 / 删除后回退时，中断上一条流与轮询、清空本轮状态，
    * 再按会话最后一次运行回填面板。
    *
-   * 依赖 `switchToken` 而不是 `sessionId`：send() 内部会自动建会话（sessionId 由 null 变新值），
-   * 若以 sessionId 为依赖，这条 effect 会在发送途中清空刚收到的事件。
+   * ★★ 依赖数组里**只有 `switchToken`**，这是本轮 P0 修复的关键。
+   *
+   * 历史缺陷（两个独立成因，表现都是「AI 不回应 / 运行消失 / SSE 中断 / 页签锁死」）：
+   * 1. `onRunRestored` 是页面传进来的**内联箭头函数**，每次 render 都是新引用。
+   *    它在依赖数组里 ⇒ effect 每次 render 重跑 ⇒ 每次都 `abortStream()`。
+   *    SSE 刚建立就在下一次 rerender（收到第一条事件就会触发）被自己掐断。
+   * 2. `lastRunId` 也在依赖数组里：它派生自 `activeSession.run_ids[-1]`，
+   *    会话列表刷新 / 新 run 写入都会让它变化 ⇒ 同样触发一整轮清理。
+   *
+   * 现在：
+   * - 回调与 `lastRunId` 都走 ref，effect 只在**会话真正切换**时执行；
+   * - 「会话切换」与「恢复完成后通知页面」拆开：通知只是恢复成功分支里的一次调用；
+   * - `switchToken` 的语义保持不变（只有显式切换 / 新建 / 删除回退才 +1），
+   *   `send()` 内部自动建会话依旧不算切换，不会打断刚收到的事件。
    */
   useEffect(() => {
     let cancelled = false;
@@ -387,9 +450,11 @@ export function useAgentRun(opts: UseAgentRunOptions) {
     setPermission(null);
     setProgress(0);
     setStage("等待任务");
-    setInspectorTab("overview");
+    tabPinnedRef.current = false;
+    setInspectorTabState("overview");
     resetHistory();
-    if (!lastRunId) {
+    const runId = lastRunIdRef.current;
+    if (!runId) {
       return () => {
         cancelled = true;
         stopPolling();
@@ -398,15 +463,17 @@ export function useAgentRun(opts: UseAgentRunOptions) {
     }
     void (async () => {
       try {
-        const full = await getRun(lastRunId);
+        const full = await getRun(runId);
         if (cancelled) return;
         setRun(full);
         setEvents(full.events ?? []);
         setProgress(progressOfRun(full));
         setStage(stageOfRun(full));
         if (full.pending_confirmation) setPermission(full.pending_confirmation);
-        setInspectorTab(full.tool_calls.length ? "chain" : "activity");
-        onRunRestored?.();
+        setInspectorTabState(full.tool_calls.length ? "chain" : "activity");
+        // 恢复成功才通知页面（展开面板）。这是「通知」，不是「切换」——
+        // 它不参与任何清理逻辑，也不会反过来让 effect 再跑一次。
+        onRunRestoredRef.current?.();
       } catch {
         if (!cancelled) {
           clear();
@@ -419,7 +486,8 @@ export function useAgentRun(opts: UseAgentRunOptions) {
       stopPolling();
       abortStream();
     };
-  }, [switchToken, lastRunId, clear, resetHistory, setEvents, stopPolling, abortStream, onRunRestored]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 见上方说明：依赖只允许 switchToken
+  }, [switchToken]);
 
   // 卸载时收尾：中断 SSE，避免后端 tail 线程挂到超时上限。
   useEffect(

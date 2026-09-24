@@ -124,6 +124,8 @@ export default function AgentModelPanel({ onToast }: Props) {
         enable_result_compression: draft.agent_policy.enable_result_compression,
         enable_plan_cache: draft.agent_policy.enable_plan_cache,
         plan_cache_max_items: draft.agent_policy.plan_cache_max_items,
+        // 真开关：关掉 ⇒ 远程失败直接失败；开启 ⇒ 退回平台内置规则。
+        allow_model_fallback: draft.agent_policy.allow_model_fallback,
       });
       setDraft(saved);
       toast("Agent 设置已保存（当前后端进程生效）");
@@ -247,6 +249,9 @@ export default function AgentModelPanel({ onToast }: Props) {
         </div>
 
         <div className="settings-status-list" style={{ marginTop: "var(--space-4)" }}>
+          <label title="开启：远程大模型失败（欠费 / 超时 / 5xx）时退回平台内置规则，数据分析仍能跑出真实结果。关闭：远程失败就直接失败。"><span>模型兜底（远程失败降级）</span>
+            <input type="checkbox" checked={draft.agent_policy.allow_model_fallback}
+              onChange={(e) => patchPolicy({ allow_model_fallback: e.target.checked })} /></label>
           <label><span>Tool Retrieval</span>
             <input type="checkbox" checked={draft.agent_policy.enable_tool_retrieval}
               onChange={(e) => patchPolicy({ enable_tool_retrieval: e.target.checked })} /></label>

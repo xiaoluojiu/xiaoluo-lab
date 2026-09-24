@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import "./ai-lab.css";
 import { PageHeader } from "../../components/PageHeader";
@@ -59,7 +59,13 @@ export default function AI() {
     onError: setError,
     onNotice: setNotice,
     // 切到带历史运行的会话时回填成功 ⇒ 展开运行面板（与原行为一致）。
-    onRunRestored: () => setPanelOpen(true),
+    //
+    // ★ 必须 `useCallback(..., [])`：内联箭头函数每次 render 都是新引用，
+    // 而它是 `useAgentRun` 里「会话镜像 Effect」的输入。引用不稳定 ⇒
+    // 那个 effect 每次 render 重跑 ⇒ 执行 `abortStream() / clear() / setRun(null)`
+    // ⇒ 表现为「刚发出去的消息没有回应、运行面板里的运行消失、SSE 被前端自己掐断、
+    // Inspector 页签被锁死在概览」。
+    onRunRestored: useCallback(() => setPanelOpen(true), []),
   });
 
   const displayMessages = useMemo(

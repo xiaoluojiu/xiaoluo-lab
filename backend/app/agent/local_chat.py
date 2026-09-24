@@ -75,6 +75,15 @@ _EXAMPLES_PER_DOMAIN = 3
 
 _MODE_NOTE = "（当前运行在**平台自带能力**模式：远程大模型已停用，以下回复来自内置规则，不是语言模型生成的）"
 
+# ★ 「远程开着但这一次调用失败」与「远程被主动停用」是两件事：
+# 复用 `_MODE_NOTE` 会在欠费 / 超时场景下告诉用户「远程已停用」—— 那是假的，
+# 用户会跑去设置页找开关，而真实原因是余额 / 网络。文案必须分开。
+_DEGRADED_NOTE = "（本次远程大模型调用失败，已退回**平台自带能力**：以下回复来自内置规则，不是语言模型生成的）"
+
+
+def _note(*, degraded: bool = False) -> str:
+    return _DEGRADED_NOTE if degraded else _MODE_NOTE
+
 
 # ---------------------------------------------------------------------------
 # 动态能力清单
@@ -124,36 +133,49 @@ def _capability_brief() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _thanks_reply() -> str:
-    return "不客气。有数据上的需求随时说 —— 比如「看看这批数据的分布」「检查一下数据质量」。\n" + _MODE_NOTE
+def _thanks_reply(*, degraded: bool = False) -> str:
+    return "不客气。有数据上的需求随时说 —— 比如「看看这批数据的分布」「检查一下数据质量」。\n" + _note(degraded=degraded)
 
 
-def _farewell_reply() -> str:
-    return "再见！需要的时候再来找我。\n" + _MODE_NOTE
+def _farewell_reply(*, degraded: bool = False) -> str:
+    return "再见！需要的时候再来找我。\n" + _note(degraded=degraded)
 
 
-def _greeting_reply() -> str:
-    return ("你好！我是小洛实验室的 AI 助手。\n\n"
-            "虽然现在跑在平台自带能力模式下（对话回复是内置规则），**数据分析这条路是通的**："
-            "你把需求说清楚，我就用平台真实的工具去执行，再把结果汇总给你。\n\n"
-            "可以试试：「看看这批数据的分布」或「检查一下数据质量」。\n" + _MODE_NOTE)
+def _greeting_reply(*, degraded: bool = False) -> str:
+    lead = (
+        "你好！我是小洛实验室的 AI 助手。\n\n这次远程大模型没能调用成功，下面这段是平台内置规则给的；"
+        if degraded
+        else "你好！我是小洛实验室的 AI 助手。\n\n虽然现在跑在平台自带能力模式下（对话回复是内置规则），"
+    )
+    return (lead
+            + "**数据分析这条路是通的**："
+              "你把需求说清楚，我就用平台真实的工具去执行，再把结果汇总给你。\n\n"
+              "可以试试：「看看这批数据的分布」或「检查一下数据质量」。\n" + _note(degraded=degraded))
 
 
-def _identity_reply() -> str:
-    return ("我是小洛实验室的 AI 助手，跑在**平台自带能力**模式下 —— "
-            "意思是我现在不调用远程大模型，对话回复来自内置规则，只有数据分析由平台真实工具完成。\n\n"
-            + _capability_brief())
+def _identity_reply(*, degraded: bool = False) -> str:
+    lead = (
+        "我是小洛实验室的 AI 助手。这一次远程大模型调用失败，所以现在按**平台自带能力**回答 —— "
+        if degraded
+        else "我是小洛实验室的 AI 助手，跑在**平台自带能力**模式下 —— "
+    )
+    tail = (
+        "对话回复来自内置规则，只有数据分析由平台真实工具完成。\n\n"
+        if degraded
+        else "意思是我现在不调用远程大模型，对话回复来自内置规则，只有数据分析由平台真实工具完成。\n\n"
+    )
+    return lead + tail + _capability_brief()
 
 
-def _capability_reply() -> str:
+def _capability_reply(*, degraded: bool = False) -> str:
     return ("我现在能做的事，按能力域列给你：\n\n"
             + _capability_brief()
             + "\n\n把需求说清楚我就直接执行（例如「把缺失值清洗掉」「训练一个分类模型」）。"
               "复杂或需要多轮澄清的需求，建议到「设置 → AI 服务」重新开启远程大模型。\n"
-            + _MODE_NOTE)
+            + _note(degraded=degraded))
 
 
-def _usage_reply() -> str:
+def _usage_reply(*, degraded: bool = False) -> str:
     return ("平台用法，三条路径：\n\n"
             "1. **直接说需求**（最常用）：「看看这批数据的分布」「把缺失值清洗掉」"
             "「训练一个分类模型，目标列是 label」—— 我用真实工具执行后汇总结果给你。\n"
@@ -161,7 +183,7 @@ def _usage_reply() -> str:
             "这样「看看分布」这类省略主语的话也能直接执行，否则我会先反问你用哪个数据集。\n"
             "3. **固定下来重复跑**：处理链稳定后用「流程」画布搭好，之后一键运行；"
             "想练手可以去「学习中心」，那里有带判分的用例。\n\n"
-            + _MODE_NOTE)
+            + _note(degraded=degraded))
 
 
 # ---------------------------------------------------------------------------
@@ -169,11 +191,15 @@ def _usage_reply() -> str:
 # ---------------------------------------------------------------------------
 
 
-def local_reply(utterance: str) -> str | None:
+def local_reply(utterance: str, *, degraded: bool = False) -> str | None:
     """命中确定性意图则返回本地应答；**拿不准返回 `None`**（由上层说明现状）。
 
     判定顺序即优先级：身份询问在问候语之前（「你是谁」同时在两张表里，
     而自述比一句「你好」有用得多）。
+
+    `degraded=True` 表示这次是「远程调用失败后的降级」而不是「远程本来就关着」，
+    两种场景的结论性注释不同（见 `_note`）—— 混用会让用户在欠费时看到
+    「远程已停用」这种与事实不符的说明。
     """
     text = (utterance or "").strip()
     if not text:
@@ -181,35 +207,39 @@ def local_reply(utterance: str) -> str | None:
     low = text.lower()
 
     if low in _THANKS:
-        return _thanks_reply()
+        return _thanks_reply(degraded=degraded)
     if low in _FAREWELL:
-        return _farewell_reply()
+        return _farewell_reply(degraded=degraded)
     if any(pattern in low for pattern in _IDENTITY_PATTERNS):
-        return _identity_reply()
+        return _identity_reply(degraded=degraded)
     if any(pattern in low for pattern in _CAPABILITY_PATTERNS):
-        return _capability_reply()
+        return _capability_reply(degraded=degraded)
     if any(pattern in low for pattern in _USAGE_PATTERNS):
-        return _usage_reply()
+        return _usage_reply(degraded=degraded)
 
     # 复用 `_route` 那张问候语表，避免两处词表各自漂移（延迟 import 以免循环依赖）
     from app.agent.runtime.runtime import AgentRuntime
 
     if low in {word.lower() for word in AgentRuntime.GREETINGS}:
-        return _greeting_reply()
+        return _greeting_reply(degraded=degraded)
 
     return None
 
 
-def no_llm_notice() -> str:
-    """远程大模型不可用时的**说明性文案** —— 必须区分「主动停用」与「从未配置」。
+def no_llm_notice(reason: str = "") -> str:
+    """远程大模型不可用时的**说明性文案** —— 必须区分三种完全不同的处境。
 
     原先一律写「当前尚未配置可用的大模型。」，但关掉设置页开关时凭据是**原样保留**的
-    （`PUT /settings/llm/remote` 只切开关）。两种状态下用户该做的事完全不同：
+    （`PUT /settings/llm/remote` 只切开关）。几种状态下用户该做的事完全不同：
 
-    - 已配置但停用 ⇒ 去设置页**重新打开开关**（不需要重填 Key）
-    - 从未配置     ⇒ 需要**填 API Key**
+    - 已配置但停用       ⇒ 去设置页**重新打开开关**（不需要重填 Key）
+    - 已配置、调用失败   ⇒ 看 `reason`（欠费 / 超时 / 5xx …）决定是充值还是重试
+    - 从未配置           ⇒ 需要**填 API Key**
 
     合并成一句会让第一种用户白折腾一遍，并且怀疑自己弄丢了配置。
+
+    `reason` 非空即表示「开关开着、凭据也在，但这一次调用失败了」——
+    这是欠费 / 限流 / 网络故障时用户唯一能看到的原因，必须原样带出去。
     """
     try:
         from app.core.config import settings
@@ -222,7 +252,15 @@ def no_llm_notice() -> str:
     tail = ("在停用期间能做的事：**数据类请求不受影响** —— 你说需求，我用平台真实工具执行。\n"
             "试试说：「看看这批数据的分布」。\n\n"
             "需要自由对话时，到「设置 → AI 服务」重新打开开关即可（**凭据保留，不用重填**）。")
+    # 「远程这一侧这次没走通」的原因行：欠费、超时、5xx 都从这里透出给用户。
+    reason_line = f"远程大模型**这一次调用失败**了：{reason}\n" if reason else ""
 
+    if reason:
+        return (reason_line
+                + "闲聊回复需要大模型生成，所以这一段没有真正的回答；\n\n"
+                + "**数据类请求不受影响** —— 你说需求，我用平台真实工具执行，"
+                  "只是最后的自然语言汇总会退回内置规则。\n"
+                  "可以到「设置 → AI 服务」点一次「测试连接」确认连通性与账户余额。")
     if key_set and not remote_on:
         return ("远程大模型**已停用**（设置 → AI 服务里的总开关），凭据仍然保留着。\n"
                 "闲聊回复需要大模型生成，所以这一块暂时没有输出；\n\n" + tail)

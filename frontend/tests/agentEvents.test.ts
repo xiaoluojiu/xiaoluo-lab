@@ -81,3 +81,12 @@ test("completed / failed：把最终答案与失败原因追加为助手消息",
 test("usage 事件不产生界面增量：Token 账本由 useAgentUsage 从事件列表派生", () => {
   assert.deepEqual(eventEffects(ev("usage", { token_usage: { llm_calls: 1 } })), {});
 });
+
+test("planning：远程规划降级到内置规则时必须显式告知用户", () => {
+  // 「数据还是真的，但计划不是大模型定的」——不说出来用户会误以为是模型分析的结果
+  const degraded = eventEffects(ev("planning", { stage: "plan_ready", planner_fallback: true }));
+  assert.match(String(degraded.notice), /内置规则/);
+  // 没有降级标记时不该弹提示，否则每次规划都打扰一次
+  assert.equal(eventEffects(ev("planning", { stage: "plan_ready" })).notice, undefined);
+  assert.equal(eventEffects(ev("planning", { stage: "plan_ready", planner_fallback: false })).notice, undefined);
+});

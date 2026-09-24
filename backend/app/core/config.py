@@ -113,7 +113,12 @@ class Settings(BaseSettings):
     AGENT_LLM_MAX_INPUT_TOKENS: int = 24000
     AGENT_LLM_MAX_OUTPUT_TOKENS: int = 4096
     AGENT_LLM_MAX_TOTAL_TOKENS: int = 60000
-    AGENT_ALLOW_MODEL_FALLBACK: bool = False
+    # ★ 真正的总闸：控制「远程 LLM 失败后是否允许退回平台内置规则」。
+    # True  = 允许降级（推荐，也是平台默认）：欠费 / 超时 / 5xx 时数据分析仍能跑出真实结果；
+    # False = 远程失败就直接让这次运行失败，不做任何「看起来答上了」的包装。
+    # 它必须真的被读取（runtime._direct_chat / _compose_answer / planner._fallback_allowed），
+    # 否则就只是一个显示在设置页上的假开关。
+    AGENT_ALLOW_MODEL_FALLBACK: bool = True
     AGENT_ENABLE_TOOL_RETRIEVAL: bool = True
     AGENT_TOOL_RETRIEVAL_TOP_K: int = 16
     AGENT_TOOL_RETRIEVAL_MIN_SCORE: float = 0.08

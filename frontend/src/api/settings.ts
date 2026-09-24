@@ -48,6 +48,14 @@ export function updateAgentSettings(body: {
   enable_result_compression: boolean;
   enable_plan_cache: boolean;
   plan_cache_max_items: number;
+  /**
+   * 远程大模型调用失败后是否允许退回平台内置规则。
+   *
+   * ★ 这是**真开关**：后端 `runtime._direct_chat` / `_compose_answer` /
+   * `planner._fallback_allowed` 都会读它。关掉意味着「远程挂了就如实失败」，
+   * 不再是界面上那个仅供展示的假指示器。
+   */
+  allow_model_fallback?: boolean;
 }) { return unwrap<AgentSettings>(client.put("/settings/agent", body)); }
 export function getStorageSummary() { return unwrap<StorageSummary>(client.get("/settings/storage")); }
 export function formatBytes(bytes: number): string {

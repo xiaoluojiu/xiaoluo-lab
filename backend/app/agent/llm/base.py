@@ -15,10 +15,81 @@ from app.core.exceptions import AppException
 
 
 class LLMException(AppException):
-    """LLM 调用 / 解析失败。"""
+    """LLM 调用 / 解析失败。
+
+    `fallbackable` 是这次失败**是否允许退回平台内置规则**的显式声明：
+    Provider 把「连接失败 / 超时 / 4xx / 5xx / 配额不足 / 响应格式异常」统一封装成
+    本异常，这些都属于「远程这一侧这次不可用」，默认允许降级；只有 Provider
+    自己判定「降级没有意义」（例如熔断期短路）时才显式置 False。
+    """
+
     http_status = 502
     default_code = "LLM_ERROR"
     default_message = "LLM provider error"
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        code: str | None = None,
+        details: Any = None,
+        fallbackable: bool = True,
+    ) -> None:
+        super().__init__(message, code=code, details=details)
+        self.fallbackable = fallbackable
+
+
+# 「这类异常几乎一定是代码缺陷，不是远程不可用」——出现在这里说明调用栈写错了，
+# 拿内置规则去兜底只会把 bug 伪装成一次降级成功的回答。
+_BUG_ERRORS: tuple[type[BaseException], ...] = (
+    TypeError,
+    AttributeError,
+    NameError,
+    UnboundLocalError,
+    SyntaxError,
+    IndentationError,
+    ImportError,
+    NotImplementedError,
+    AssertionError,
+    RecursionError,
+)
+
+
+def is_fallbackable_error(exc: BaseException) -> bool:
+    """这次失败是否允许「远程 LLM → 平台内置规则」降级。
+
+    判据是**错误发生在哪一侧**，而不是笼统地「出错了就兜底」：
+
+    - `LLMException`：Provider 统一封装的远程侧失败（连接 / 超时 / 429 / 5xx /
+      配额 / 结构化输出 / 响应格式），默认可降级；
+    - 其它 `AppException`（工具执行 / 权限 / 数据集 / 参数校验）：不是「远程不可用」，
+      兜底没有意义，**不降级**；
+    - 代码缺陷类异常（`TypeError` 等）：不降级，必须暴露出来；
+    - 其余（如测试替身或未封装的 `RuntimeError("连接超时")`）：只在
+      `llm.chat()` 这一次调用的边界内出现，语义仍是「远程这次没产出内容」，
+      允许降级。
+
+    ★ 这条函数只在 LLM 调用边界被调用。工具执行 / 校验 / 持久化发生在别的调用栈，
+    那里的异常照常向上抛 —— 不会因为「兜底」被吞成一段似是而非的回答。
+    """
+    if isinstance(exc, LLMException):
+        return bool(getattr(exc, "fallbackable", True))
+    if isinstance(exc, AppException):
+        return False
+    if isinstance(exc, _BUG_ERRORS):
+        return False
+    return True
+
+
+def fallback_allowed(exc: BaseException) -> bool:
+    """总闸 `AGENT_ALLOW_MODEL_FALLBACK` 与「这次错误是否可降级」的合取。
+
+    单独拆出来是为了让「开关」与「错误分类」两件事都能被单独验证：
+    开关关着 ⇒ 任何远程失败都直接失败；开关开着也只降级**该降的那几类**。
+    """
+    from app.core.config import settings
+
+    return bool(settings.AGENT_ALLOW_MODEL_FALLBACK) and is_fallbackable_error(exc)
 
 
 @dataclass

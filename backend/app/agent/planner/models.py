@@ -54,6 +54,7 @@ class AgentPlan(BaseModel):
     notes: str = ""  # Replanner 分析备注等
     retry: bool = False  # Replanner 显式标记：本计划首步是否为失败步骤的原样重试
     cache_hit: bool = False  # Planner 标记：本计划是否来自 plan cache（不参与 LLM 输出解析）
+    planner_fallback: bool = False  # Planner 标记：本计划是否由「规则规划器」降级产出（远程规划失败）
 
     @field_validator("goal")
     @classmethod

@@ -43,7 +43,14 @@ export function eventEffects(ev: AgentEvent, label: (tool: string) => string = (
     case "planning": {
       const s = String(p.stage ?? "planning");
       const bump = s === "plan_ready" ? 25 : s === "tools_retrieved" ? 15 : 8;
-      return { stage: STAGE_LABEL[s] ?? s, progress: (prev) => Math.max(prev, bump) };
+      // 远程规划不可用、已降级到平台内置规则：这是「数据仍能跑出来、但计划不是大模型定的」
+      // 的关键事实，必须让用户看见，而不是让他在结果里自己猜。
+      const degraded = s === "plan_ready" && p.planner_fallback === true;
+      return {
+        stage: STAGE_LABEL[s] ?? s,
+        progress: (prev) => Math.max(prev, bump),
+        notice: degraded ? "远程规划不可用，已改用平台内置规则规划（执行结果仍是真实工具跑出来的）。" : undefined,
+      };
     }
     case "tool_call":
       return {

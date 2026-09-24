@@ -20,7 +20,7 @@ from app.agent.context.builder import ContextBuilder
 from app.agent.context.models import AgentContext
 from app.agent.executor.executor import AgentExecutor, ToolCallRecord
 from app.agent.intent import GREETINGS, INTENT_KEYWORDS, classify, explain as explain_intent
-from app.agent.llm.base import LLMMessage, LLMProvider
+from app.agent.llm.base import LLMException, LLMMessage, LLMProvider, fallback_allowed
 from app.agent.permission.models import ROLE_PERMISSIONS
 from app.local_router.contract import Intent
 from app.agent.planner.models import AgentPlan, PlanStep
@@ -89,6 +89,9 @@ class AgentRuntime:
                 self._agent_turn(run, session, intent, confirmed=confirmed, plan_override=plan_override, on_event=on_event)
         except AgentLimitExceeded as exc: self._fail(run,str(exc),on_event)
         except AgentException as exc: self._fail(run,exc.message,on_event)
+        # LLM 失败是「远程不可用」，不是「Agent 内部异常」：错误信息要原样给出去，
+        # 不能被包成一句 `Agent 运行异常：...` 之后再让用户猜到底是哪里坏了。
+        except LLMException as exc: self._fail(run,exc.message,on_event)
         except Exception as exc: self._fail(run,f"Agent 运行异常：{exc}",on_event)
         finally: run.finished_at=time.time(); self._trace_outcome(run, session)
         return run
@@ -123,7 +126,7 @@ class AgentRuntime:
         retrieval=context.tool_context.get("retrieval_scores") or {}
         self._emit(run,"planning",{"stage":"tools_retrieved","count":len(candidate_tools),"tools":[t.get("name") for t in candidate_tools],"retrieval":retrieval},on_event)
         plan=self._build_plan(run, context, candidate_tools, all_tools, plan_override)
-        run.plan=plan.to_dict(); self._emit(run,"planning",{"stage":"plan_ready","goal":plan.goal,"steps":len(plan.steps),"cache_hit":bool(getattr(plan,"cache_hit",False))},on_event)
+        run.plan=plan.to_dict(); self._emit(run,"planning",{"stage":"plan_ready","goal":plan.goal,"steps":len(plan.steps),"cache_hit":bool(getattr(plan,"cache_hit",False)),"planner_fallback":bool(getattr(plan,"planner_fallback",False))},on_event)
         # 规划器是本次运行的第一笔真实开销（除非命中 Plan Cache），这里立刻反映到账本上。
         self._emit_usage(run,on_event)
         if not plan.steps: self._direct_chat(run,session,on_event); return
@@ -335,11 +338,23 @@ class AgentRuntime:
             try:
                 answer=self.llm.chat(messages).content or "我在。有什么可以帮你？"
                 run.answer_source=REMOTE_LLM_CHAT
-            except Exception as exc:
-                # ★ 开关开着 ≠ 这次真的是模型在答。请求失败后下面这段是**固定文案**，
-                # 必须标成降级，否则界面会把「规则兜底」显示成「远程模型生成」。
-                answer=f"暂时无法完成对话请求：{exc}"
-                run.answer_source=LLM_ERROR_FALLBACK
+            except Exception as exc:  # noqa: BLE001 — 只在 LLM 调用边界内捕获
+                # ★ 「远程没走通」有三种完全不同的结局，不能一律塞一句「暂时无法完成对话请求」：
+                #   ① 允许降级且内置规则答得上 ⇒ 真的给出本地回答，标 `LLM_ERROR_FALLBACK`；
+                #   ② 允许降级但规则答不上 ⇒ 如实给一段状态说明，标 `NO_ANSWER`（这次没答上问题）；
+                #   ③ 不允许降级（开关关着 / 这次错误不该兜底）⇒ 原样抛出，让这次运行如实失败。
+                # 历史缺陷：三种一律走成「固定错误文案 + LLM_ERROR_FALLBACK」，
+                # 既没真的兜底，又把一个纯报错标成了「已降级到规则」。
+                if not fallback_allowed(exc):
+                    raise
+                from app.agent.local_chat import local_reply,no_llm_notice
+                reply=local_reply(run.user_request,degraded=True)
+                if reply is not None:
+                    answer=reply
+                    run.answer_source=LLM_ERROR_FALLBACK
+                else:
+                    answer=no_llm_notice(reason=str(exc))
+                    run.answer_source=NO_ANSWER
         run.final_answer=answer; run.status=RunStatus.COMPLETED; session.history.append({"role":"assistant","content":answer}); self._emit_usage(run,on_event); self._emit(run,"completed",{"final_answer":answer,"mode":"chat","answer_source":describe(run.answer_source)},on_event)
 
     def _candidate_tools(self,context:AgentContext,all_tools:list[dict[str,Any]])->list[dict[str,Any]]:
@@ -627,11 +642,19 @@ class AgentRuntime:
         system=("你是小洛实验室的数据分析助手。基于真实工具结果回答用户的原始请求。输出结构：先给 3-5 条结论式关键发现，再列数据质量问题与风险，最后给可操作建议。只引用对结论有支撑的关键数值，禁止逐项复述工具结果里的全部数字；总长度控制在 400 字以内。不得声称做过没有工具记录的操作。")
         try:
             response=self.llm.chat([LLMMessage(role="system",content=system),LLMMessage(role="user",content=f"用户原始请求：{run.user_request}\n\n工具结果（已压缩）：\n{json.dumps(views,ensure_ascii=False,default=str) or '（无有效工具结果）'}")])
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — 只在 LLM 调用边界内捕获
             # ★ 与闲聊链路同口径：走了 LLM 但没走通 ⇒ 标降级，不算「远程生成」。
+            # 但降级必须是被允许的（总闸 × 错误分类），否则如实失败——
+            # 「工具都跑成功了，只是汇总时模型挂了」仍然是一次失败的运行，
+            # 不该被静默包装成「已降级」蒙混过去。
+            if not fallback_allowed(exc):
+                raise
             run.answer_source=LLM_ERROR_FALLBACK
             return fallback
         if not (response.content or "").strip():
+            # 模型返回空串也算「这次没拿到模型输出」，不能标成远程生成。
+            if not settings.AGENT_ALLOW_MODEL_FALLBACK:
+                raise LLMException("远程大模型返回空内容")
             run.answer_source=LLM_ERROR_FALLBACK
             return fallback
         run.answer_source=REMOTE_LLM_SUMMARY

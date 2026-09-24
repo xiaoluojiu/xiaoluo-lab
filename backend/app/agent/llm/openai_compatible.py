@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -36,7 +37,90 @@ def _is_retryable(exc: httpx.HTTPError) -> bool:
 
 
 def _is_retryable_status(status: int) -> bool:
+    """**仅按状态码**判断是否值得重试。
+
+    注意这里刻意不接受响应体：429 既可能是「限流，稍后再试」，也可能是
+    「账户余额不足」——后者重试一万次也不会成功，只会把用户的额度探测
+    变成一次 DDoS。配额 / 计费类错误由 `_is_quota_error()` 先行拦截，
+    走不到这个判断。
+    """
     return status >= 500 or status == 429
+
+
+# 配额 / 计费类错误的特征词。各家网关的措辞不统一（code / type / message 都可能带），
+# 因此统一小写后做子串匹配；宁可多认领一个（不重试的代价只是一次请求失败），
+# 也不能漏掉（漏掉会变成无意义的重试风暴）。
+_QUOTA_HINTS = (
+    "insufficient_quota",
+    "insufficient quota",
+    "quota",
+    "billing",
+    "balance",
+    "credit",
+    "payment",
+    "arrears",
+    "out of balance",
+    "exceeded your current quota",
+    "欠费",
+    "余额不足",
+    "账户余额",
+)
+
+
+def _error_envelope(body: str) -> dict[str, Any]:
+    """取 OpenAI 兼容协议的错误信封 `{"error": {...}}`；取不到就返回空字典。
+
+    入参是**响应体文本**而不是 Response 对象：`_is_quota_error` 与
+    `_quota_message` 都要复用它，而它们拿到的只有已经截断过的 body。
+    """
+    try:
+        data = json.loads(body)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    error = data.get("error")
+    if isinstance(error, dict):
+        return error
+    if isinstance(error, str):
+        return {"message": error}
+    return {}
+
+
+def _is_quota_error(status: int, body: str) -> bool:
+    """这次失败是不是「账户没钱了」这类**重试永远不会成功**的错误。"""
+    if status == 402:  # Payment Required：部分网关用它表示欠费
+        return True
+    if status not in (400, 401, 403, 429):
+        # 5xx 是服务端自己的问题，不属于配额；其余 4xx 多为参数/鉴权，
+        # 也按「不重试」处理，但语义不是欠费，不在这里认领。
+        return False
+    blob = body.lower()
+    return any(hint in blob for hint in _QUOTA_HINTS)
+
+
+def _retry_after_seconds(resp: httpx.Response) -> float | None:
+    """尊重服务端给的 `Retry-After`（秒 / HTTP 日期），取不到返回 None。"""
+    raw = resp.headers.get("Retry-After") or resp.headers.get("retry-after")
+    if not raw:
+        return None
+    try:
+        return max(0.0, float(str(raw).strip()))
+    except ValueError:
+        return None
+
+
+def _quota_message(status: int, body: str) -> str:
+    """把网关那句英文错误翻成用户能行动的中文，并原样附上原始信息。
+
+    「Insufficient Balance」对用户的含义是「去充值或换 Key」，
+    直接把它塞进「暂时无法完成对话请求：…」里等于什么都没说。
+    """
+    envelope = _error_envelope(body)
+    provider_msg = str(envelope.get("message") or envelope.get("code") or "").strip()
+    if not provider_msg:
+        provider_msg = body.strip()[:200]
+    return f"大模型账户配额/余额不足（HTTP {status}）" + (f"：{provider_msg}" if provider_msg else "")
 
 
 class _CircuitBreaker:
@@ -178,12 +262,25 @@ class OpenAICompatibleProvider(LLMProvider):
                 break
 
             if resp.status_code >= 400:
+                body = resp.text[:500]
+                # ★ 欠费 / 配额耗尽必须**立即**转成一次「可降级的 LLMException」：
+                # 它和 429 限流共用状态码，但重试永远等不到成功，只会把一次失败
+                # 放大成 _MAX_NETWORK_RETRIES+1 次请求 + 指数退避的空等。
+                if _is_quota_error(resp.status_code, body):
+                    self._breaker.record_failure()
+                    raise LLMException(
+                        _quota_message(resp.status_code, body),
+                        details={"status": resp.status_code, "body": body},
+                    )
                 last_exc = LLMException(
                     f"LLM 返回错误状态 {resp.status_code}",
-                    details={"body": resp.text[:500]},
+                    details={"body": body},
                 )
                 if _is_retryable_status(resp.status_code) and attempt < _MAX_NETWORK_RETRIES:
-                    delay = _RETRY_BACKOFF_BASE_SECONDS * (2 ** attempt)
+                    # 服务端给了 Retry-After 就以它为准；否则才用指数退避。
+                    delay = _retry_after_seconds(resp)
+                    if delay is None:
+                        delay = _RETRY_BACKOFF_BASE_SECONDS * (2 ** attempt)
                     logger.warning(
                         "LLM 返回状态 %s，第 %s 次重试，%.1fs 后重试",
                         resp.status_code, attempt + 1, delay,

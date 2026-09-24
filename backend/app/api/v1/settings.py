@@ -52,6 +52,10 @@ class AgentSettingsUpdateRequest(BaseModel):
     enable_result_compression: bool
     enable_plan_cache: bool
     plan_cache_max_items: int = Field(ge=1, le=500)
+    #: 是否允许「远程大模型调用失败 → 退回平台内置规则」。
+    #: 可选项：前端未传时保留进程内当前值（与 context_window 等字段同口径），
+    #: 这样老客户端不会因为缺字段就把开关打回默认。
+    allow_model_fallback: bool | None = None
 
 
 @router.get("/agent", response_model=ApiResponse[dict[str, Any]])
@@ -113,7 +117,11 @@ def update_agent_settings(body: AgentSettingsUpdateRequest) -> ApiResponse[dict[
     settings.AGENT_LLM_MAX_INPUT_TOKENS = body.max_input_tokens
     settings.AGENT_LLM_MAX_OUTPUT_TOKENS = body.max_output_tokens
     settings.AGENT_LLM_MAX_TOTAL_TOKENS = body.max_total_tokens
-    settings.AGENT_ALLOW_MODEL_FALLBACK = False
+    # ★ 历史缺陷：这里写死成 False，于是设置页上那个「模型兜底」指示器永远显示关，
+    # 用户改不动，而代码里也没有任何一处真的读它 —— 一个纯粹装饰性的配置。
+    # 现在它真的控制「远程失败是否降级」，且未显式传入时**保留原值**。
+    if body.allow_model_fallback is not None:
+        settings.AGENT_ALLOW_MODEL_FALLBACK = bool(body.allow_model_fallback)
     settings.AGENT_ENABLE_TOOL_RETRIEVAL = body.enable_tool_retrieval
     settings.AGENT_TOOL_RETRIEVAL_TOP_K = body.tool_retrieval_top_k
     settings.AGENT_TOOL_RETRIEVAL_MIN_SCORE = body.tool_retrieval_min_score

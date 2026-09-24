@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import threading
 from collections import OrderedDict
 from typing import Any
@@ -13,10 +14,12 @@ from pydantic import ValidationError
 from app.agent.context.budget import ContextBudget
 from app.agent.context.models import AgentContext
 from app.agent.intent import Intent, wants_modeling
-from app.agent.llm.base import LLMProvider
+from app.agent.llm.base import LLMException, LLMProvider, is_fallbackable_error
 from app.agent.planner.models import AgentPlan, PlanStep
 from app.core.config import settings
 from app.core.exceptions import AgentException
+
+logger = logging.getLogger(__name__)
 
 
 class PlanInvalidError(AgentException):
@@ -65,25 +68,66 @@ class AgentPlanner:
         *,
         all_tools: list[dict[str, Any]] | None = None,
     ) -> AgentPlan:
-        """带降级的规划入口。
+        """带降级的规划入口：**远程规划不可用时必须真的降到规则规划**。
 
-        LLM 规划的失败模式是「计划引用了候选集外的工具」→ PlanInvalidError，
-        过去会直接让整次 Agent 运行失败（用户看到的却是「工具调用失败」）。
-        这里做三级降级：
+        历史缺陷：这里只捕获 `PlanInvalidError`，而远程规划最常见的失败是
+        `LLMException`（连接失败 / 超时 / 429 / 5xx / 配额不足 / 结构化输出解析失败）。
+        于是「账户欠费」这类场景下整次数据分析请求直接失败，界面上还显示
+        「工具调用失败」—— 用户完全看不出真实原因是远程大模型不可用。
+
+        现在的三级降级：
         1. 候选工具集规划；
-        2. 失败则放开到全量工具集重新规划（工具已注册 ≠ 被召回，这一步直接消除该类错误）；
+        2. 失败则放开到全量工具集重新规划（工具已注册 ≠ 被召回，消除 PlanInvalidError）；
         3. 再失败则用规则规划兜底，保证数据分析请求至少能跑出真实结果。
+
+        ★ 只允许**可降级**的失败走到规则规划：
+          - `PlanInvalidError`（LLM 给的计划不可用）
+          - `LLMException`（远程这一侧不可用）
+        程序 bug（`TypeError` 等）、工具执行异常、权限异常**照常向上抛** ——
+        用规则规划去兜一个代码缺陷，只会把 bug 伪装成「降级成功」。
+
+        ★ 一次 `build_plan_resilient` 最多走到规则规划一次，且规则计划是终点
+        （不会再回头试远程），因此不存在「远程 ↔ 规则」的降级循环。
         """
-        try:
-            return self.build_plan(user_request, context, tools)
-        except PlanInvalidError:
-            pass
+        if self.llm is None:
+            # 本来就没有远程模型 ⇒ 规则规划是正常路径，谈不上「降级」。
+            return self._validate(self.rule_plan(user_request, context), all_tools or tools, context)
+
+        scopes: list[tuple[list[dict[str, Any]], str]] = [(tools, "候选工具集")]
         if all_tools and len(all_tools) > len(tools):
+            scopes.append((all_tools, "全量工具集"))
+
+        last_error: BaseException | None = None
+        for scope, label in scopes:
             try:
-                return self.build_plan(user_request, context, all_tools)
-            except PlanInvalidError:
-                pass
-        return self._validate(self.rule_plan(user_request, context), all_tools or tools, context)
+                return self.build_plan(user_request, context, scope)
+            # 只认领「远程规划没产出可用计划」这一类；其它异常原样抛出。
+            except (PlanInvalidError, LLMException) as exc:
+                last_error = exc
+                logger.warning("远程规划失败（%s）：%s：%s", label, type(exc).__name__, exc)
+                if not self._fallback_allowed(exc):
+                    raise
+
+        # 三级：规则规划兜底。一次调用最多到这里一次，且是终点。
+        plan = self._validate(self.rule_plan(user_request, context), all_tools or tools, context)
+        plan.planner_fallback = True
+        logger.warning(
+            "远程规划不可用，已降级到规则规划（原因：%s）",
+            type(last_error).__name__ if last_error else "未知",
+        )
+        return plan
+
+    def _fallback_allowed(self, exc: BaseException) -> bool:
+        """这次规划失败是否允许降到规则规划器。
+
+        两道门：总闸 `AGENT_ALLOW_MODEL_FALLBACK`（关着就一律直接失败）
+        ×「这次错误是不是远程不可用」（见 `is_fallbackable_error`）。
+        """
+        from app.core.config import settings
+
+        if not settings.AGENT_ALLOW_MODEL_FALLBACK:
+            return False
+        return isinstance(exc, PlanInvalidError) or is_fallbackable_error(exc)
 
     def rule_plan(self, user_request: str, context: AgentContext) -> AgentPlan:
         """公开的规则规划入口（降级兜底时使用）。"""

@@ -142,14 +142,22 @@ def test_chat_with_llm_is_marked_as_remote():
 def test_chat_with_llm_error_is_marked_as_degraded():
     """★ 本次透明化缺陷的核心用例：开关开着、凭据也在，但这一次调用失败了。
 
-    此时界面上的回答其实是一段固定文案（`暂时无法完成对话请求：…`），
-    必须标成「已降级」，绝不能显示成「远程大模型生成」。
+    历史缺陷：这条路径只是把异常文本拼成一句「暂时无法完成对话请求：…」就完了，
+    然后把来源标成 `LLM_ERROR_FALLBACK` —— 既**没有真的兜底**（用户拿到的只是一句报错），
+    又假装自己「已降级到规则」。
+
+    现在：远程失败必须真的走 `local_reply()`，拿得到本地回答才算降级；
+    来源照旧是 `LLM_ERROR_FALLBACK`（`by_llm=False`），但回答内容必须是真的本地应答。
     """
     run, session = _run("你好"), _session()
     AgentRuntime._direct_chat(_stub(_FakeLLM(raise_exc=RuntimeError("连接超时"))), run, session, None)
     assert run.answer_source == A.LLM_ERROR_FALLBACK
     assert A.describe(run.answer_source)["by_llm"] is False
-    assert "暂时无法完成对话请求" in run.final_answer
+    # 「降级」必须真的产出了替代回答，而不是把异常文本当成回答。
+    assert "暂时无法完成对话请求" not in run.final_answer
+    assert run.final_answer and "AI 助手" in run.final_answer
+    # 文案必须说明是「这一次调用失败」，不能谎称「远程已停用」。
+    assert "远程大模型已停用" not in run.final_answer
 
 
 # ---------------------------------------------------------------------------
