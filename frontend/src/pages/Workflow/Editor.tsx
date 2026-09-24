@@ -41,9 +41,7 @@ import {
 } from "../../api/workflow";
 import type { SchemaColumn } from "../../types/dataset";
 import type { WorkflowEdge, WorkflowNode, WorkflowRun, WorkflowSummary } from "../../types/workflow";
-// WorkflowStudio 的画布样式由 workflow.css 提供；直接访问本路由时列表页尚未加载，
-// 必须自己引入，否则首屏是一张没有样式的裸画布。
-import "./workflow.css";
+// 沉浸页用自足样式，不复用 workflow.css（那张表里藏了会把三栏压成手机版的媒体查询）。
 import "./workflow-editor.css";
 
 /** :id 为 "new" 时表示还未落库的草稿。 */
@@ -72,6 +70,9 @@ export default function WorkflowEditorPage() {
   const [list, setList] = useState<WorkflowSummary[]>([]);
   const [dirty, setDirty] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  /* 快速起步（渲染在右侧参数面板，画布为空时）：模板 + 数据集 + 生成按钮 */
+  const [quickTemplateId, setQuickTemplateId] = useState("");
+  const [quickDatasetId, setQuickDatasetId] = useState<number[]>([]);
 
   const { nodes, edges, commit, reset } = history;
 
@@ -274,6 +275,18 @@ export default function WorkflowEditorPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "读取数据集 Schema 失败");
     }
+  }
+
+  /** 快速起步（右侧面板）：选了模板按模板填充，否则按数据集字段智能生成。 */
+  async function handleQuickStart() {
+    const datasetId = quickDatasetId[0] ?? null;
+    if (quickTemplateId) {
+      applyTemplateById(quickTemplateId, datasetId);
+    } else if (datasetId != null) {
+      await applySmartSuggest(datasetId);
+    }
+    setQuickTemplateId("");
+    setQuickDatasetId([]);
   }
 
   /* ---------------------------------------------------------------- */
@@ -497,32 +510,52 @@ export default function WorkflowEditorPage() {
           onCloseExplorer={() => setExplorerOpen(false)}
           inspectorOpen={inspectorOpen}
           onCloseInspector={() => setInspectorOpen(false)}
+          surface="editor"
           emptyStateSlot={
             <div className="wf-editor-empty">
-              <h3>从一个数据节点开始</h3>
-              <p>选一个预置模板快速搭出流程，或按当前数据集的字段自动生成。</p>
-              <div className="wf-editor-empty-actions">
-                <select
-                  className="workflow-template-select"
-                  defaultValue=""
-                  onChange={(event) => {
-                    if (event.target.value) applyTemplateById(event.target.value, loadNodeDatasetId);
-                  }}
-                  aria-label="选择预置模板"
-                >
-                  <option value="">选择预置模板…</option>
-                  {WORKFLOW_TEMPLATES.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.category} · {template.name}
-                    </option>
-                  ))}
-                </select>
-                <div className="wf-editor-empty-suggest">
-                  <DatasetSelector value={[]} onChange={(value) => value[0] && void applySmartSuggest(value[0])} multi={false} compact />
-                  <span className="muted">按数据集字段生成</span>
-                </div>
-              </div>
+              <strong>画布还是空的</strong>
+              <span>在右侧面板选一个模板或数据集开始，或双击画布空白处添加节点。</span>
             </div>
+          }
+          inspectorEmptySlot={
+            nodes.length === 0 ? (
+              <div className="wf-editor-quickstart">
+                <div className="wf-editor-quickstart-head">
+                  <strong>从这里开始</strong>
+                  <p>选一个预置模板快速搭出流程，或按数据集字段自动生成。</p>
+                </div>
+                <label className="wf-editor-quickstart-field">
+                  <span>预置模板</span>
+                  <select
+                    value={quickTemplateId}
+                    onChange={(event) => setQuickTemplateId(event.target.value)}
+                    aria-label="选择预置模板"
+                  >
+                    <option value="">不使用模板（智能建议）</option>
+                    {WORKFLOW_TEMPLATES.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.category} · {template.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="wf-editor-quickstart-field">
+                  <span>数据集</span>
+                  <DatasetSelector value={quickDatasetId} onChange={setQuickDatasetId} multi={false} compact />
+                </div>
+                <button
+                  className="btn primary"
+                  type="button"
+                  disabled={(!quickTemplateId && !quickDatasetId.length) || busy}
+                  onClick={() => void handleQuickStart()}
+                >
+                  {quickTemplateId ? "用模板生成" : "生成流程"}
+                </button>
+                <p className="wf-editor-quickstart-hint">
+                  生成后可继续在画布上添加节点、连线与配置参数。
+                </p>
+              </div>
+            ) : undefined
           }
         />
 

@@ -98,6 +98,20 @@ interface Props {
   onDatasetOptionsChange?: (options: Array<{ id: number; name: string }>) => void;
   /** 画布空状态里渲染的引导内容（模板卡片等）。 */
   emptyStateSlot?: React.ReactNode;
+  /**
+   * 参数面板「未选中任何节点」时的插槽。
+   * 沉浸式编辑器用它承载快速起步（模板 / 数据集）——表单类控件放侧栏，
+   * 画布空状态只留一句提示，不再把下拉框铺在画布中央。
+   */
+  inspectorEmptySlot?: React.ReactNode;
+  /**
+   * 外观命名空间。
+   * - 不传 / "classic"：列表页内嵌，走 `workflow.css`（含响应式断点）；
+   * - "editor"：沉浸式编辑器，根容器额外带 `wf-editor-workspace` class，
+   *   由 `workflow-editor.css` 用独立命名空间重定义视觉，**无视**列表页的
+   *   媒体查询（那些断点会把三栏压成两栏/单栏、固定 600px 高）。
+   */
+  surface?: "classic" | "editor";
 }
 
 export function WorkflowStudio({
@@ -115,6 +129,8 @@ export function WorkflowStudio({
   inspectorOpen,
   onCloseInspector,
   emptyStateSlot,
+  inspectorEmptySlot,
+  surface = "classic",
 }: Props) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -300,7 +316,7 @@ export function WorkflowStudio({
   const worldOffset = CANVAS_MIN * (zoom - 1);
 
   return (
-    <div className={`workflow-workspace${selectedNodeId ? " node-selected" : ""}${drawerOpen ? " explorer-open" : ""}${inspectorVisible ? "" : " inspector-closed"}`}>
+    <div className={`workflow-workspace${surface === "editor" ? " wf-editor-workspace" : ""}${selectedNodeId ? " node-selected" : ""}${drawerOpen ? " explorer-open" : ""}${inspectorVisible ? "" : " inspector-closed"}`}>
       <aside className="workflow-explorer">
         {/*
           顺序刻意是「当前流程 → 节点库」而不是反过来：
@@ -651,12 +667,14 @@ export function WorkflowStudio({
             <p>{selected.type} 不在当前节点库中。</p>
           </div>
         ) : (
-          <div className="workflow-inspector-empty">
-            <strong>选择节点</strong>
-            <div>
-              <kbd>Delete</kbd> 删除　<kbd>Esc</kbd> 取消连线　<kbd>F</kbd> 适应
+          inspectorEmptySlot ?? (
+            <div className="workflow-inspector-empty">
+              <strong>选择节点</strong>
+              <div>
+                <kbd>Delete</kbd> 删除　<kbd>Esc</kbd> 取消连线　<kbd>F</kbd> 适应
+              </div>
             </div>
-          </div>
+          )
         )}
       </aside>
     </div>
