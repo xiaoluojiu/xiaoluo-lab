@@ -11,7 +11,7 @@ import { DistributionChart } from "../../features/eda/DistributionChart";
 import { OutlierPanel } from "../../features/eda/OutlierPanel";
 import { VisualizationPanel, isNumericColumn, isTemporalColumn } from "../../features/eda/VisualizationPanel";
 import { PreviewTable } from "../../features/dataset/PreviewTable";
-import { Loading } from "../../components/Loading";
+import { Skeleton } from "../../components/StateBlock";
 import { Icon, type IconName } from "../../components/icons/Icon";
 
 /* 数据分析页的空状态：带插画图标 + 明确的引导文案与下一步动作，
@@ -130,10 +130,10 @@ export default function Analysis() {
     if (!datasetId) return null;
     switch (activeTab) {
       case "preview": return <><div className="analysis-result-header"><div><h3 style={{ margin: 0 }}>数据预览</h3><div className="muted">快速检查样本与字段，不修改数据版本。</div></div></div><div className="analysis-preview-wrap"><PreviewTable datasetId={datasetId} pageSize={20} /></div></>;
-      case "profile": return busy === "描述性统计" ? <Loading /> : <ProfilePanel data={profile} />;
-      case "correlation": return selectedNumericCountForView(columns, validSelectedColumns) < 2 ? <AnalysisEmpty icon="chart" title="还差一个数值字段" hint="相关性分析需要至少 2 个数值字段。当前数据集里的数值字段不够，去左侧勾选更多字段，或换个数据更完整的数据集。" /> : busy === "相关性分析" ? <Loading /> : <CorrelationPanel data={corr} scatterPoints={sampleRows} />;;
-      case "distribution": return busy === "分布分析" ? <Loading /> : <DistributionChart data={dist} />;
-      case "outlier": return busy === "异常值分析" ? <Loading /> : <OutlierPanel data={outlier} />;
+      case "profile": return busy === "描述性统计" ? <Skeleton lines={3} /> : <ProfilePanel data={profile} />;
+      case "correlation": return selectedNumericCountForView(columns, validSelectedColumns) < 2 ? <AnalysisEmpty icon="chart" title="还差一个数值字段" hint="相关性分析需要至少 2 个数值字段。当前数据集里的数值字段不够，去左侧勾选更多字段，或换个数据更完整的数据集。" /> : busy === "相关性分析" ? <Skeleton lines={3} /> : <CorrelationPanel data={corr} scatterPoints={sampleRows} />;;
+      case "distribution": return busy === "分布分析" ? <Skeleton lines={3} /> : <DistributionChart data={dist} />;
+      case "outlier": return busy === "异常值分析" ? <Skeleton lines={3} /> : <OutlierPanel data={outlier} />;
       case "visualization": return <VisualizationPanel datasetId={datasetId} columns={columns} selectedColumns={validSelectedColumns} chart={chart} onChartChange={setChart} />;
     }
   }

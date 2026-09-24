@@ -55,8 +55,9 @@ export function DataTable<T>({
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const current = sorted.slice((page - 1) * pageSize, page * pageSize);
 
+  // 表格骨架而不是一行「加载中...」：表格高度已知，骨架能避免内容跳一下。
   if (error) return <div className="badge failed">加载失败：{error}</div>;
-  if (loading) return <div className="muted">加载中...</div>;
+  if (loading) return <TableSkeleton rows={Math.min(pageSize, 5)} cols={Math.max(columns.length, 3)} />;
   if (!rows.length) return <div className="muted">{emptyText}</div>;
 
   return (
@@ -122,6 +123,40 @@ export function DataTable<T>({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** 表格骨架：行高与真实表格一致，加载完成后不会跳动。 */
+function TableSkeleton({ rows, cols }: { rows: number; cols: number }) {
+  const widths = ["55%", "70%", "45%", "62%"];
+  return (
+    <div aria-busy="true" style={{ overflowX: "auto" }}>
+      <table className="data-table">
+        <thead>
+          <tr>
+            {Array.from({ length: cols }).map((_, i) => (
+              <th key={i}>
+                <span className="skeleton skeleton-text" style={{ width: "60%", display: "block", margin: 0 }} />
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from({ length: rows }).map((_, r) => (
+            <tr key={r}>
+              {Array.from({ length: cols }).map((_, c) => (
+                <td key={c}>
+                  <span
+                    className="skeleton skeleton-text"
+                    style={{ width: widths[(r + c) % widths.length], display: "block", margin: 0 }}
+                  />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

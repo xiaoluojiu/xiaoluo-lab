@@ -290,11 +290,41 @@ def create_experiment(
 def list_experiments(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
+    with_metrics: bool = Query(
+        False,
+        description=(
+            "是否附带每个实验「最近一次成功运行」的指标。"
+            "列表页要回答「哪个实验效果更好」时需要它"
+        ),
+    ),
     experiment_service: ExperimentService = Depends(get_experiment_service),
 ) -> ApiResponse[Pagination[dict]]:
-    items, total = experiment_service.list(page=page, page_size=page_size)
+    if not with_metrics:
+        items, total = experiment_service.list(page=page, page_size=page_size)
+        payload = [experiment_dict(e) for e in items]
+    else:
+        items, latest, total = experiment_service.list_with_latest_runs(
+            page=page, page_size=page_size
+        )
+        payload = []
+        for exp in items:
+            row = experiment_dict(exp)
+            run = latest.get(exp.id)
+            row["latest_run"] = (
+                {
+                    "run_id": run.id,
+                    "status": run.status,
+                    "metrics": dict(run.metrics or {}),
+                    "runtime": run.runtime,
+                    "created_at": str(run.created_at) if run.created_at else None,
+                }
+                if run is not None
+                else None
+            )
+            payload.append(row)
+
     result = Pagination[dict](
-        items=[experiment_dict(e) for e in items],
+        items=payload,
         page_info=PageInfo.build(page, page_size, total),
     )
     return ApiResponse[Pagination[dict]](data=result)

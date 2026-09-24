@@ -79,7 +79,12 @@ class AgentRun:
     @property
     def tool_call_count(self):return len(self.tool_calls)
     def elapsed(self):return max((self.finished_at or time.time())-(self.started_at or self.created_at),0.0)
-    def summary(self):return {"id":self.id,"session_id":self.session_id,"user_request":self.user_request,"status":str(self.status),"final_answer":self.final_answer,"error":self.error,"plan":self.plan,"tool_calls":[c.to_dict() for c in self.tool_calls],"tool_call_count":self.tool_call_count,"cancel_requested":self.cancel_requested,"pending_confirmation":({"tool":self.pending_confirmation["call"].tool,"arguments":self.pending_confirmation["call"].arguments,"step_index":self.pending_confirmation["step_index"],"reason":self.pending_confirmation["call"].error} if self.pending_confirmation else None),"token_usage":self.token_ledger.to_dict(),"answer_source":describe(self.answer_source),"elapsed_seconds":round(self.elapsed(),3),"preflight":self.preflight,"clarification_answers":dict(self.clarification_answers),"pending_clarification":(dict(self.pending_clarification) if self.pending_clarification else None)}
+    def summary(self):return {"id":self.id,"session_id":self.session_id,"user_request":self.user_request,"status":str(self.status),"final_answer":self.final_answer,"error":self.error,"plan":self.plan,"tool_calls":[c.to_dict() for c in self.tool_calls],"tool_call_count":self.tool_call_count,"cancel_requested":self.cancel_requested,"pending_confirmation":({"tool":self.pending_confirmation["call"].tool,"arguments":self.pending_confirmation["call"].arguments,"step_index":self.pending_confirmation["step_index"],"reason":self.pending_confirmation["call"].error} if self.pending_confirmation else None),"token_usage":self.token_ledger.to_dict(),"answer_source":describe(self.answer_source),
+        # ★ 持久化对称性：``answer_source`` 字段写出去的是**给人看**的展开结构，
+        # 恢复时无法反推出原始取值（describe 把未知值统一落到 NO_ANSWER）。
+        # 因此额外落一份机器可读的原始 code，_load 才能原样还原。
+        "answer_source_code":self.answer_source,
+        "elapsed_seconds":round(self.elapsed(),3),"preflight":self.preflight,"clarification_answers":dict(self.clarification_answers),"pending_clarification":(dict(self.pending_clarification) if self.pending_clarification else None)}
     def full(self):
         d=self.summary();d["events"]=[e.to_dict() for e in self.events];return d
 
@@ -155,6 +160,66 @@ class AgentStore:
         with self._lock:x=self._runs.get(i)
         if x is None:raise NotFoundException("Agent 运行不存在",details={"run_id":i})
         return x
+    # ---- 等待态的原子领取（P0）--------------------------------------------
+    # 「检查状态」与「清除载荷 + 改状态」必须落在**同一把锁内**。
+    # 早先 resume()/answer_clarification() 是「先 get_run（锁外）→ 再改字段（锁外）」，
+    # 两个并发请求可以同时读到 pending 非空、同时进入执行 —— 一次确认被执行两次。
+    # 前端的 `confirming` 标记挡不住这个：它只在同一个浏览器标签内有效，
+    # 而两个请求可能来自两个标签 / 两次重试 / 一次重放。
+    # 这里复用 AgentStore 已有的 RLock，不引入 Redis / Celery 等新基础设施。
+    def claim_confirmation(self, run_id: str):
+        """原子领取「高风险操作授权」。
+
+        返回 ``(run, pending)``；运行不在等待确认态、或已被别人领走时
+        ``pending is None`` —— 调用方据此拒绝，绝不重复执行。
+        """
+        with self._lock:
+            run = self._runs.get(run_id)
+            if run is None:
+                raise NotFoundException("Agent 运行不存在", details={"run_id": run_id})
+            if run.status != RunStatus.WAITING_CONFIRMATION or run.pending_confirmation is None:
+                return run, None
+            pending = run.pending_confirmation
+            run.pending_confirmation = None
+            run.status = RunStatus.RUNNING
+            return run, pending
+
+    def claim_clarification(self, run_id: str, answer: str):
+        """原子领取「澄清回答」。返回 ``(run, pending, code)``，未领到时 ``pending is None``。
+
+        领取即把答案写进 ``clarification_answers`` 并清空 ``pending_clarification``，
+        保证同一条反问只被消费一次：第二个请求拿到的是 ``None``，会收到明确拒绝。
+        """
+        with self._lock:
+            run = self._runs.get(run_id)
+            if run is None:
+                raise NotFoundException("Agent 运行不存在", details={"run_id": run_id})
+            if run.status != RunStatus.WAITING_CLARIFICATION or run.pending_clarification is None:
+                return run, None, ""
+            pending = run.pending_clarification
+            code = str(pending.get("code") or "")
+            run.clarification_answers[code] = str(answer or "").strip()
+            run.pending_clarification = None
+            run.status = RunStatus.RUNNING
+            return run, pending, code
+
+    def claim_wait(self, run_id: str):
+        """原子领取「放弃等待」（deny / cancel 等终止路径）。返回 ``(run, kind)``。
+
+        ``kind`` 为 ``"confirmation"`` / ``"clarification"`` / ``""``（无需处理）。
+        """
+        with self._lock:
+            run = self._runs.get(run_id)
+            if run is None:
+                raise NotFoundException("Agent 运行不存在", details={"run_id": run_id})
+            if run.status == RunStatus.WAITING_CLARIFICATION and run.pending_clarification is not None:
+                run.pending_clarification = None
+                return run, "clarification"
+            if run.status == RunStatus.WAITING_CONFIRMATION and run.pending_confirmation is not None:
+                run.pending_confirmation = None
+                return run, "confirmation"
+            return run, ""
+
     def persist(self,*,force:bool=False):
         """落盘；事件级调用（force=False）按最小间隔节流，终态与显式调用 force=True 立即写。
 
@@ -187,6 +252,16 @@ class AgentStore:
                     q=ToolCallRecord(step_index=int(c.get("step_index",0)),tool=str(c.get("tool","")),arguments=dict(c.get("arguments") or {}),attempt=int(c.get("attempt",1)));q.status=str(c.get("status","ok"));q.error=str(c.get("error",""));z=c.get("result")
                     if z is not None:q.result=ToolResult(success=bool(z.get("success")),data=z.get("data"),summary=str(z.get("summary","")),warnings=list(z.get("warnings") or []),errors=list(z.get("errors") or []),metadata=dict(z.get("metadata") or {}));q.finished_at=time.time()
                     r.tool_calls.append(q)
+                # ---- persist ↔ _load 对称性 ----
+                # ``summary()/full()`` 落盘的字段必须在这里逐个还原，漏一个的表现是
+                # 「重启后界面显示与重启前不一致」。此前漏了 answer_source /
+                # clarification_answers / cancel_requested：一条已完成的运行重载后
+                # 被显示成「未产出回答」，用户已回答过的反问也会再问一遍。
+                r.answer_source=str(x.get("answer_source_code") or "")
+                r.clarification_answers=dict(x.get("clarification_answers") or {})
+                r.cancel_requested=bool(x.get("cancel_requested",False))
+                # pending_confirmation **刻意不还原**（见上面的 interrupted 分支）：
+                # 这里保留注释，避免后来者"顺手补上"又把会话永久锁死。
                 self._runs[r.id]=r
             # 旧运行若被恢复为中断状态，立即写回磁盘，避免每次启动重复标记。
             self._persist_locked()

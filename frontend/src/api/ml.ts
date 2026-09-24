@@ -167,9 +167,11 @@ export function explainRun(runId: number) {
   return unwrap<ExplainResult>(client.get(`/ml/explain/${runId}`));
 }
 
-export function listExperiments(page = 1, pageSize = 20) {
+export function listExperiments(page = 1, pageSize = 20, withMetrics = false) {
   return unwrap<Pagination<Experiment>>(
-    client.get("/experiments", { params: { page, page_size: pageSize } }),
+    client.get("/experiments", {
+      params: { page, page_size: pageSize, ...(withMetrics ? { with_metrics: true } : {}) },
+    }),
   );
 }
 
@@ -187,6 +189,13 @@ export function runExperiment(id: number) {
 
 export function compareRuns(runIds: number[]) {
   return unwrap<CompareResult>(client.post("/experiments/compare", { run_ids: runIds }));
+}
+
+/** 实验级对比：每个实验取最近一次成功运行，比较逻辑仍走后端 ExperimentComparator。 */
+export function compareExperiments(experimentIds: number[]) {
+  return unwrap<CompareResult>(
+    client.post("/experiments/compare", { experiment_ids: experimentIds }),
+  );
 }
 
 export function deleteExperiment(id: number) {

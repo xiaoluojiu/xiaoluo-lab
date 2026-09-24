@@ -197,6 +197,64 @@ def _parse_expected_schema(
     return normalized
 
 
+# =========================================================
+# Version Timeline / Diff
+#
+# 复用已有的 DatasetVersion + Operation：版本就是 DatasetVersion 行，
+# 操作来源就是 Operation 行。这里只做「读出来 + 算差异」，不新增版本系统。
+# =========================================================
+
+
+@router.get(
+    "/{dataset_id}/versions",
+    response_model=ApiResponse[dict],
+)
+def version_timeline(
+    dataset_id: int,
+    limit: int = Query(200, ge=1, le=1000),
+    service: DataEngineService = Depends(get_data_engine_service),
+) -> ApiResponse[dict]:
+    return ApiResponse(
+        data=service.version_timeline(
+            dataset_id,
+            limit=limit,
+        )
+    )
+
+
+@router.get(
+    "/{dataset_id}/versions/diff",
+    response_model=ApiResponse[dict],
+)
+def version_diff(
+    dataset_id: int,
+    base: int = Query(
+        ...,
+        description="基线版本号（DatasetVersion.version）",
+    ),
+    target: int = Query(
+        ...,
+        description="对比版本号（DatasetVersion.version）",
+    ),
+    include_quality: bool = Query(
+        True,
+        description=(
+            "是否计算质量变化。需要加载两个版本的数据，"
+            "大表可以关掉只保留结构差异"
+        ),
+    ),
+    service: DataEngineService = Depends(get_data_engine_service),
+) -> ApiResponse[dict]:
+    return ApiResponse(
+        data=service.version_diff(
+            dataset_id,
+            base,
+            target,
+            include_quality=include_quality,
+        )
+    )
+
+
 @router.get(
     "/{dataset_id}/quality",
     response_model=ApiResponse[dict],

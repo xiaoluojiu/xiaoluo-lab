@@ -80,6 +80,81 @@ export interface QualityData {
   version?: number;
 }
 
+/** GET /datasets/{id}/versions —— 版本时间线（复用 DatasetVersion + Operation）。 */
+export interface VersionTimelineEntry {
+  id: number;
+  dataset_id: number;
+  version: number;
+  parent_version_id: number | null;
+  storage_path: string;
+  format: string;
+  row_count: number;
+  column_count: number;
+  schema: Record<string, unknown>;
+  created_at: string | null;
+  /** 版本来源：import（导入）或产出它的 operation 类型（filter / duplicate / ...）。 */
+  origin: string;
+  /** 来源的中文展示名（来自后端 OPERATION_METADATA，前端不另抄一份）。 */
+  origin_label: string;
+  operation: OperationRecord | null;
+  /** 父版本号；父版本不在本次返回范围内时为 row id（历史数据），无父版本为 null。 */
+  parent_version: number | null;
+  /** 相对父版本的变化；无父版本时为 null（不是 0 —— 0 表示「没变」）。 */
+  delta_rows: number | null;
+  delta_columns: number | null;
+}
+
+export interface OperationRecord {
+  id: number;
+  dataset_id: number;
+  input_version_id: number | null;
+  output_version_id: number | null;
+  operation_type: string;
+  parameters: Record<string, unknown>;
+  status: string;
+  error: string | null;
+  created_at: string | null;
+}
+
+export interface VersionTimelineResult {
+  dataset_id: number;
+  total: number;
+  latest_version: number;
+  versions: VersionTimelineEntry[];
+}
+
+/** GET /datasets/{id}/versions/diff */
+export interface SchemaChange {
+  column: string;
+  dtype?: string;
+  from?: string;
+  to?: string;
+}
+
+export interface QualitySummary {
+  issue_count: number;
+  missing_cells: number;
+  duplicate_rows: number;
+  severity?: Record<string, number>;
+}
+
+export interface VersionDiffResult {
+  dataset_id: number;
+  base: DatasetVersion;
+  target: DatasetVersion;
+  row_count: { base: number; target: number; delta: number };
+  column_count: { base: number; target: number; delta: number };
+  schema_diff: {
+    added: SchemaChange[];
+    removed: SchemaChange[];
+    type_changed: SchemaChange[];
+    unchanged_count: number;
+  };
+  /** include_quality=false 时为 null（大表可跳过，只保留结构差异）。 */
+  quality: { base: QualitySummary; target: QualitySummary } | null;
+  operations: OperationRecord[];
+}
+
 /** GET /datasets/{id}/preview —— 服务端分页预览。 */
 export interface PreviewData {
   columns: string[];

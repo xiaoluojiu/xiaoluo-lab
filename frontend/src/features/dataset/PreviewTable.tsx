@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { previewDataset } from "../../api/datasets";
 import type { PreviewData } from "../../types/dataset";
+import { Skeleton } from "../../components/StateBlock";
 
 interface Props {
   datasetId: number;
@@ -43,7 +44,8 @@ export function PreviewTable({ datasetId, version, pageSize = 20 }: Props) {
   }, [datasetId, version, page, pageSize, sortColumn, sortDesc]);
 
   if (error) return <div className="badge failed">{error}</div>;
-  if (loading && !data) return <div className="muted">加载中...</div>;
+  // 首次加载用表骨架（高度已知，避免表格出现时整页跳一下）；换页只加一行「刷新中」。
+  if (loading && !data) return <Skeleton lines={4} card />;
   if (!data || !data.items.length) return <div className="muted">暂无数据</div>;
 
   const columns = Object.keys(data.items[0]);

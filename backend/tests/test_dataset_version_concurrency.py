@@ -279,6 +279,37 @@ def test_db_commit_failure_leaves_no_orphan_snapshot(env):
     session.close()
 
 
+def test_failure_after_commit_keeps_snapshot(env):
+    """★ commit-before / commit-after 边界：commit 成功后的异常不得删除快照。
+
+    ``stage_version`` 里有两条方向相反的一致性要求：
+      - commit **之前**失败 → 占位行 rollback + 回收快照，本次创建整体消失（正确）；
+      - commit **之后**失败 → 版本行已经落库，此时删快照会留下
+        「库里有版本行、磁盘上没有文件」的孤儿版本，之后每次读取都失败。
+
+    旧实现只用一个 ``promoted`` 标记决定要不要回收快照，于是 commit 成功但随后
+    ``db.refresh()`` 抛异常时也会走进「回滚 + 删快照」—— 而 rollback 对已提交的
+    行无效，不一致性被藏进了磁盘。
+    """
+    factory, storage, dataset_id = env
+    session = factory()
+    service = DatasetService(session, storage)
+
+    def refresh_boom(*_args, **_kwargs):
+        raise RuntimeError("refresh failed after commit")
+
+    session.refresh = refresh_boom  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="refresh failed after commit"):
+        service.create_version(dataset_id, pl.DataFrame({"a": [1]}))
+
+    # 版本行已提交，rollback 撤不掉它 —— 所以快照必须留着，两者才是一致的
+    assert _versions(factory, dataset_id) == [1]
+    snapshot = storage.local_path(f"datasets/{dataset_id}/v000001.parquet")
+    assert snapshot.exists(), "commit 之后的异常删除了已提交版本的快照，会产生孤儿版本行"
+    session.close()
+
+
 def test_staging_failure_creates_no_version(env):
     """快照产出失败：暂存文件被清掉，且不产生任何版本行。"""
     factory, storage, dataset_id = env

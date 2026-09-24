@@ -105,7 +105,11 @@ class TestAgentContext:
         context = builder.build("分析", dataset_ids=[env["dataset_id"]])
         text = context.to_prompt_text()
         brief = context.dataset_context[str(env["dataset_id"])]
-        assert set(brief) == {"dataset_id", "name", "description", "version", "rows", "columns"}
+        # has_version：空数据集（建了但没导入数据）是正常状态，必须在元数据里可判定
+        assert set(brief) == {
+            "dataset_id", "name", "description", "version", "rows", "columns", "has_version",
+        }
+        assert brief["has_version"] is True
         assert "10.0" not in text or brief["rows"] == 10  # 只允许统计元信息，不携带原始行
 
 
@@ -146,6 +150,56 @@ class TestPlanner:
         context = builder.build("生成分析报告", dataset_ids=[env["dataset_id"]])
         plan = AgentPlanner(None).build_plan("生成分析报告", context, TOOL_DESCRIBES)
         assert any(s.tool == "report.generate" for s in plan.steps)
+
+    def test_rule_plan_deduplicate_has_a_real_path(self, env):
+        """「删除重复行」必须落到 data.clean(deduplicate)，而不是退化成 inspect + profile。
+
+        规则规划器此前完全没有 DATA_TRANSFORM 分支：所有非建模、非质量关键词的请求
+        都掉进 else（inspect + profile），于是「去重」这种最常见的诉求被当成 EDA。
+        """
+        builder = ContextBuilder(env["engine"])
+        context = builder.build("删除重复行", dataset_ids=[env["dataset_id"]])
+        plan = AgentPlanner(None).build_plan("删除重复行", context, TOOL_DESCRIBES)
+        clean = [s for s in plan.steps if s.tool == "data.clean"]
+        assert clean, f"应规划出真实的清洗步骤，实际：{[s.tool for s in plan.steps]}"
+        assert "deduplicate" in clean[0].arguments
+
+    def test_rule_plan_missing_values_has_a_real_path(self, env):
+        """「处理缺失值」→ data.clean(missing)；strategy 必须显式给出。
+
+        用 `drop` 而不是 mean/median：规则规划器看不到列类型，猜数值型策略会在
+        字符串列上直接失败（"只适用于数值列"）。
+        """
+        builder = ContextBuilder(env["engine"])
+        context = builder.build("处理缺失值", dataset_ids=[env["dataset_id"]])
+        plan = AgentPlanner(None).build_plan("处理缺失值", context, TOOL_DESCRIBES)
+        clean = [s for s in plan.steps if s.tool == "data.clean"]
+        assert clean, f"应规划出真实的清洗步骤，实际：{[s.tool for s in plan.steps]}"
+        assert clean[0].arguments["missing"]["strategy"] == "drop"
+
+    def test_rule_plan_does_not_fabricate_column_names(self, env):
+        """筛选 / 聚合需要列名，而规划阶段拿不到 schema ⇒ 不臆造参数。
+
+        臆造的 conditions / group_by 必然失败，且错误信息会把用户引向「列名填错了」，
+        而不是「还没拿到列名」。这里改为先把真实列名取出来。
+        """
+        builder = ContextBuilder(env["engine"])
+        context = builder.build("按地区聚合销售额", dataset_ids=[env["dataset_id"]])
+        plan = AgentPlanner(None).build_plan("按地区聚合销售额", context, TOOL_DESCRIBES)
+        tools = [s.tool for s in plan.steps]
+        assert "data.aggregate" not in tools, "规则规划器不该猜 group_by"
+        assert "dataset.schema" in tools, "应先把真实列名交出来"
+
+    def test_rule_plan_summary_is_not_a_report(self, env):
+        """「总结 / 结论」要的是一段回答，不是一份报告文件。
+
+        此前「总结」被列在 REPORT 关键词里，于是「总结一下分析结果」会静默产出一份
+        PDF —— 用户没要文件，却多了一个交付物。
+        """
+        builder = ContextBuilder(env["engine"])
+        context = builder.build("总结一下分析结果", dataset_ids=[env["dataset_id"]])
+        plan = AgentPlanner(None).build_plan("总结一下分析结果", context, TOOL_DESCRIBES)
+        assert "report.generate" not in [s.tool for s in plan.steps]
 
     def test_unknown_tool_rejected(self, env):
         builder = ContextBuilder(env["engine"])

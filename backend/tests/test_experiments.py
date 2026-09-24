@@ -286,3 +286,81 @@ def test_comparator_ignores_failed_runs(db, experiment_service, seeded_dataset):
     # 比较实验（取最近成功运行）
     cmp2 = experiment_service.compare_experiments([exp.id])
     assert cmp2.entries[0].run_id == success_run.id
+
+
+# ----------------------------------------------------------------------
+# 实验驾驶舱：列表要能回答「哪个实验效果更好」
+# ----------------------------------------------------------------------
+def test_list_with_latest_runs_returns_last_successful_run(
+    experiment_service, seeded_dataset
+):
+    """列表带出的是**最近一次成功**运行的指标，失败运行不算数。"""
+    exp = _make_exp(experiment_service, seeded_dataset)
+    first = experiment_service.run(exp.id)
+    # 再跑一次失败的运行：它的 id 更大，但不该顶掉成功的那条
+    failed = ExperimentRun(
+        experiment_id=exp.id, status="failed", error="boom"
+    )
+    experiment_service.db.add(failed)
+    experiment_service.db.commit()
+
+    items, latest, total = experiment_service.list_with_latest_runs()
+
+    assert total == 1
+    assert items[0].id == exp.id
+    assert latest[exp.id].id == first.id
+    assert latest[exp.id].status == "success"
+    assert latest[exp.id].metrics  # 真实指标，不是占位
+
+
+def test_list_with_latest_runs_is_empty_when_never_run(
+    experiment_service, seeded_dataset
+):
+    _make_exp(experiment_service, seeded_dataset)
+
+    items, latest, total = experiment_service.list_with_latest_runs()
+
+    assert total == 1
+    assert latest == {}  # 没跑过就是没有，不编造指标
+
+
+def test_list_with_latest_runs_is_two_queries_not_n_plus_1(
+    db, storage, dataset_service, experiment_service
+):
+    """5 个实验只应该有 2 条查询（实验 + 最近成功 run），不能每实验查一次。"""
+    from sqlalchemy import event
+
+    ds = dataset_service.create("n-plus-1")
+    version = dataset_service.create_version(
+        ds.id,
+        pl.DataFrame(
+            {
+                "a": [1.0, 1.5, 2.0, 8.0, 8.5, 9.0, 1.2, 8.2],
+                "label": [0, 0, 0, 1, 1, 1, 0, 1],
+            }
+        ),
+    )
+    for _ in range(5):
+        exp = experiment_service.create(
+            dataset_id=ds.id,
+            dataset_version_id=version.id,
+            task="classification",
+            model="logistic_regression",
+            target_column="label",
+            seed=42,
+        )
+        experiment_service.run(exp.id)
+
+    statements: list[str] = []
+
+    def _before(conn, cursor, statement, params, context, executemany_or_many):
+        statements.append(statement)
+
+    event.listen(db.bind, "before_cursor_execute", _before)
+    try:
+        experiment_service.list_with_latest_runs(page=1, page_size=20)
+    finally:
+        event.remove(db.bind, "before_cursor_execute", _before)
+
+    selects = [s for s in statements if s.strip().upper().startswith("SELECT")]
+    assert len(selects) <= 3, f"查询次数异常：{len(selects)}（疑似 N+1）"

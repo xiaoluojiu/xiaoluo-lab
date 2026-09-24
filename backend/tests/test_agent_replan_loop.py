@@ -213,6 +213,54 @@ def test_run_plan_stops_on_broken_dependency_chain():
     assert [e.type for e in run.events].count("replanning") == 1, "依赖链断裂应一次判死"
 
 
+def test_confirmation_is_consumed_once_retry_must_ask_again():
+    """★ P0：确认是**一次性凭据**，不是「本轮已确认」这个状态开关。
+
+    场景：用户确认 → 高风险工具执行失败 → Replanner 判「瞬时故障、重试同一步」
+    ⇒ 重试必须重新进入 WAITING_CONFIRMATION。
+
+    反例（旧实现）：`confirmed` 是循环外的布尔值，重试时 `abs_idx` 仍等于
+    `confirmed_step_index`，于是同一步在**没有新授权**的情况下又执行一次高风险操作。
+    用户点的是弹窗里那一次，失败后重试属于新的一次授权请求。
+    """
+
+    class _FlakyHighRiskExecutor:
+        """第一次（已确认）失败，之后只要没被授权就要求确认。"""
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.seen_confirmed: list[bool] = []
+
+        def execute_step(self, step, tool_ctx, services, *, confirmed, attempt, step_index) -> ToolCallRecord:
+            self.calls += 1
+            self.seen_confirmed.append(confirmed)
+            record = ToolCallRecord(step_index=step_index, tool=step.tool, arguments=dict(step.arguments), attempt=attempt)
+            if not confirmed:
+                record.status = "needs_confirmation"
+                record.error = "需要确认"
+                return record
+            # status 必须是 failed（不是 ok + fail 结果）：status=ok 会被 validator 放行，
+            # 走不到重规划分支，也就验不到「重试是否重新要授权」。
+            record.status = "failed"
+            record.error = "瞬时故障"
+            return record
+
+    registry = _FakeRegistry({"data.clean": _FakeTool("data.clean", [])})
+    executor = _FlakyHighRiskExecutor()
+    stub = _stub(registry=registry)
+    stub.executor = executor
+    run, session = _new_run(), AgentSession(id="s-t", user_id="u-t")
+
+    # 模拟 resume()：授权只给第 0 步
+    plan = AgentPlan(goal="清洗数据", steps=[PlanStep(tool="data.clean", arguments={})])
+    AgentRuntime._run_plan(stub, run, session, SimpleNamespace(), "analyst", plan,
+                           offset=0, attempts={}, confirmed=True, confirmed_step_index=0, on_event=None)
+
+    assert executor.seen_confirmed == [True, False], "重试那一次必须重新要授权"
+    assert run.status == RunStatus.WAITING_CONFIRMATION
+    assert run.pending_confirmation["step_index"] == 0
+
+
 def test_run_plan_cannot_loop_forever_even_if_replanner_always_retries(monkeypatch):
     """**结构性防线**：就算 replanner 每次都说「再试一次」，`_run_plan` 也必须停下来。
 

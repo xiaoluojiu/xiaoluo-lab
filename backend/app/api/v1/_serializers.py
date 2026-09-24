@@ -5,40 +5,23 @@ from __future__ import annotations
 from typing import Any
 
 from app.data_engine.merge.plan import MergePlan
-from app.models.dataset_version import DatasetVersion
+# version_dict / operation_dict 的真源在 data_engine.serializers：
+# 服务层（版本时间线 / Diff）也要用它们，依赖方向不能是 service -> api。
+from app.data_engine.serializers import (
+    operation_dict,
+    version_dict,
+)
 from app.models.experiment import Experiment
 from app.models.experiment_run import ExperimentRun
-from app.models.operation import Operation
 
 
-def version_dict(v: DatasetVersion) -> dict[str, Any]:
-    return {
-        "id": v.id,
-        "dataset_id": v.dataset_id,
-        "version": v.version,
-        "parent_version_id": v.parent_version_id,
-        "storage_path": v.storage_path,
-        "format": v.format,
-        "row_count": v.row_count,
-        "column_count": v.column_count,
-        "schema": v.schema_json or {},
-    }
-
-
-def operation_dict(op: Operation | None) -> dict[str, Any] | None:
-    if op is None:
-        return None
-    return {
-        "id": op.id,
-        "dataset_id": op.dataset_id,
-        "input_version_id": op.input_version_id,
-        "output_version_id": op.output_version_id,
-        "operation_type": op.operation_type,
-        "parameters": op.parameters or {},
-        "status": op.status,
-        "error": op.error,
-        "created_at": str(op.created_at) if op.created_at else None,
-    }
+__all__ = [
+    "experiment_dict",
+    "merge_plan_from_dict",
+    "operation_dict",
+    "run_dict",
+    "version_dict",
+]
 
 
 def experiment_dict(exp: Experiment) -> dict[str, Any]:

@@ -33,10 +33,12 @@ from app.core.contracts import Decision
 from app.local_router.contract import Intent
 
 __all__ = [
+    "COMPREHENSIVE_KEYWORDS",
     "GREETINGS",
     "INTENT_KEYWORDS",
     "MERGE_KEYWORDS",
     "MODEL_HINTS",
+    "QUALITY_KEYWORDS",
     "TOOL_DOMAINS",
     "classify",
     "hits",
@@ -80,9 +82,22 @@ INTENT_KEYWORDS: dict[Intent, tuple[str, ...]] = {
         "workflow", "工作流", "流程", "pipeline", "编排", "流水线", "节点",
     ),
     Intent.REPORT: (
-        "报告", "report", "pdf", "汇报", "总结", "结论", "导出报告",
+        # ★「总结 / 结论」刻意**不在**这里。
+        # 报告是**要产出一份文件**；「总结一下」「给个结论」要的是一段回答。
+        # 早先两者共用一组关键词，于是「帮我总结一下分析结果」会静默产出一份 PDF
+        # 写进报告中心 —— 用户没要文件，却多了一个交付物。
+        # 判定标准只用「报告 / 汇报 / PDF / 导出」这类**明确指向文件**的说法。
+        "报告", "report", "pdf", "汇报", "导出报告", "导出 pdf",
     ),
 }
+
+#: 规则规划器需要的**细分说法**。它们分属不同的 Intent（「重复」在 DATA_TRANSFORM、
+#: 「异常」在 EDA），但规划时要按细分意图选工具，所以在这里集中定义 ——
+#: 与 ``INTENT_KEYWORDS`` 一样只有一份，禁止在 planner / runtime / 前端各抄一遍。
+QUALITY_KEYWORDS: tuple[str, ...] = ("质量", "quality", "缺失", "重复", "空值", "异常")
+COMPREHENSIVE_KEYWORDS: tuple[str, ...] = (
+    "智能分析", "全面分析", "完整分析", "关键统计", "问题摘要", "综合",
+)
 
 #: 能力域 -> 该能力需要的工具类目（供候选工具集构造使用）。
 #: 与 :data:`INTENT_KEYWORDS` 一一对应，避免「路由放行了、工具没注入」的错配。

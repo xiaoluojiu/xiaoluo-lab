@@ -130,15 +130,16 @@ class AgentPlanner:
 
     def _llm_plan(self, user_request: str, context: AgentContext, tools: list[dict[str, Any]]) -> AgentPlan:
         text = user_request.lower()
+        # 关键词判定统一走 app.agent.intent（唯一真源）：这里再抄一份关键词，
+        # 就会出现「规则规划认得、LLM 提示词不认得」的口径漂移。
+        from app.agent.intent import hits
+
+        _hits = hits(text)
         plan_intent = []
-        for kw in ("报告", "汇报", "导出报告", "总结報告", "report"):
-            if kw in text:
-                plan_intent.append("report.generate")
-                break
-        for kw in ("工作流", "workflow", "流程", "pipeline", "编排"):
-            if kw in text:
-                plan_intent.append("workflow.build_and_run")
-                break
+        if _hits.get(Intent.REPORT):
+            plan_intent.append("report.generate")
+        if _hits.get(Intent.WORKFLOW):
+            plan_intent.append("workflow.build_and_run")
         intent_hint = ""
         if plan_intent:
             intent_hint = f"本次请求的意图工具已被识别为：{'、'.join(plan_intent)}，计划中应当包含它们。"
@@ -157,14 +158,14 @@ class AgentPlanner:
             "② 数据质量 dataset.quality；"
             "③ 统计画像 dataset.profile；"
             "④ 分布与关系 eda.describe / eda.correlation；"
-            "⑤ 报告 report.generate（它会基于数据集自动产出并嵌入：分布直方图、类别柱状图、"
-            "相关系数热力图、相关性散点图、正态 Q-Q 图、累积分布图，因此一般不需要再用 eda.visualize 重复画这些标准图；"
-            "只有用户明确指定某一张图、或需要 report.generate 之外的特殊图表时才加 eda.visualize，"
-            "且其 column/x/y/columns 必须来自 dataset.schema / dataset.profile 的真实字段名，不确定就不要画）；"
-            "★ report.generate 只在用户明确要求「报告 / 汇报 / PDF / 导出」时才加入计划 ——"
-            "普通分析请求只需给出分析结果，不要顺带产出报告文件。"
+            "需要画图时用 eda.visualize（其 column/x/y/columns 必须来自 dataset.schema / dataset.profile 的"
+            "真实字段名，不确定就不要画）。"
+            "★★ report.generate 的唯一判定标准（不要与其它规则冲突，也不要默认加）："
+            "只有用户**明确要求产出报告文件**时（说了「报告 / 汇报 / PDF / 导出」）才把它加进计划，"
+            "且只加一次、放在最后。用户只要求「分析 / 统计 / 总结 / 结论 / 洞察 / 给建议」时"
+            "**不要**加 report.generate —— 那些要的是一段回答，不是一份文件。"
             "workflow 相关请求请用 workflow.build_and_run 一步完成（内部已包含创建与执行），不要拆成 workflow.create + workflow.run。"
-            "建模请求固定顺序：dataset.inspect → dataset.profile → ml.detect_task(infer_target=true, goal=用户诉求原文) → ml.prepare(target={{stepN.target}}) → ml.train(target={{stepN.target}}) → report.generate。"
+            "建模请求固定顺序：dataset.inspect → dataset.profile → ml.detect_task(infer_target=true, goal=用户诉求原文) → ml.prepare(target={{stepN.target}}) → ml.train(target={{stepN.target}})。"
             "ml.detect_task 会自己按「命名约定 → 诉求语义（goal 与数据集名称）→ 排除日历/时间/标识列后的唯一候选」"
             "推断目标列，并把依据写在 reasons / target_source 里 —— 所以 goal 一定要填用户诉求原文"
             "（例如「预测出发延误」），推断质量取决于它。"
@@ -177,7 +178,6 @@ class AgentPlanner:
             "禁止在监督任务上用聚类顶替）；后续步骤用 {{stepN.answer}} 引用用户回答。"
             "确实能从命名约定或诉求语义唯一确定目标列时，不要反问，直接填。"
             "模型选择优先用 model=\"auto\"（按任务类型自动选），只有用户明确要求具体算法时才写模型名。"
-            "计划的最后一步通常是 report.generate。"
             "每个步骤的 expected_output 用不超过 20 字的一句话概括，不要写长句。"
             "输出 JSON：{\"goal\": str, \"steps\": [{\"tool\": str, \"arguments\": object, \"expected_output\": str, \"permission\": str}]}。"
         )
@@ -221,23 +221,41 @@ class AgentPlanner:
 
         # 关键词判定统一走 app.agent.intent（与运行时路由、候选工具注入共用一份）。
         # 改之前这里有一套自己的关键词，漏改一处就表现为「走错分支」。
-        from app.agent.intent import classify, hits, model_hint, wants_merge
-
-        decision = classify(user_request, has_datasets=bool(ds_ids))
-        intent_hits = hits(text)
-        wants_train = wants_modeling(text)
-        wants_quality = bool(intent_hits.get(Intent.DATASET)) and any(
-            k in text for k in ("质量", "缺失", "重复", "异常", "quality")
+        # ★ 细分说法（质量 / 全面分析）也只能在 intent.py 里定义一份，
+        #   本文件不出现任何字面关键词表 —— 否则又变成第二个真源。
+        from app.agent.intent import (
+            COMPREHENSIVE_KEYWORDS,
+            QUALITY_KEYWORDS,
+            hits,
+            model_hint,
+            wants_merge,
         )
-        wants_corr = any(k in text for k in ("相关", "corr"))
+
+        intent_hits = hits(text)
+
+        def _matched(intent: Intent) -> list[str]:
+            return intent_hits.get(intent) or []
+
+        wants_train = wants_modeling(text)
+        wants_quality = any(k in text for k in QUALITY_KEYWORDS)
+        # 「相关」本身就在 EDA 关键词里：从命中的词里取，而不是再抄一遍关键词。
+        wants_corr = "相关" in _matched(Intent.EDA)
         wants_workflow = bool(intent_hits.get(Intent.WORKFLOW))
         wants_merge = wants_merge(text)  # noqa: F811 - 同名覆盖为布尔意图标记
         wants_report = bool(intent_hits.get(Intent.REPORT))
-        wants_chart = any(k in text for k in ("图", "可视化", "chart", "直方图", "散点", "热力图", "分布图"))
+        wants_comprehensive = any(k in text for k in COMPREHENSIVE_KEYWORDS)
+        wants_eda = bool(intent_hits.get(Intent.EDA))
+        # 「评估 / 指标」同属 ML 关键词，复用命中结果而不是另起一份。
+        wants_evaluate = any(k in _matched(Intent.ML) for k in ("评估", "效果", "指标", "准确率"))
+        # DATA_TRANSFORM 的细分：只挑「不需要列名就能确定」的操作（见下方分支说明）
+        transform_hits = _matched(Intent.DATA_TRANSFORM)
+        wants_dedupe = any(k in transform_hits for k in ("去重", "重复"))
+        wants_missing = any(k in transform_hits for k in ("缺失", "填充")) or any(
+            k in text for k in ("空值", "missing", "null")
+        )
+        wants_column_op = any(k in transform_hits for k in ("筛选", "聚合", "排序"))
         # 注意：这里用到的工具必须在 ContextBuilder.with_tools 的确定性注入集合里，
         # 否则规则规划会引用未被注入的候选工具而被 _validate 拒绝。
-        wants_comprehensive = any(k in text for k in ("智能分析", "全面分析", "完整分析", "关键统计", "问题摘要", "综合"))
-        wants_eda = wants_corr or any(k in text for k in ("eda", "分布", "探索", "描述", "统计"))
         if not ds_ids:
             return AgentPlan(goal=f"需要数据集才能执行：{user_request[:80]}", steps=[])
 
@@ -273,8 +291,9 @@ class AgentPlanner:
                         {"source": "n3", "target": "n4"},
                     ],
                 }),
-                PlanStep(tool="report.generate", arguments=_args()),
             ])
+            # 不再固定追加 report.generate：workflow 里的 report.summary 节点已经产出汇总，
+            # 用户没要报告文件时不该再落一份 PDF（与全局报告判定保持同一条规则）。
             return AgentPlan(goal=f"编排并执行工作流：{user_request[:80]}", steps=steps[: self.max_steps])
 
         if wants_train:
@@ -302,10 +321,34 @@ class AgentPlanner:
             steps.append(PlanStep(tool="ml.train", arguments=train_args))
             # 「训练并评估」是常见说法：训练步自带指标，但显式要求评估时应补 ml.evaluate，
             # 这样链路才闭环（此前规则规划只训练不评估，用户看到的结果少一截）。
-            if any(k in text for k in ("评估", "效果", "指标", "准确率", "evaluate")):
+            if wants_evaluate:
                 steps.append(
                     PlanStep(tool="ml.evaluate", arguments={"run_id": "{{step%d.run_id}}" % len(steps)})
                 )
+        elif wants_dedupe or wants_missing or wants_column_op:
+            # ---- DATA_TRANSFORM：规则规划的确定性路径 -------------------------
+            # 去重 / 缺失值处理**不需要列名**（data.clean 对全表生效），可以真实执行。
+            # 筛选 / 聚合 / 排序必须知道列名，而规划阶段拿不到 schema（ContextBuilder
+            # 明确禁止读数据）：这里绝不臆造列名填进 conditions / group_by —— 那必然
+            # 失败，且错误信息会把用户引向「列名填错了」而不是「还没拿到列名」。
+            # 改为先取 schema + profile，把真实列名交到结果里，由用户或 LLM 接着做。
+            steps.append(PlanStep(tool="dataset.inspect", arguments=_args()))
+            if wants_dedupe or wants_missing:
+                clean_args: dict[str, Any] = {}
+                if wants_missing:
+                    # strategy 必须显式给：data.clean 不填会被判「缺少参数」。
+                    # 用 `drop`（删掉含空值的行）而不是 mean/median ——
+                    # 后者在字符串列上会直接报「只适用于数值列」，而规则规划器
+                    # 看不到列类型，猜错了就是一次必然失败的运行。
+                    clean_args["missing"] = {"strategy": "drop"}
+                if wants_dedupe:
+                    clean_args["deduplicate"] = {"keep": "first"}
+                steps.append(PlanStep(tool="data.clean", arguments=_args(clean_args)))
+            else:
+                steps.extend([
+                    PlanStep(tool="dataset.schema", arguments=_args()),
+                    PlanStep(tool="dataset.profile", arguments=_args()),
+                ])
         elif wants_comprehensive:
             steps.extend([
                 PlanStep(tool="dataset.inspect", arguments=_args()),

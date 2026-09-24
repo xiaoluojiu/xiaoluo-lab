@@ -58,6 +58,10 @@ from app.data_engine.merge_multi import (
     analyze_multi_merge,
     execute_multi_merge,
 )
+from app.data_engine.serializers import (
+    operation_dict,
+    version_dict,
+)
 from app.data_engine.operations import (
     add_column,
     aggregate,
@@ -70,6 +74,7 @@ from app.data_engine.operations import (
     pivot,
     preview,
 )
+from app.models.dataset_version import DatasetVersion
 from app.models.operation import (
     Operation,
 )
@@ -205,6 +210,46 @@ OPERATION_METADATA = {
         "risk": "medium",
     },
 }
+
+
+def _flat_schema(raw: Any) -> dict[str, str]:
+    """``DatasetVersion.schema_json`` -> ``{列名: 类型}``。
+
+    建版本时落库的 schema 形态是 ``{"col": "Int64", ...}``；
+    个别老版本可能存成列表形态，这里统一摊平，缺失/异常一律按空处理，
+    不让「描述差异」这种只读功能因为脏数据炸掉。
+    """
+
+    if not isinstance(raw, dict):
+        return {}
+
+    return {
+        str(key): str(value)
+        for key, value in raw.items()
+    }
+
+
+def _quality_summary(report: dict[str, Any]) -> dict[str, Any]:
+    """质量报告 -> Diff 里要展示的几个数字。
+
+    只取「可比」的统计量：问题数、缺失单元格、重复行。
+    完整 issue 列表不进 Diff（那是「质量」页的职责）。
+    """
+
+    statistics = report.get("statistics") or {}
+
+    return {
+        "issue_count": int(
+            statistics.get("issue_count") or 0
+        ),
+        "missing_cells": int(
+            statistics.get("missing_cells") or 0
+        ),
+        "duplicate_rows": int(
+            statistics.get("duplicate_rows") or 0
+        ),
+        "severity": report.get("severity") or {},
+    }
 
 
 class DataEngineService:
@@ -754,6 +799,259 @@ class DataEngineService:
         return list(
             self.dataset_service.db.scalars(stmt)
         )
+
+    # =========================================================
+    # Version Timeline / Diff
+    #
+    # 完全复用已有的 DatasetVersion + Operation：
+    # 版本是 DatasetVersion 行，操作来源是 Operation 行（output_version_id -> version.id），
+    # 血缘是 DatasetVersion.parent_version_id。这里不新增任何「版本系统」，
+    # 只是把已经落库的信息读出来，按时间线组织并算出两个版本之间的差异。
+    # =========================================================
+
+    def version_timeline(
+        self,
+        dataset_id: int,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        """数据集版本时间线（从旧到新）。
+
+        每项包含：版本号、规模、创建时间、来源操作、相对父版本的变化。
+        首个版本没有 Operation 行（它是导入产生的），``origin`` 记为 ``import``。
+        """
+
+        if self.dataset_service is None:
+            raise RuntimeError(
+                "DataEngineService requires DatasetService"
+            )
+
+        ds = self.dataset_service
+
+        ds.get(dataset_id)
+
+        rows = list(
+            ds.db.scalars(
+                select(DatasetVersion)
+                .where(
+                    DatasetVersion.dataset_id
+                    == dataset_id,
+                )
+                .order_by(DatasetVersion.version.asc())
+                .limit(limit)
+            )
+        )
+
+        # output_version_id -> Operation（一个版本最多由一个操作产出）
+        operations = {
+            op.output_version_id: op
+            for op in ds.db.scalars(
+                select(Operation).where(
+                    Operation.dataset_id == dataset_id,
+                    Operation.output_version_id.is_not(None),
+                )
+            )
+        }
+
+        by_id = {row.id: row for row in rows}
+
+        items: list[dict[str, Any]] = []
+
+        for row in rows:
+            parent = (
+                by_id.get(row.parent_version_id)
+                if row.parent_version_id is not None
+                else None
+            )
+            op = operations.get(row.id)
+
+            items.append(
+                {
+                    **version_dict(row),
+                    "created_at": (
+                        str(row.created_at)
+                        if row.created_at
+                        else None
+                    ),
+                    "origin": (
+                        op.operation_type
+                        if op is not None
+                        else "import"
+                    ),
+                    # 展示名复用 OPERATION_METADATA，前端不必再抄一份 op_type -> 中文名
+                    "origin_label": (
+                        OPERATION_METADATA.get(
+                            op.operation_type, {}
+                        ).get("label")
+                        if op is not None
+                        else "导入"
+                    ),
+                    "operation": operation_dict(op),
+                    "parent_version": (
+                        parent.version
+                        if parent is not None
+                        else (
+                            row.parent_version_id
+                            if row.parent_version_id
+                            is not None
+                            else None
+                        )
+                    ),
+                    # 相对父版本的变化；父版本不在本次取回范围内时为 None
+                    "delta_rows": (
+                        row.row_count - parent.row_count
+                        if parent is not None
+                        else None
+                    ),
+                    "delta_columns": (
+                        row.column_count
+                        - parent.column_count
+                        if parent is not None
+                        else None
+                    ),
+                }
+            )
+
+        latest = rows[-1] if rows else None
+
+        return {
+            "dataset_id": dataset_id,
+            "total": len(items),
+            "latest_version": (
+                latest.version if latest is not None else 0
+            ),
+            "versions": items,
+        }
+
+    def version_diff(
+        self,
+        dataset_id: int,
+        base: int,
+        target: int,
+        *,
+        include_quality: bool = True,
+    ) -> dict[str, Any]:
+        """两个版本之间的差异。
+
+        只做「描述差异」，不修改任何数据：
+
+        - ``schema_diff`` 来自 ``DatasetVersion.schema_json``（建版本时落库），
+          **不读数据文件**；
+        - ``quality`` 需要真正加载两个版本的数据，所以是可关的（默认开），
+          复用 ``quality()`` 本身，保证与「质量」页看到的是同一套口径。
+        """
+
+        if self.dataset_service is None:
+            raise RuntimeError(
+                "DataEngineService requires DatasetService"
+            )
+
+        ds = self.dataset_service
+
+        base_row = ds.get_version_row(dataset_id, base)
+        target_row = ds.get_version_row(dataset_id, target)
+
+        base_schema = _flat_schema(base_row.schema_json)
+        target_schema = _flat_schema(target_row.schema_json)
+
+        added = sorted(
+            set(target_schema) - set(base_schema)
+        )
+        removed = sorted(
+            set(base_schema) - set(target_schema)
+        )
+        changed = sorted(
+            column
+            for column in set(base_schema)
+            & set(target_schema)
+            if base_schema[column]
+            != target_schema[column]
+        )
+
+        quality: dict[str, Any] | None = None
+
+        if include_quality:
+            quality = {
+                "base": _quality_summary(
+                    self.quality(
+                        ds.load_version(
+                            dataset_id,
+                            base_row.version,
+                        )
+                    )
+                ),
+                "target": _quality_summary(
+                    self.quality(
+                        ds.load_version(
+                            dataset_id,
+                            target_row.version,
+                        )
+                    )
+                ),
+            }
+
+        return {
+            "dataset_id": dataset_id,
+            "base": version_dict(base_row),
+            "target": version_dict(target_row),
+            "row_count": {
+                "base": base_row.row_count,
+                "target": target_row.row_count,
+                "delta": (
+                    target_row.row_count
+                    - base_row.row_count
+                ),
+            },
+            "column_count": {
+                "base": base_row.column_count,
+                "target": target_row.column_count,
+                "delta": (
+                    target_row.column_count
+                    - base_row.column_count
+                ),
+            },
+            "schema_diff": {
+                "added": [
+                    {
+                        "column": column,
+                        "dtype": target_schema[column],
+                    }
+                    for column in added
+                ],
+                "removed": [
+                    {
+                        "column": column,
+                        "dtype": base_schema[column],
+                    }
+                    for column in removed
+                ],
+                "type_changed": [
+                    {
+                        "column": column,
+                        "from": base_schema[column],
+                        "to": target_schema[column],
+                    }
+                    for column in changed
+                ],
+                "unchanged_count": len(
+                    set(base_schema) & set(target_schema)
+                )
+                - len(changed),
+            },
+            "quality": quality,
+            # 从 base 到 target 之间实际执行过的操作（按 id 升序）。
+            "operations": [
+                operation_dict(op)
+                for op in ds.db.scalars(
+                    select(Operation)
+                    .where(
+                        Operation.dataset_id == dataset_id,
+                        Operation.output_version_id
+                        == target_row.id,
+                    )
+                    .order_by(Operation.id.asc())
+                )
+            ],
+        }
 
     # =========================================================
     # Merge

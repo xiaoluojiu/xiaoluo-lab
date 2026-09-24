@@ -101,6 +101,13 @@ class AgentRuntime:
         共用同一段代码，避免两处逻辑漂移。
         """
         context=self._build_context(run,session); self._emit(run,"planning",{"stage":"context_ready","data_access":"metadata_only"},on_event)
+        # ★ 空数据集是**正常业务状态**：建了数据集还没导入数据时，给一句明确提示就结束，
+        # 不进 Pre-flight、不规划、更不把它当成异常把整次运行打成 failed。
+        if plan_override is None:
+            empty = self._datasets_without_version(context)
+            if empty:
+                self._no_data_notice(run, session, empty, on_event)
+                return
         if plan_override is None and settings.AGENT_PREFLIGHT_ENABLED:
             pre=self._preflight(run,session,intent,context)
             run.preflight=pre.to_dict()
@@ -125,6 +132,44 @@ class AgentRuntime:
     def _build_plan(self, run: AgentRun, context: AgentContext, candidate_tools: list[dict[str, Any]], all_tools: list[dict[str, Any]], plan_override: AgentPlan | None) -> AgentPlan:
         if plan_override is not None: return plan_override
         return self.planner.build_plan_resilient(run.user_request, context, candidate_tools, all_tools=all_tools)
+
+    def _datasets_without_version(self, context: AgentContext) -> list[str]:
+        """会话里「还没有任何数据版本」的数据集名称。
+
+        ``has_version`` 缺失时按「有数据」处理：老版本持久化的上下文没有这个键，
+        默认成「没数据」会把正常会话全部拦下来。
+        """
+        names: list[str] = []
+        for brief in (context.dataset_context or {}).values():
+            if not isinstance(brief, dict) or brief.get("has_version", True):
+                continue
+            name = str(brief.get("name") or "").strip()
+            names.append(name or f"数据集 {brief.get('dataset_id', '?')}")
+        return names
+
+    def _no_data_notice(self, run: AgentRun, session: AgentSession, datasets: list[str], on_event: EventCallback | None) -> None:
+        """明确告诉用户「这份数据集还没有数据」，并给出下一步该做什么。
+
+        错误文案要回答三件事：发生了什么 / 为什么 / 怎么办。一句
+        ``dataset has no versions`` 三件都没说清。
+        """
+        joined = "、".join(datasets)
+        answer = (
+            f"当前数据集（{joined}）还没有数据版本，暂时无法分析。\n"
+            "请先导入数据：在「数据集」页上传 CSV / Excel，或用数据库连接器抽取，"
+            "导入成功后版本时间线会出现 v1，再到这里让我分析。"
+        )
+        run.answer_source = PLATFORM_RULES_NOTICE
+        run.final_answer = answer
+        run.status = RunStatus.COMPLETED
+        run.finished_at = run.finished_at or time.time()
+        session.history.append({"role": "assistant", "content": answer})
+        self._emit(
+            run, "completed",
+            {"final_answer": answer, "mode": "notice", "reason": "dataset_has_no_version",
+             "datasets": datasets, "answer_source": describe(run.answer_source)},
+            on_event,
+        )
 
     # ---- Pre-flight（第一层改造） ----------------------------------------
     def _preflight(self, run: AgentRun, session: AgentSession, intent, context: AgentContext):
@@ -178,18 +223,15 @@ class AgentRuntime:
         与 :meth:`resume` 的分工：``resume`` 处理「高风险操作授权」，
         这里处理「信息补全」。两者都会让运行脱离等待态，但语义不同。
         """
-        run = self.store.get_run(run_id)
-        pending = run.pending_clarification
-        if run.status != RunStatus.WAITING_CLARIFICATION or pending is None:
-            raise ValidationException("该运行不在等待澄清状态")
         # 空回答不是「接受默认值」，而是没答：直接往下走会用一个空串去填参数，
         # 得到看似成功实则答非所问的结果。要默认值就显式把 default 发回来。
         if not str(answer or "").strip():
             raise ValidationException("澄清回答不能为空")
-        code = str(pending.get("code") or "")
-        run.clarification_answers[code] = str(answer or "").strip()
+        # ★ 与 confirm 同口径：原子领取，同一条反问只被消费一次。
+        run, pending, code = self.store.claim_clarification(run_id, str(answer))
+        if pending is None:
+            raise ValidationException("该运行不在等待澄清状态（回答已被受理或运行已结束）")
         step_index = pending.get("step_index")
-        run.pending_clarification = None
         session = self.store.get_session(run.session_id)
         intent = classify(run.user_request, has_datasets=bool(session.dataset_ids))
         self._emit(run, "clarification", {"stage": "answered", "code": code, "answer": str(answer)}, on_event)
@@ -304,9 +346,12 @@ class AgentRuntime:
         names={x.get("name") for x in context.tool_context.get("tools",[])}; return [t for t in all_tools if t.get("name") in names]
 
     def resume(self,session:AgentSession,run_id:str,*,on_event:EventCallback|None=None)->AgentRun:
-        run=self.store.get_run(run_id); pending=run.pending_confirmation
-        if run.status!=RunStatus.WAITING_CONFIRMATION or pending is None: raise ValidationException("该运行不在等待确认状态")
-        run.pending_confirmation=None; run.status=RunStatus.RUNNING; step_index=int(pending["step_index"]); self._emit(run,"permission",{"stage":"confirmed","tool":pending["call"].tool,"step_index":step_index},on_event)
+        # ★ 原子领取：并发的两次 confirm 只有一个能拿到 pending，另一个被明确拒绝。
+        # 不能依赖前端的 `confirming` 标记 —— 它只在单个标签页内有效，
+        # 挡不住两个标签 / 网络重放 / 客户端重试。
+        run, pending = self.store.claim_confirmation(run_id)
+        if pending is None: raise ValidationException("该运行不在等待确认状态（授权已被领取或运行已结束）")
+        step_index=int(pending["step_index"]); self._emit(run,"permission",{"stage":"confirmed","tool":pending["call"].tool,"step_index":step_index},on_event)
         plan=self._plan_from_dict(run.plan or {}); continue_plan=AgentPlan(goal=plan.goal,steps=plan.steps[step_index:])
         try:
             with self._usage_scope(run):
@@ -339,17 +384,10 @@ class AgentRuntime:
         （载荷在 pending_clarification 里）被判定为「无需处理」直接返回——
         用户点取消/拒绝后运行毫无反应，会话永久锁死。
         """
-        run = self.store.get_run(run_id)
-
-        if run.status == RunStatus.WAITING_CLARIFICATION:
-            if run.pending_clarification is None:
-                return run
-            run.pending_clarification = None
-        elif run.status == RunStatus.WAITING_CONFIRMATION:
-            if run.pending_confirmation is None:
-                return run
-            run.pending_confirmation = None
-        else:
+        # ★ 同样走原子领取：并发的两次 deny 只有一个真正终止运行，
+        # 另一个拿到 kind="" 直接返回（幂等），不会把已失败的运行再写一遍。
+        run, kind = self.store.claim_wait(run_id)
+        if not kind:
             return run
 
         self._fail(run, self._DENY_MESSAGES[run.status], on_event)
@@ -380,9 +418,17 @@ class AgentRuntime:
         Step2 ml.train(HIGH)、Step3 workflow.run(HIGH) 全部被静默放行 —— 一次确认 = 放行整条
         高风险链路，而用户以为自己只批准了弹窗里那一个工具。
 
-        现在：一次确认最多授权一次对应的高风险调用；后续再次遇到 HIGH / CRITICAL 会重新进入
+        现在：一次确认最多授权**一次**对应的高风险调用；后续再次遇到 HIGH / CRITICAL 会重新进入
         WAITING_CONFIRMATION。``confirmed_step_index is None`` 表示调用方显式授权整轮执行，
         仅用于服务端/测试直接调用（HTTP API 不接受客户端传 confirmed）。
+
+        ★★ 授权是**一次性凭据**，不是状态开关（2026-09-24 P0）
+        ``authorized_step`` 在本轮执行里只存在到「那一步真正被执行一次」为止，用完即置空。
+        否则会出现：确认 → 高风险工具执行失败 → Replanner 判「瞬时故障、重试同一步」→
+        同一步以 ``abs_idx == confirmed_step_index`` 再次命中授权 → 未经用户同意又执行一次。
+        用户点的是弹窗里那一次操作，失败后重试属于**新的一次授权请求**，必须重新弹窗。
+        （此前侥幸没出事，只是因为 ``resume()`` 预置 ``attempts={step_index:1}`` 让重试在第
+        一次失败后就被跳过 —— 那是记账口径的巧合，不是授权语义的保证。）
 
 
         ★★ 死循环防线（2026-09-22 r-22 P0，实测过同一条路径产生 199987 条 replanning 事件）
@@ -409,6 +455,9 @@ class AgentRuntime:
         if isinstance(extra, dict):
             extra[ANSWERS_KEY] = dict(run.clarification_answers or {})
         services=self._services(); current=plan; permanent_failure=""; total_steps=max(len(plan.steps),1); replans=0
+        # 一次性授权凭据：不是「本轮已确认」这个状态，而是「还剩这一次没用掉」。
+        # None 表示调用方授权整轮（服务端/测试直调），不参与消费。
+        authorized_step: int | None = confirmed_step_index
         while current.steps:
             # ① 重规划总闸：与单步尝试上限互补，任何原因的循环到这里都会被截断。
             #    阈值只在 ``Replanner.assert_replan_budget`` 定义一处——早先这里内联了
@@ -438,7 +487,10 @@ class AgentRuntime:
                 self._emit(run,"tool_call",{"step_index":abs_idx,"tool":step.tool,"arguments":step.arguments,"progress":min(90,max(5,round((run.tool_call_count/max(total_steps,1))*90)))},on_event)
                 # 授权只落到被用户确认的那一步；其余步骤按 PermissionManager 的裁决走
                 # （HIGH / CRITICAL 会再次进入 WAITING_CONFIRMATION）。
-                step_confirmed=confirmed and (confirmed_step_index is None or abs_idx==confirmed_step_index)
+                step_confirmed=confirmed and (confirmed_step_index is None or abs_idx==authorized_step)
+                if step_confirmed and confirmed_step_index is not None:
+                    # 凭据用掉即失效：同一高风险步骤再次执行（重试 / 重规划）必须重新确认。
+                    authorized_step=None
                 record=self.executor.execute_step(step,tool_ctx,services,confirmed=step_confirmed,attempt=attempt_no,step_index=abs_idx); run.tool_calls.append(record)
                 if record.status=="needs_confirmation":
                     run.status=RunStatus.WAITING_CONFIRMATION; run.pending_confirmation={"call":record,"step_index":abs_idx}; self._emit(run,"permission",{"stage":"confirmation_required","tool":step.tool,"reason":record.error,"step_index":abs_idx},on_event); return

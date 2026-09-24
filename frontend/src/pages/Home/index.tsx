@@ -9,6 +9,7 @@ import type { WorkflowSummary } from "../../types/workflow";
 import { EmptyState, HeroBand, Panel, SectionHeader } from "../../components/viz/Blocks";
 import { KpiCard } from "../../components/viz/KpiCard";
 import { Icon, type IconName } from "../../components/icons/Icon";
+import { primaryMetric, metricLabel } from "../../features/ml/metrics";
 
 interface HomeData {
   datasets: Dataset[];
@@ -40,28 +41,6 @@ function timestamp(value: string | null | undefined) {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-/** 从一次 run 的 metrics 里挑出「最能代表性能」的单一数值。
- *  口径：分类取 accuracy、回归取 r²、聚类取 silhouette；都取不到返回 null。
- *  只读真实值，不虚构、不归一化。 */
-function primaryMetric(metrics: Record<string, number | string> | undefined): number | null {
-  if (!metrics) return null;
-  const candidates = ["accuracy", "r2", "silhouette", "f1"];
-  for (const key of candidates) {
-    const raw = metrics[key];
-    if (typeof raw === "number" && Number.isFinite(raw)) return raw;
-  }
-  return null;
-}
-
-/** 主指标的展示标签与单位（与后端 eval 口径对齐）。 */
-function metricLabel(metrics: Record<string, number | string> | undefined): string | null {
-  if (!metrics) return null;
-  if (typeof metrics.accuracy === "number") return "accuracy";
-  if (typeof metrics.r2 === "number") return "r²";
-  if (typeof metrics.silhouette === "number") return "轮廓系数";
-  if (typeof metrics.f1 === "number") return "f1";
-  return null;
-}
 
 const QUICK_LINKS: { title: string; desc: string; to: string; icon: IconName }[] = [
   { title: "数据", desc: "上传、预览与管理数据集版本", to: "/datasets", icon: "database" },

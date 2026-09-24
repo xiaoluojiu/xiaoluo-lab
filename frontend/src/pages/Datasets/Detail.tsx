@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { getDataset, getProfile, getQuality, getSchema } from "../../api/datasets";
 import type { Dataset, ProfileData, QualityData, SchemaColumn } from "../../types/dataset";
-import { ErrorState, Loading } from "../../components/Loading";
+import { ErrorState } from "../../components/Loading";
+import { Skeleton } from "../../components/StateBlock";
 import { PreviewTable } from "../../features/dataset/PreviewTable";
+import { VersionTimeline } from "../../features/dataset/VersionTimeline";
 import { PageHeader } from "../../components/PageHeader";
 
 type Tab = "overview" | "preview" | "schema" | "profile" | "quality" | "versions";
@@ -50,7 +52,7 @@ export default function DatasetDetail() {
   ], [datasetId]);
 
   if (error) return <ErrorState message={error} onRetry={() => location.reload()} />;
-  if (!dataset) return <Loading />;
+  if (!dataset) return <Skeleton lines={4} card />;
 
   const tabs: [Tab, string][] = [
     ["overview", "概览"], ["preview", "预览"], ["schema", "Schema"],
@@ -114,23 +116,25 @@ export default function DatasetDetail() {
       {tab === "schema" && (
         <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-3)" }}><div><h3 style={{ margin: 0 }}>字段结构</h3><div className="muted" style={{ marginTop: "var(--space-1)" }}>{schema?.length ?? "-"} 个字段</div></div></div>
-          {schema ? <table className="data-table"><thead><tr><th>列名</th><th>类型</th></tr></thead><tbody>{schema.map((c) => <tr key={c.column}><td>{c.column}</td><td>{c.dtype}</td></tr>)}</tbody></table> : <Loading />}
+          {schema ? <table className="data-table"><thead><tr><th>列名</th><th>类型</th></tr></thead><tbody>{schema.map((c) => <tr key={c.column}><td>{c.column}</td><td>{c.dtype}</td></tr>)}</tbody></table> : <Skeleton lines={3} />}
         </div>
       )}
 
       {tab === "profile" && (
-        <div className="card"><h3 style={{ marginTop: 0 }}>数据概况</h3>{profile ? <pre style={{ fontSize: 12, overflow: "auto", maxHeight: 520, margin: 0 }}>{JSON.stringify(profile, null, 2)}</pre> : <Loading />}</div>
+        <div className="card"><h3 style={{ marginTop: 0 }}>数据概况</h3>{profile ? <pre style={{ fontSize: 12, overflow: "auto", maxHeight: 520, margin: 0 }}>{JSON.stringify(profile, null, 2)}</pre> : <Skeleton lines={3} />}</div>
       )}
 
       {tab === "quality" && (
         <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-3)" }}><div><h3 style={{ margin: 0 }}>数据质量</h3><div className="muted" style={{ marginTop: "var(--space-1)" }}>发现的问题只影响当前检查，不会自动修改数据。</div></div><span className={`badge ${qualityIssues ? "failed" : "success"}`}>{quality ? qualityState : "检查中"}</span></div>
-          {quality ? <>{quality.issues.length ? <table className="data-table"><thead><tr><th>类型</th><th>列</th><th>说明</th></tr></thead><tbody>{quality.issues.map((issue, i) => <tr key={i}><td>{String(issue.type ?? "-")}</td><td>{String(issue.column ?? "-")}</td><td>{String(issue.message ?? JSON.stringify(issue))}</td></tr>)}</tbody></table> : <div className="empty-state"><strong>没有发现质量问题</strong><div className="muted">当前检查范围内数据状态正常。</div></div>}</> : <Loading />}
+          {quality ? <>{quality.issues.length ? <table className="data-table"><thead><tr><th>类型</th><th>列</th><th>说明</th></tr></thead><tbody>{quality.issues.map((issue, i) => <tr key={i}><td>{String(issue.type ?? "-")}</td><td>{String(issue.column ?? "-")}</td><td>{String(issue.message ?? JSON.stringify(issue))}</td></tr>)}</tbody></table> : <div className="empty-state"><strong>没有发现质量问题</strong><div className="muted">当前检查范围内数据状态正常。</div></div>}</> : <Skeleton lines={3} />}
         </div>
       )}
 
       {tab === "versions" && (
-        <div className="card"><h3 style={{ marginTop: 0 }}>当前版本</h3>{v ? <div className="kv-grid"><div className="kv-item"><div className="k">版本</div><div className="v">v{v.version}</div></div><div className="kv-item"><div className="k">行数</div><div className="v">{v.row_count}</div></div><div className="kv-item"><div className="k">列数</div><div className="v">{v.column_count}</div></div><div className="kv-item"><div className="k">格式</div><div className="v">{v.format}</div></div></div> : <div className="muted">暂无版本。</div>}</div>
+        <div className="card">
+          <VersionTimeline datasetId={datasetId} />
+        </div>
       )}
     </div>
   );

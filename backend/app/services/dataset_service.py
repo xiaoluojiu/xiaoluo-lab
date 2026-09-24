@@ -424,6 +424,15 @@ class DatasetService:
         # 只有 promote 成功过，快照才算"本次创建的"，异常时才有权回收。
         # 否则 ``VERSION_CONFLICT`` 保护的可能是**已存在的旧版本快照**。
         promoted = False
+        # ★★ 提交边界（commit-before / commit-after）：
+        #   - commit 之前失败 → 占位行 rollback + 回收快照，本次创建整体消失（正确）；
+        #   - commit 之后失败 → 版本行**已经落库**，此时删快照会留下
+        #     「库里有版本行、磁盘上没有文件」的孤儿版本，后续读取必然失败。
+        #     旧实现只靠 `promoted` 一个标记，把 commit 之后的 ``db.refresh`` 异常也
+        #     当成「没提交成功」去删快照，正是这条边界没划清导致的。
+        #   commit 之后的异常只能如实上抛（版本行与快照都在，是可查可修的一致状态），
+        #   绝不能靠删文件把不一致藏起来。
+        committed = False
 
         try:
             yield staging
@@ -443,10 +452,11 @@ class DatasetService:
             row.schema_json = staging.schema_json or {}
 
             self.db.commit()
+            committed = True
             self.db.refresh(row)
             staging.version_row = row
         except BaseException:
-            self._abort_version(storage_key, drop_snapshot=promoted)
+            self._abort_version(storage_key, drop_snapshot=promoted and not committed)
             raise
         finally:
             # 提交成功后 promote 已把暂存文件移走；失败/异常时在这里兜底清理。

@@ -46,17 +46,27 @@ class ContextBuilder:
         return context
 
     def _dataset_metadata(self, dataset_id: int) -> dict[str, Any]:
-        """只读取数据库元信息；这里严禁 load_version。"""
+        """只读取数据库元信息；这里严禁 load_version。
+
+        ★ 「建了数据集但还没导入数据」是**正常业务状态**，不是异常。
+        早先这里用 ``get_version_row(dataset_id, None)``，无版本时它抛
+        ``NotFoundException("dataset has no versions")`` —— 于是建完数据集立刻问一句
+        「看看这份数据」会得到「Agent 运行异常：dataset has no versions」。
+        一个还没导数据的空数据集，不该把整次运行打成失败。
+        这里改用 ``latest_version()``（无版本返回 None），并把 ``has_version``
+        作为一等字段交给上层，由运行时给出「请先导入数据」的明确提示。
+        """
         service = self.engine.dataset_service
         item = service.get(dataset_id)
-        version = service.get_version_row(dataset_id, None)
+        version = service.latest_version(dataset_id)
         return {
             "dataset_id": int(dataset_id),
             "name": item.name,
             "description": item.description or "",
-            "version": int(version.version),
-            "rows": int(version.row_count),
-            "columns": int(version.column_count),
+            "has_version": version is not None,
+            "version": int(version.version) if version is not None else 0,
+            "rows": int(version.row_count) if version is not None else 0,
+            "columns": int(version.column_count) if version is not None else 0,
         }
 
     def with_tools(self, context: AgentContext, tool_describes: list[dict[str, Any]], *, registry: ToolRegistry | None = None) -> AgentContext:

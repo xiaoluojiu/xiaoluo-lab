@@ -7,6 +7,8 @@ import type {
   ProfileData,
   QualityData,
   SchemaData,
+  VersionDiffResult,
+  VersionTimelineResult,
 } from "../types/dataset";
 
 export function listDatasets(page = 1, pageSize = 20) {
@@ -60,6 +62,18 @@ export function getQuality(datasetId: number, version?: number) {
   return unwrap<QualityData>(
     client.get(`/datasets/${datasetId}/quality`, {
       params: { version: version ?? undefined },
+    }),
+  );
+}
+
+export function getVersionTimeline(datasetId: number) {
+  return unwrap<VersionTimelineResult>(client.get(`/datasets/${datasetId}/versions`));
+}
+
+export function getVersionDiff(datasetId: number, base: number, target: number, includeQuality = true) {
+  return unwrap<VersionDiffResult>(
+    client.get(`/datasets/${datasetId}/versions/diff`, {
+      params: { base, target, include_quality: includeQuality },
     }),
   );
 }

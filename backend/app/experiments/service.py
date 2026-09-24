@@ -262,6 +262,58 @@ class ExperimentService:
         )
         return list(self.db.scalars(stmt)), int(total)
 
+    def list_with_latest_runs(
+        self, page: int = 1, page_size: int = 20
+    ) -> tuple[list[Experiment], dict[int, ExperimentRun], int]:
+        """实验列表 + 每个实验「最近一次成功运行」的 run。
+
+        返回 ``(experiments, {experiment_id: run}, total)``：
+        序列化留给 API 层（``experiment_dict`` / ``run_dict`` 在 api 层，
+        依赖方向不能是 service -> api）。
+
+        为什么要有这个方法：实验列表原本只有 dataset / task / model / target，
+        答不了「哪个实验效果更好」——那正是实验中心最该回答的问题。
+
+        为什么叫「最近一次成功运行」而不是「最好一次运行」：
+        「最好」依赖指标方向（accuracy 越高越好、rmse 越低越好），
+        跨任务比较没有统一口径，随便挑一个最大值会给出误导性排序。
+        这里只做**忠实汇总**：最近一次成功运行的真实指标，好不好由人判断。
+        真要做横向比较请走 ``compare_experiments``（复用 ExperimentComparator）。
+
+        实现上是**两条查询**（实验 + 最近成功 run），不是 N+1：
+        ``GROUP BY experiment_id`` 取出每个实验成功 run 的最大 id，再一次性回查。
+        """
+
+        items, total = self.list(page=page, page_size=page_size)
+        exp_ids = [exp.id for exp in items]
+
+        latest: dict[int, ExperimentRun] = {}
+
+        if exp_ids:
+            subq = (
+                select(
+                    ExperimentRun.experiment_id,
+                    sa_func.max(ExperimentRun.id).label("max_id"),
+                )
+                .where(
+                    ExperimentRun.experiment_id.in_(exp_ids),
+                    ExperimentRun.status == "success",
+                )
+                .group_by(ExperimentRun.experiment_id)
+                .subquery()
+            )
+            runs = list(
+                self.db.scalars(
+                    select(ExperimentRun).join(
+                        subq,
+                        ExperimentRun.id == subq.c.max_id,
+                    )
+                )
+            )
+            latest = {run.experiment_id: run for run in runs}
+
+        return items, latest, int(total)
+
     # ------------------------------------------------------------------
     # delete：先清理 runs 产物（model/pipeline），再依赖 ORM 级联删除
     # ------------------------------------------------------------------

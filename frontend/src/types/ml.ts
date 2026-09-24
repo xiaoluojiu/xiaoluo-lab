@@ -79,6 +79,14 @@ export interface Experiment {
   seed: number | null;
   description: string;
   created_at: string | null;
+  /** 仅 `with_metrics=true` 时返回：最近一次**成功**运行；从未成功运行过为 null。 */
+  latest_run?: {
+    run_id: number;
+    status: string;
+    metrics: Record<string, number | string>;
+    runtime: number | null;
+    created_at: string | null;
+  } | null;
 }
 
 export interface ExperimentRun {
