@@ -124,6 +124,35 @@ def test_run_classification_success(experiment_service, seeded_dataset):
     assert run.artifacts["test_rows"] == 2
 
 
+def test_run_does_not_mutate_experiment_definition(experiment_service, seeded_dataset):
+    """★ P1 回归：跑一次实验不能改写实验定义（Experiment ≠ Run）。
+
+    历史缺陷：`_execute()` 在「自动剔除目标列」后执行 `exp.preprocessing = pp` 并随
+    `db.commit()` 落库 —— 用户定义的实验配置被某一次运行永久改写，再次编辑或对比
+    历史实验时看到的是被改过的 `excluded_columns`。
+
+    正确语义：运行期的规范化只存在于本次运行的局部副本 + Run artifacts。
+    """
+    exp = _make_exp(
+        experiment_service,
+        seeded_dataset,
+        preprocessing={"scaling": {"method": "standard"}, "excluded_columns": ["b", "label"]},
+    )
+    original_preprocessing = dict(exp.preprocessing)
+    original_target = exp.target_column
+
+    run = experiment_service.run(exp.id)
+    assert run.status == "success", run.error
+
+    # 1) 实验定义保持创建时的配置（以数据库为准，避免 ORM 内存态掩盖回写）
+    experiment_service.db.refresh(exp)
+    assert exp.preprocessing == original_preprocessing
+    assert exp.target_column == original_target
+
+    # 2) 运行期实际生效的排除列记录在 artifacts：目标列被剔除，其余保留
+    assert run.artifacts["excluded_columns"] == ["b"]
+
+
 def test_run_regression_success(db, storage, dataset_service, experiment_service):
     ds = dataset_service.create("reg-data")
     df = pl.DataFrame(

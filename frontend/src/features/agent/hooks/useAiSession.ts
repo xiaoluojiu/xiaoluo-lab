@@ -214,15 +214,13 @@ export function useAiSession({ onError, onNotice }: UseAiSessionOptions) {
           setDeletingSessionId(null);
         }
       }
-      // 注意：这里必须用函数式更新，不能基于函数开头的 `sessions` 闭包快照重算。
-      // 历史缺陷：原来写成 `setSessions(sessions.filter(...))`，会把删除循环里刚刚成功移除的
-      // 条目又用旧快照加回来（只要批里有任意一条失败就会触发），要等下次刷新才消失。
-      let remaining = 0;
-      setSessions((prev) => {
-        const next = prev.filter((item) => !removed.includes(item.id));
-        remaining = next.length;
-        return next;
-      });
+      // state 更新保持函数式（不丢并发新增），但**剩余列表单独算一份**，
+      // 绝不在 updater 里给外部变量赋值：updater 可能被 React 延迟 / 重复执行，
+      // 靠它的副作用写 `remaining` 既拿不到稳定值，也让这段逻辑无法单测。
+      // 历史缺陷链：这里曾写成基于函数开头 `sessions` 闭包快照的 `setSessions(...)`，
+      // 会把删除循环里刚移除的条目又加回来（批里有任意一条失败就触发）。
+      setSessions((prev) => prev.filter((item) => !removed.includes(item.id)));
+      const remainingSessions = sessions.filter((item) => !removed.includes(item.id));
       const currentRemoved = sessionId ? removed.includes(sessionId) : false;
       if (currentRemoved) {
         setSession(null);
@@ -235,9 +233,8 @@ export function useAiSession({ onError, onNotice }: UseAiSessionOptions) {
       if (failed.length) onError(`成功删除 ${ok} 个会话；${failed.length} 个未删除：${failed.join("；")}`);
       else onNotice(ok > 1 ? `已删除 ${ok} 个会话及其运行记录。` : `已删除会话「${sessionTitle(targets[0])}」。`);
       // 自动切换到剩余会话放在状态更新之后，避免与上面的 setSessions 竞态。
-      if (currentRemoved && remaining > 0) {
-        const rest = sessions.filter((item) => !removed.includes(item.id));
-        if (rest.length) activate(rest[0]);
+      if (currentRemoved && remainingSessions.length > 0) {
+        activate(remainingSessions[0]);
       }
     },
     [sessions, sessionId, setSession, activate, onError, onNotice],

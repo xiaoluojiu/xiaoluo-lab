@@ -60,8 +60,19 @@ def evaluate_regression(y_true: pl.Series, y_pred: pl.Series) -> dict[str, Any]:
     }
 
 
-def evaluate_clustering(X: pl.DataFrame, labels: pl.Series) -> dict[str, Any]:
-    """聚类评估：簇数量 + 轮廓系数（簇数不满足条件时为 None）。"""
+#: 未指定 seed 时使用的固定抽样种子。固定值保证「同一份数据 + 未指定 seed」的
+#: 两次运行拿到同一个子样本，指标可复现；调用方（ExperimentService）会把实验
+#: 自己的 seed 传进来，让模型随机性与抽样随机性共用同一个种子口径。
+DEFAULT_SILHOUETTE_SEED = 0
+
+
+def evaluate_clustering(X: pl.DataFrame, labels: pl.Series, *, seed: int | None = None) -> dict[str, Any]:
+    """聚类评估：簇数量 + 轮廓系数（簇数不满足条件时为 None）。
+
+    ``seed`` 只影响「行数超过上限时的随机子样本」怎么抽；不传则用
+    :data:`DEFAULT_SILHOUETTE_SEED`。实际使用的种子会回传到结果里
+    （``silhouette_sample_seed``），便于在 artifacts 中留痕。
+    """
     k = labels.n_unique()
     result: dict[str, Any] = {"cluster_count": int(k)}
     if k < 2 or k >= X.height:
@@ -78,8 +89,12 @@ def evaluate_clustering(X: pl.DataFrame, labels: pl.Series) -> dict[str, Any]:
 
     cap = _max_silhouette_samples()
     total = X.height
+    # seed 与实验 seed 对齐：模型随机性用 42、抽样却用 0 会让「同一 seed 可复现」
+    # 这条承诺在轮廓系数上悄悄失效。未指定时退回固定默认值。
+    sample_seed = int(seed) if seed is not None else DEFAULT_SILHOUETTE_SEED
+    result["silhouette_sample_seed"] = sample_seed
     if cap > 0 and total > cap:
-        rng = np.random.default_rng(0)
+        rng = np.random.default_rng(sample_seed)
         picked = rng.choice(total, size=cap, replace=False)
         picked.sort()
         idx = picked.tolist()

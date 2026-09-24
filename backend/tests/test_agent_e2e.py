@@ -146,6 +146,18 @@ class RiskyTool(Tool):
         return ToolResult.ok({"done": True}, summary="高风险操作已执行")
 
 
+class SecondRiskyTool(RiskyTool):
+    """第二个高风险工具。
+
+    P0 回归用：与 `RiskyTool` 只有注册名不同（同名无法共存于一个 Registry），
+    用来构造「Step1 高风险 → 确认 → Step2 高风险」这条链路，验证一次确认
+    不会顺带放行第二个高风险调用。
+    """
+
+    name = "test.risky2"
+    description = "第二个高风险的测试工具（写操作）"
+
+
 class ClarifyTool(Tool):
     """计划执行中发起结构化反问（模拟 agent.clarify 的下游行为）。"""
 
@@ -339,6 +351,66 @@ class TestPermissionConfirmation:
         assert resumed.status == RunStatus.COMPLETED, resumed.error
         assert risky.calls == 1
         assert resumed.pending_confirmation is None
+
+    def test_each_high_risk_step_requires_its_own_confirmation(self, engine):
+        """★ P0 回归：一次确认最多授权一次高风险调用。
+
+        历史缺陷：`resume()` 把 `confirmed=True` 传进 `_run_plan()` 后，该布尔值随循环
+        传给每一个后续步骤 —— 「Step1 高风险 → 确认」之后 Step2 的高风险工具被静默执行，
+        用户以为自己只批准了弹窗里那一个工具。
+
+        正确语义：授权绑定到当前 pending 的那一步；第二次遇到 HIGH/CRITICAL 必须重新进入
+        WAITING_CONFIRMATION。
+        """
+        first = RiskyTool()
+        second = SecondRiskyTool()
+        runtime = _runtime(engine, tools=[first, second])
+        session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
+
+        # 第一次运行：停在 Step1 的确认弹窗
+        run = runtime.run(
+            session, "连续执行两个高风险操作", plan_override=_plan("test.risky", "test.risky2")
+        )
+        assert run.status == RunStatus.WAITING_CONFIRMATION
+        assert run.pending_confirmation["step_index"] == 0
+        assert first.calls == 0
+        assert second.calls == 0
+
+        # 第一次 resume：只放行 Step1，Step2 必须再次要求确认
+        resumed = runtime.resume(session, run.id)
+        assert resumed.status == RunStatus.WAITING_CONFIRMATION, resumed.error
+        assert resumed.pending_confirmation["step_index"] == 1
+        assert first.calls == 1
+        assert second.calls == 0  # ← 关键断言：不能因为上一步确认过就被静默放行
+
+        # 第二次 resume：放行 Step2，整体完成
+        resumed2 = runtime.resume(session, run.id)
+        assert resumed2.status == RunStatus.COMPLETED, resumed2.error
+        assert second.calls == 1
+        assert resumed2.pending_confirmation is None
+
+    def test_low_risk_steps_are_not_blocked_after_confirmation(self, engine):
+        """授权收敛到单步后，低风险步骤不应被迫多弹一次窗（避免过度收紧）。"""
+        risky = RiskyTool()
+        echo = EchoTool()
+        runtime = _runtime(engine, tools=[risky, echo])
+        session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
+
+        plan = AgentPlan(
+            goal="高风险后接低风险",
+            steps=[
+                PlanStep(tool="test.risky", arguments={}),
+                PlanStep(tool="test.echo", arguments={"text": "hi"}),
+            ],
+        )
+        run = runtime.run(session, "高风险后接低风险", plan_override=plan)
+        assert run.status == RunStatus.WAITING_CONFIRMATION
+
+        resumed = runtime.resume(session, run.id)
+        assert resumed.status == RunStatus.COMPLETED, resumed.error
+        assert risky.calls == 1
+        # 低风险步骤本来就不需要确认，收敛授权范围不该把它一起拦下
+        assert [c.get("text") for c in echo.calls] == ["hi"]
 
     def test_confirmation_cannot_be_bypassed_by_direct_tool_call(self, engine):
         """权限边界：即使直接走 Registry，未经 confirmed 也必须被拦下。"""

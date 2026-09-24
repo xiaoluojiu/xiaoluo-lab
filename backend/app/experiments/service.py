@@ -139,15 +139,17 @@ def library_versions() -> dict[str, str]:
 
 
 def dataset_snapshot(version_row: DatasetVersion) -> dict[str, Any]:
-    """实验所用**不可变数据快照**的指纹。
+    """实验所用**不可变数据快照**的元数据指纹。
 
     回答的问题只有一个：这次结果究竟是用哪一份数据跑出来的。因此必须绑到
     ``DatasetVersion`` 而不是 ``dataset_id`` —— 数据集会持续产生新版本，
     只记 dataset_id 的话，三个月后回看完全无法还原当时的输入。
 
-    刻意做**轻量指纹**（版本行元数据）而不是读整个 Parquet 算内容摘要：
-    千万行表上那是一次全量 IO，而本地应用场景下「哪个版本 + 多少行 +
-    什么 schema」已足以定位输入。
+    ⚠️ 口径提醒（勿误读）：``metadata_fingerprint`` 是**版本行元数据**的摘要
+    （id / dataset_id / version / 行数 / 列数 / schema），**不是 Parquet 文件内容的
+    checksum**。它能区分「换了版本 / 改了 schema」，但**不能**检测出「同一个版本行
+    背后的物理文件被替换」。真正的内容 checksum 需要读取整个 Parquet，千万行表上
+    是一次全量 IO，属于后续专项（P2/P3），此处刻意不做。
     """
     schema = version_row.schema_json or {}
     payload = "|".join(
@@ -166,7 +168,8 @@ def dataset_snapshot(version_row: DatasetVersion) -> dict[str, Any]:
         "version": version_row.version,
         "row_count": version_row.row_count,
         "column_count": version_row.column_count,
-        "fingerprint": hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16],
+        # 名称必须说清是「元数据指纹」：叫 fingerprint 会被读成文件内容 hash。
+        "metadata_fingerprint": hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16],
     }
 
 
@@ -391,10 +394,12 @@ class ExperimentService:
                 "excluded_columns 中的目标列 %s 已自动剔除（目标列不参与特征，指令冗余）",
                 target,
             )
+            # 只改**本次运行的局部副本**，绝不回写 exp.preprocessing：
+            # Experiment 是用户定义的实验配置，Run 是某一次执行过程，两者不能互相污染。
+            # （曾在这里赋值 exp.preprocessing，导致「跑一次实验」顺带把实验定义里的
+            #   excluded_columns 永久改掉 —— 用户再次编辑或对比历史时会看到被改写过的配置。）
+            # 规范化后的实际生效值照旧记进 artifacts["excluded_columns"]。
             excluded = [c for c in excluded if c != target]
-            pp = dict(exp.preprocessing or {})
-            pp["excluded_columns"] = excluded
-            exp.preprocessing = pp
         missing_cols = [c for c in excluded if c not in df.columns]
         if missing_cols:
             raise MLEngineException(
@@ -465,7 +470,11 @@ class ExperimentService:
             emit("preprocess", f"{X.width} 列 → {len(pipeline.feature_names_out_)} 列")
             model.fit(Xp)
             emit("train", f"{exp.model} 在 {X.height} 样本上拟合完成")
-            metrics = evaluate_clustering(Xp, model.labels_)
+            # 抽样种子与实验 seed 对齐（不传则 evaluation 用固定默认值），
+            # 保证「同一 seed ⇒ 同一子样本 ⇒ 同一轮廓系数」。
+            metrics = evaluate_clustering(Xp, model.labels_, seed=exp.seed)
+            # 留痕：轮廓系数的抽样种子进了 artifacts，才能解释「同 seed 重跑指标一致」。
+            details["silhouette_sample_seed"] = metrics.get("silhouette_sample_seed")
             emit("evaluate", _metric_summary("clustering", metrics))
             # 聚类是全量拟合，没有 holdout，也就无所谓 train/test 差距 ⇒ 显式置空
             # （保持 artifacts 键一致，前端据此跳过过拟合诊断）

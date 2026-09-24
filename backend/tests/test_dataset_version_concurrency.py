@@ -24,7 +24,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 from app.core.database import Base
-from app.core.exceptions import DatasetException
+from app.core.exceptions import DatasetException, NotFoundException, ValidationException
 from app.models.dataset_version import DatasetVersion
 from app.services.dataset_service import DatasetService
 from app.storage.local import LocalStorage
@@ -209,7 +209,16 @@ def test_concurrent_reservation_conflict_is_retried(monkeypatch, env):
     def flaky_flush(*args, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
-            raise IntegrityError("stmt", {}, Exception("UNIQUE constraint failed"))
+            # 消息必须是真实 SQLite 形态：_reserve_version 靠它区分「版本竞争」与
+            # 其它约束冲突，伪造一条不带列名的消息会让重试逻辑被误判成真错误。
+            raise IntegrityError(
+                "stmt",
+                {},
+                Exception(
+                    "UNIQUE constraint failed: "
+                    "dataset_versions.dataset_id, dataset_versions.version"
+                ),
+            )
         return real_flush(*args, **kwargs)
 
     monkeypatch.setattr(session, "flush", flaky_flush)
@@ -345,4 +354,100 @@ def test_unique_constraint_exists(env):
         and {col.name for col in c.columns} == {"dataset_id", "version"}
     ]
     assert unique, "dataset_versions 缺少 (dataset_id, version) 唯一约束"
+    session.close()
+
+
+# ---------------------------------------------------------
+# P1：血缘（parent_version_id）必须同数据集
+# ---------------------------------------------------------
+
+
+def test_cross_dataset_parent_is_rejected(env):
+    """父版本必须属于同一个数据集。
+
+    版本链是血缘：B 的版本声明自己源自 A 的 v1，回溯输入时会直接指到另一份数据上。
+    这种「看起来合理」的错误血缘比直接报错更危险，因此必须显式拒绝。
+    """
+    factory, storage, dataset_id = env
+    session = factory()
+    service = DatasetService(session, storage)
+
+    other = service.create("另一个数据集")
+    v1_a = service.create_version(dataset_id, pl.DataFrame({"a": [1]}))
+    v1_b = service.create_version(other.id, pl.DataFrame({"b": [1]}))
+
+    # B 的版本不能把 A 的版本当父节点
+    with pytest.raises(ValidationException) as exc:
+        service.create_version(
+            other.id, pl.DataFrame({"b": [2]}), parent_version_id=v1_a.id
+        )
+    assert "数据集" in str(exc.value.message)
+    assert str(other.id) in str(exc.value.details)
+
+    # 父版本不存在：明确 NotFound，而不是静默当 NULL 处理
+    with pytest.raises(NotFoundException):
+        service.create_version(dataset_id, pl.DataFrame({"a": [9]}), parent_version_id=999999)
+
+    # 同数据集的正常血缘不受影响
+    v2_a = service.create_version(dataset_id, pl.DataFrame({"a": [2]}), parent_version_id=v1_a.id)
+    assert v2_a.parent_version_id == v1_a.id
+    assert v1_b.parent_version_id is None
+    session.close()
+
+
+# ---------------------------------------------------------
+# P1：IntegrityError 不能被一律当成版本竞争
+# ---------------------------------------------------------
+
+
+def test_version_unique_conflict_is_retried(env):
+    """(dataset_id, version) 冲突 = 版本号被抢 ⇒ 必须换号重试，而不是报错。
+
+    用受控的 ``latest_version`` 伪造一次「另一位写者刚拿走 v2」的竞争窗口，
+    让重试路径可确定性复现（不依赖真实线程时序）。
+    """
+    factory, storage, dataset_id = env
+    session = factory()
+    service = DatasetService(session, storage)
+
+    v1 = service.create_version(dataset_id, pl.DataFrame({"a": [1]}))
+    v2 = service.create_version(dataset_id, pl.DataFrame({"a": [2]}))
+
+    real_latest = service.latest_version
+    calls = {"n": 0}
+
+    def fake_latest(ds_id):
+        calls["n"] += 1
+        # 第一次仍返回 v1（于是算出 version=2，与已存在的 v2 撞车）
+        return v1 if calls["n"] == 1 else real_latest(ds_id)
+
+    service.latest_version = fake_latest  # type: ignore[method-assign]
+    v3 = service.create_version(dataset_id, pl.DataFrame({"a": [3]}))
+
+    assert v3.version == 3, "冲突后应换到下一个可用版本号"
+    assert calls["n"] >= 2, "唯一约束冲突必须触发重试，而不是直接失败"
+    assert v2.version == 2
+    session.close()
+
+
+def test_non_version_integrity_error_is_not_retried(env, monkeypatch):
+    """非版本冲突的 IntegrityError 必须原样抛出，不能被伪装成并发冲突。
+
+    让 ``_version_key`` 返回 None ⇒ storage_path 触发 NOT NULL。这与版本号无关，
+    重试 5 次也永远不会成功；若被当成版本竞争，调用方只会看到
+    ``VERSION_RESERVATION_CONFLICT``，真正的数据库原因彻底丢失。
+    """
+    factory, storage, dataset_id = env
+    session = factory()
+    service = DatasetService(session, storage)
+
+    monkeypatch.setattr(DatasetService, "_version_key", lambda self, ds_id, version: None)
+
+    with pytest.raises(DatasetException) as exc:
+        service.create_version(dataset_id, pl.DataFrame({"a": [1]}))
+
+    assert exc.value.code == "DATASET_VERSION_CONSTRAINT_FAILED", (
+        f"应暴露真实的数据库约束错误，实际：{exc.value.code}"
+    )
+    assert "storage_path" in str(exc.value.details), "原始原因必须留在 details 里"
     session.close()

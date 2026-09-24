@@ -310,7 +310,10 @@ class AgentRuntime:
         plan=self._plan_from_dict(run.plan or {}); continue_plan=AgentPlan(goal=plan.goal,steps=plan.steps[step_index:])
         try:
             with self._usage_scope(run):
-                context=self._build_context(run,session); self._run_plan(run,session,context,self._role_of(run),continue_plan,offset=step_index,attempts={step_index:1},confirmed=True,on_event=on_event)
+                # ★ 授权范围 = 用户刚才批准的那一步（``confirmed_step_index``）。
+                # 用户确认的是弹窗里那一条「工具 + 参数」，不是整份计划；把 confirmed
+                # 一路传给后续步骤等于一次确认放行整条链路，第二个高风险工具会被静默执行。
+                context=self._build_context(run,session); self._run_plan(run,session,context,self._role_of(run),continue_plan,offset=step_index,attempts={step_index:1},confirmed=True,confirmed_step_index=step_index,on_event=on_event)
         except AgentLimitExceeded as exc:self._fail(run,str(exc),on_event)
         except AgentException as exc:self._fail(run,exc.message,on_event)
         except Exception as exc:self._fail(run,f"Agent 运行异常：{exc}",on_event)
@@ -367,8 +370,20 @@ class AgentRuntime:
             run = self.deny(run_id)
         return run
 
-    def _run_plan(self,run:AgentRun,session:AgentSession,context:AgentContext,role:str,plan:AgentPlan,*,offset:int,attempts:dict[int,int],confirmed:bool,on_event:EventCallback|None)->None:
+    def _run_plan(self,run:AgentRun,session:AgentSession,context:AgentContext,role:str,plan:AgentPlan,*,offset:int,attempts:dict[int,int],confirmed:bool=False,confirmed_step_index:int|None=None,on_event:EventCallback|None)->None:
         """执行计划；失败即交给 `Replanner` 决定「重试 / 跳过 / 终止」。
+
+        ★★ 授权范围（P0）：``confirmed`` 只在 ``confirmed_step_index`` 指定的那一步生效。
+
+        历史缺陷：``resume()`` 把 ``confirmed=True`` 传进 ``_run_plan`` 后，这个布尔值会
+        随着循环一路传给**每一个后续步骤**。于是「Step1 data.clean(HIGH) → 用户确认」之后，
+        Step2 ml.train(HIGH)、Step3 workflow.run(HIGH) 全部被静默放行 —— 一次确认 = 放行整条
+        高风险链路，而用户以为自己只批准了弹窗里那一个工具。
+
+        现在：一次确认最多授权一次对应的高风险调用；后续再次遇到 HIGH / CRITICAL 会重新进入
+        WAITING_CONFIRMATION。``confirmed_step_index is None`` 表示调用方显式授权整轮执行，
+        仅用于服务端/测试直接调用（HTTP API 不接受客户端传 confirmed）。
+
 
         ★★ 死循环防线（2026-09-22 r-22 P0，实测过同一条路径产生 199987 条 replanning 事件）
         原实现里有三处叠加的漏洞，任意一处都足以让运行永不结束：
@@ -421,7 +436,10 @@ class AgentRuntime:
                     retrying=bool(getattr(replan,"retry",False)); offset=abs_idx if retrying else abs_idx+1; current=replan; replanned=True; break
                 attempt_no=attempts.get(abs_idx,0)+1; attempts[abs_idx]=attempt_no
                 self._emit(run,"tool_call",{"step_index":abs_idx,"tool":step.tool,"arguments":step.arguments,"progress":min(90,max(5,round((run.tool_call_count/max(total_steps,1))*90)))},on_event)
-                record=self.executor.execute_step(step,tool_ctx,services,confirmed=confirmed,attempt=attempt_no,step_index=abs_idx); run.tool_calls.append(record)
+                # 授权只落到被用户确认的那一步；其余步骤按 PermissionManager 的裁决走
+                # （HIGH / CRITICAL 会再次进入 WAITING_CONFIRMATION）。
+                step_confirmed=confirmed and (confirmed_step_index is None or abs_idx==confirmed_step_index)
+                record=self.executor.execute_step(step,tool_ctx,services,confirmed=step_confirmed,attempt=attempt_no,step_index=abs_idx); run.tool_calls.append(record)
                 if record.status=="needs_confirmation":
                     run.status=RunStatus.WAITING_CONFIRMATION; run.pending_confirmation={"call":record,"step_index":abs_idx}; self._emit(run,"permission",{"stage":"confirmation_required","tool":step.tool,"reason":record.error,"step_index":abs_idx},on_event); return
                 if record.status=="needs_clarification":
@@ -497,6 +515,9 @@ class AgentRuntime:
         return ToolExecutionContext(
             user_id=session.user_id,
             session_id=session.id,
+            # 会话关联了哪些数据集就是哪些：空列表 ⇒ set()（一个都不许访问），
+            # 而不是 None（不限制）。Agent 场景下不存在「无限制访问全部数据集」的语义，
+            # 用户没选数据集时应由 Pre-flight / 反问来处理，而不是静默读任意数据。
             dataset_ids=set(session.dataset_ids),
             permissions=set(permissions),
             extra={

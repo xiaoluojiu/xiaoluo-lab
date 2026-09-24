@@ -127,6 +127,26 @@ class TestPlanner:
         plan = AgentPlanner(None).build_plan("检查一下数据质量", context, TOOL_DESCRIBES)
         assert any(s.tool == "dataset.quality" for s in plan.steps)
 
+    def test_rule_plan_does_not_force_report(self, env):
+        """★ P1 回归：普通分析请求不该自动产出报告文件。
+
+        历史行为：任何数据分析分支都无条件 append ``report.generate``，于是
+        「帮我看看有没有缺失值」也会顺带产出一份 PDF 写进报告中心 —— 过度交付。
+        """
+        builder = ContextBuilder(env["engine"])
+        context = builder.build("帮我分析一下数据", dataset_ids=[env["dataset_id"]])
+        plan = AgentPlanner(None).build_plan("帮我分析一下数据", context, TOOL_DESCRIBES)
+        tools = [s.tool for s in plan.steps]
+        assert tools, "规则规划器应产出分析步骤，而不是空计划"
+        assert "report.generate" not in tools
+
+    def test_rule_plan_includes_report_when_explicitly_asked(self, env):
+        """明确要求「报告 / 分析并生成报告」时必须包含 report.generate。"""
+        builder = ContextBuilder(env["engine"])
+        context = builder.build("生成分析报告", dataset_ids=[env["dataset_id"]])
+        plan = AgentPlanner(None).build_plan("生成分析报告", context, TOOL_DESCRIBES)
+        assert any(s.tool == "report.generate" for s in plan.steps)
+
     def test_unknown_tool_rejected(self, env):
         builder = ContextBuilder(env["engine"])
         context = builder.build("分析", dataset_ids=[env["dataset_id"]])

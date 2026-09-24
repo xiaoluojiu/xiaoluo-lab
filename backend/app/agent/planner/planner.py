@@ -157,11 +157,12 @@ class AgentPlanner:
             "② 数据质量 dataset.quality；"
             "③ 统计画像 dataset.profile；"
             "④ 分布与关系 eda.describe / eda.correlation；"
-            "⑤ 结论沉淀 report.generate（它会基于数据集自动产出并嵌入：分布直方图、类别柱状图、"
+            "⑤ 报告 report.generate（它会基于数据集自动产出并嵌入：分布直方图、类别柱状图、"
             "相关系数热力图、相关性散点图、正态 Q-Q 图、累积分布图，因此一般不需要再用 eda.visualize 重复画这些标准图；"
             "只有用户明确指定某一张图、或需要 report.generate 之外的特殊图表时才加 eda.visualize，"
             "且其 column/x/y/columns 必须来自 dataset.schema / dataset.profile 的真实字段名，不确定就不要画）；"
-            "除非用户明确只要聊天，否则不要省略 report.generate。"
+            "★ report.generate 只在用户明确要求「报告 / 汇报 / PDF / 导出」时才加入计划 ——"
+            "普通分析请求只需给出分析结果，不要顺带产出报告文件。"
             "workflow 相关请求请用 workflow.build_and_run 一步完成（内部已包含创建与执行），不要拆成 workflow.create + workflow.run。"
             "建模请求固定顺序：dataset.inspect → dataset.profile → ml.detect_task(infer_target=true, goal=用户诉求原文) → ml.prepare(target={{stepN.target}}) → ml.train(target={{stepN.target}}) → report.generate。"
             "ml.detect_task 会自己按「命名约定 → 诉求语义（goal 与数据集名称）→ 排除日历/时间/标识列后的唯一候选」"
@@ -323,10 +324,13 @@ class AgentPlanner:
         else:
             steps.extend([PlanStep(tool="dataset.inspect", arguments=_args()), PlanStep(tool="dataset.profile", arguments=_args())])
 
-        # 交付闭环：任何数据分析分支都以 report.generate 收尾。
-        # report.generate 内部会自动产出「分布直方图 + 相关系数热力图 + 相关性散点图 +
-        # 类别柱状图 + Q-Q 图 + CDF」并写进报告中心，保证无 LLM 时也有图文并茂的报告。
-        if not any(s.tool == "report.generate" for s in steps):
+        # 报告只在用户**明确要求**时才生成。
+        #
+        # 历史行为：任何数据分析分支都无条件 append report.generate。于是
+        # 「帮我看看有没有缺失值」也会顺带产出一份 PDF 写进报告中心 —— 过度交付；
+        # 无 LLM 模式下这条固定尾巴还让「最小可用分析链路」永远背着一次重 IO。
+        # 判定复用既有 intent 真源（`app.agent.intent` 的 REPORT 关键词），不新增关键词表。
+        if wants_report and not any(s.tool == "report.generate" for s in steps):
             steps.append(PlanStep(tool="report.generate", arguments=_args()))
         return AgentPlan(goal=f"完成用户请求：{user_request[:80]}", steps=steps[: self.max_steps])
 

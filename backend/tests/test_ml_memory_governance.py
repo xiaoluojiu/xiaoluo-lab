@@ -20,7 +20,7 @@ import polars as pl
 import pytest
 from app.core.config import settings
 from app.experiments.service import ExperimentService
-from app.ml_engine.evaluation import evaluate_clustering
+from app.ml_engine.evaluation import DEFAULT_SILHOUETTE_SEED, evaluate_clustering
 from app.ml_engine.exceptions import MLEngineException
 from app.ml_engine.inference import (
     batch_evaluate,
@@ -327,6 +327,32 @@ def test_evaluate_clustering_samples_silhouette(limits):
     assert isinstance(result["silhouette"], float)
     assert "500" in result["silhouette_note"]
     assert "4,000" in result["silhouette_note"]
+
+
+def test_silhouette_seed_is_controllable_and_traceable(limits):
+    """★ P2 回归：轮廓系数的抽样种子必须与实验 seed 一致，且可留痕。
+
+    历史缺陷：`evaluate_clustering` 内部硬编 `np.random.default_rng(0)`，而实验
+    seed 可能是 42 —— 「同一 seed 可复现」这条承诺在轮廓系数上悄悄失效。
+    """
+    limits(ML_MAX_SILHOUETTE_SAMPLES=500)
+    X = _frame(4000).select(["num_a", "num_b"])
+    labels = pl.Series("cluster", (np.arange(4000) % 4))
+
+    a = evaluate_clustering(X, labels, seed=42)
+    b = evaluate_clustering(X, labels, seed=42)
+    c = evaluate_clustering(X, labels, seed=7)
+
+    # 同 seed ⇒ 同子样本 ⇒ 同指标（且种子回传以便写进 artifacts）
+    assert a["silhouette_sample_seed"] == 42
+    assert a["silhouette"] == b["silhouette"]
+    # 不同 seed ⇒ 不同子样本 ⇒ 指标不同（说明 seed 真的生效，不是摆设）
+    assert c["silhouette_sample_seed"] == 7
+    assert c["silhouette"] != a["silhouette"]
+    # 不传 seed 时退回固定默认值，保证「未指定 seed」同样可复现
+    d = evaluate_clustering(X, labels)
+    assert d["silhouette_sample_seed"] == DEFAULT_SILHOUETTE_SEED
+    assert d["silhouette"] == evaluate_clustering(X, labels)["silhouette"]
 
 
 def test_evaluate_clustering_skips_silhouette_when_k_invalid():

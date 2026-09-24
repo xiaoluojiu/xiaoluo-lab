@@ -53,6 +53,7 @@ from app.core.config import settings
 from app.core.exceptions import (
     DatasetException,
     NotFoundException,
+    ValidationException,
 )
 from app.data_engine import ingest as ingest_engine
 from app.data_engine.cache import (
@@ -70,6 +71,45 @@ _COLUMN_PRUNE_RATIO = 0.6
 # 版本号预留的最大重试次数。只有并发请求撞到同一版本号时才会 >1，
 # 正常路径循环一次即返回。
 _MAX_VERSION_RESERVE_ATTEMPTS = 5
+
+#: (dataset_id, version) 唯一约束名。判定 IntegrityError 是否为「版本号竞争」时
+#: 以它为准 —— 不能把所有 IntegrityError 都当成版本冲突（见 `_is_version_unique_conflict`）。
+_VERSION_UNIQUE_CONSTRAINT = "uq_dataset_versions_dataset_id_version"
+
+
+def _is_version_unique_conflict(exc: IntegrityError) -> bool:
+    """判定 IntegrityError 是否来自 ``(dataset_id, version)`` 唯一约束冲突。
+
+    为什么要区分：``_reserve_version`` 的 INSERT 可能触发**任何**约束冲突 ——
+    外键、``storage_path`` 唯一、NOT NULL、CHECK。把它们一律当成「版本号被抢」会
+    静默重试 5 次后抛 ``VERSION_RESERVATION_CONFLICT``，把真正的数据库错误伪装成
+    并发冲突：调用方以为「再试一次就好」，实际永远不可能成功，且原始原因丢失。
+
+    判定顺序：
+    1. 驱动暴露的结构化约束名（PostgreSQL 的 ``diag.constraint_name``）——最可靠；
+    2. 异常文本里出现约束名；
+    3. 退化到 SQLite 的 ``UNIQUE constraint failed: <表>.<列>[, <表>.<列>]`` 形态，
+       只认 dataset_versions 表上「(dataset_id, version) 两列」或「派生列
+       storage_path」这两种同源冲突，其它表/列的唯一冲突一律不算。
+    """
+    orig = getattr(exc, "orig", None)
+    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    if constraint_name:
+        return str(constraint_name) == _VERSION_UNIQUE_CONSTRAINT
+
+    text = str(orig or exc)
+    if _VERSION_UNIQUE_CONSTRAINT in text:
+        return True
+    if "UNIQUE constraint failed" not in text:
+        return False
+    # SQLite 形态：UNIQUE constraint failed: dataset_versions.<列>[, dataset_versions.<列>]
+    # storage_path 也算同源：它由 (dataset_id, version) 派生，两个写者算出同一个
+    # version 时存储 key 必然相同；且 SQLite 在两条约束同时违反时**先**报列级的
+    # storage_path，所以漏掉它就会把并发建版本误判成「约束校验失败」而中止。
+    return (
+        ("dataset_versions.dataset_id" in text and "dataset_versions.version" in text)
+        or "dataset_versions.storage_path" in text
+    )
 
 
 def _lazy_scan_enabled() -> bool:
@@ -436,6 +476,11 @@ class DatasetService:
         返回的 DatasetVersion 尚未填行列数；占位行未提交，对其它连接不可见，
         因此不存在「半成品版本」被外部读到。
         """
+        # 血缘校验放在循环外：它与版本号无关，先失败可以省掉一次无谓的 INSERT，
+        # 也避免占位行回滚把真正的校验错误冲掉。
+        if parent_version_id is not None:
+            self._assert_valid_parent(dataset_id, parent_version_id)
+
         for _ in range(_MAX_VERSION_RESERVE_ATTEMPTS):
             latest = self.latest_version(dataset_id)
 
@@ -463,9 +508,20 @@ class DatasetService:
                 # 但整个事务仍由 stage_version 在快照写完后统一提交。
                 self.db.flush()
                 return row
-            except IntegrityError:
-                # 版本号被并发者抢走：回滚后重新读 max，拿下一个号。
+            except IntegrityError as exc:
                 self.db.rollback()
+                # 只有「版本号被并发者抢走」才重算版本号重试；其它约束冲突是
+                # 真错误，重试只会把原因伪装成并发冲突。
+                if not _is_version_unique_conflict(exc):
+                    raise DatasetException(
+                        "创建数据版本时数据库约束校验失败",
+                        code="DATASET_VERSION_CONSTRAINT_FAILED",
+                        details={
+                            "dataset_id": dataset_id,
+                            "version": version,
+                            "reason": str(getattr(exc, "orig", exc))[:300],
+                        },
+                    ) from exc
                 continue
 
         raise DatasetException(
@@ -476,6 +532,30 @@ class DatasetService:
                 "attempts": _MAX_VERSION_RESERVE_ATTEMPTS,
             },
         )
+
+    def _assert_valid_parent(self, dataset_id: int, parent_version_id: int) -> None:
+        """校验父版本：必须存在，且必须属于同一个数据集。
+
+        版本链是 DatasetVersion 的血缘。跨数据集挂父节点会让「v3 由 v2 派生」这条
+        断言失去意义：数据集 B 的版本在物理上是另一份数据，却声明自己源自数据集 A，
+        回溯来源时会直接指到错误的输入上。这里显式拒绝，宁可失败也不留错误血缘。
+        """
+        parent = self.db.get(DatasetVersion, parent_version_id)
+        if parent is None:
+            raise NotFoundException(
+                f"父版本 {parent_version_id} 不存在",
+                details={"parent_version_id": parent_version_id, "dataset_id": dataset_id},
+            )
+        if int(parent.dataset_id) != int(dataset_id):
+            raise ValidationException(
+                f"父版本 {parent_version_id} 属于数据集 {parent.dataset_id}，"
+                f"不能作为数据集 {dataset_id} 的版本父节点",
+                details={
+                    "parent_version_id": parent_version_id,
+                    "parent_dataset_id": int(parent.dataset_id),
+                    "dataset_id": dataset_id,
+                },
+            )
 
     def _abort_version(
         self,

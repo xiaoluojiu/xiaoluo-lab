@@ -56,11 +56,16 @@ def seeded(dataset_service: DatasetService) -> int:
 
 
 def full_ctx(dataset_id: int | None = None) -> ToolExecutionContext:
+    """全权限上下文。
+
+    不传 `dataset_id` 时表示「不限制数据集」（``None``），而不是「一个数据集都不许访问」
+    （``set()``）——后者是三态语义里的「没有关联数据集」，会让所有取数工具被拒。
+    """
     return ToolExecutionContext(
         user_id="tester",
         session_id="s1",
         permissions=set(Permission),
-        dataset_ids={dataset_id} if dataset_id else set(),
+        dataset_ids={dataset_id} if dataset_id else None,
     )
 
 
@@ -124,6 +129,33 @@ def test_execute_denied_outside_dataset_scope(services, seeded):
         TOOL_REGISTRY.execute(
             "dataset.preview", {"dataset_id": seeded}, ctx, services
         )
+
+
+def test_empty_dataset_scope_does_not_mean_unrestricted(services, seeded):
+    """★ P1 回归：``set()`` 是「没有关联数据集」，不是「不限制」。
+
+    历史缺陷：``can_access_dataset`` 用 ``if self.dataset_ids and dataset_id not in ...``
+    判定，空集合被短路成「不限制」，于是没选数据集的会话能静默读任意数据集。
+    """
+    empty = ToolExecutionContext(user_id="u1", permissions=set(Permission), dataset_ids=set())
+    assert empty.can_access_dataset(seeded) is False
+    with pytest.raises(ToolPermissionError, match="允许范围"):
+        TOOL_REGISTRY.execute("dataset.preview", {"dataset_id": seeded}, empty, services)
+
+
+def test_explicit_dataset_scope_allows_only_bound_dataset(services, seeded):
+    """绑定了数据集时，只有被绑定的那个可访问；``None`` 才是不限制。"""
+    bound = ToolExecutionContext(
+        user_id="u1", permissions=set(Permission), dataset_ids={seeded}
+    )
+    assert bound.can_access_dataset(seeded) is True
+    assert bound.can_access_dataset(seeded + 1) is False
+
+    unrestricted = ToolExecutionContext(
+        user_id="u1", permissions=set(Permission), dataset_ids=None
+    )
+    assert unrestricted.can_access_dataset(seeded) is True
+    assert unrestricted.can_access_dataset(seeded + 1) is True
 
 
 def test_execute_high_risk_requires_confirmation(services, seeded):
