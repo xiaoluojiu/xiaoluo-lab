@@ -155,11 +155,16 @@ def shadow_route(
     }
 
     try:
-        from app.local_router.router import decision_to_route, route_request
+        from app.local_router.router import decision_to_route, route_request_detailed
 
-        decision = route_request(request)
+        # 用 detailed 版本：除了决策本身，还要记下**这一条是谁拍板的**，
+        # 以及 Qwen 的原始判定（含 steps / raw_reason —— 契约里装不下的那部分）。
+        # 没有这些，事后无法回答「该优化 Qwen 还是优化词法 / 规则」。
+        outcome = route_request_detailed(request)
+        decision = outcome.decision
         record["router"] = {
             "available": True,
+            "source": outcome.source,
             "route": decision_to_route(decision),
             "tool": decision.tool,
             "intent": decision.intent.value if decision.intent is not None else None,
@@ -170,6 +175,14 @@ def shadow_route(
             ),
             "missing": list(decision.missing),
         }
+        # Qwen 单独成段：即使本次没用它（source != local_qwen），也要知道
+        # 它当时判了什么 / 为什么没用上 —— 这才是 shadow 的价值所在。
+        if outcome.qwen is not None or outcome.qwen_error:
+            record["qwen"] = {
+                "used": outcome.source == "local_qwen",
+                "decision": outcome.qwen.to_dict() if outcome.qwen is not None else None,
+                "error": outcome.qwen_error,
+            }
     except Exception as exc:  # noqa: BLE001 — Router 内部异常也不能影响运行
         record["router"] = {"available": False, "error": f"{type(exc).__name__}: {exc}"}
 

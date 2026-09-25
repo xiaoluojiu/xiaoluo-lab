@@ -236,6 +236,25 @@ input[type="file"] { padding: 7px 10px; font-size: var(--fs-muted); }
 .dialog-body { color: var(--text-2); font-size: var(--fs-control); line-height: 1.65; }
 .dialog-footer { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-5); flex-wrap: wrap; }
 
+/* ---- 待澄清问题的候选项（Pre-flight / agent.clarify 的反问） ---- */
+.clarify-options { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.clarify-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  /* 默认是「选项按钮」而不是实心主按钮，选中态才点亮 —— 与 .active 的语义一致。 */
+  text-align: left;
+  max-width: 100%;
+}
+.clarify-option strong { font-weight: 600; color: var(--text); }
+.clarify-option .muted { font-size: var(--fs-caption, 11px); }
+.clarify-option.active {
+  border-color: var(--primary, var(--accent));
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--primary, var(--accent));
+}
+
 /* =========================================================
    6. 提示条 / 告警（info / success / warning / danger）
    ========================================================= */

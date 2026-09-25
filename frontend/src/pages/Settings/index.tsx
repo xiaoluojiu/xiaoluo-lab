@@ -4,7 +4,7 @@ import { getLlmSettings, setRemoteLlm, testLlmConnection } from "../../api/setti
 import AgentModelPanel from "./AgentModelPanel";
 import { PageHeader } from "../../components/PageHeader";
 import { useToast } from "../../components/ToastProvider";
-import { readBrowserLlm, writeBrowserLlm } from "../../lib/browserLlm";
+import { writeBrowserLlm, type BrowserLlmConfig } from "../../lib/browserLlm";
 import { applyLlmToBackend } from "../../lib/llmSync";
 import { readUi, writeUi, type UiSettings } from "../../lib/uiSettings";
 import { AppearanceSection } from "./AppearanceSection";
@@ -108,11 +108,15 @@ export default function Settings() {
    * 用户以为配好了，去 AI Lab 提问得到的却是规则规划器的乱答。
    *
    * 现在把「保存」的语义补完整：保存到浏览器 + 立即应用到后端。
+   *
+   * ★ `llm` 必须是**表单里的当前值**（由 AiServiceSection 传入），不能在这里
+   * `readBrowserLlm()` 重读 storage —— 那读到的永远是上一次保存的旧值，
+   * 用户刚改的东西会被丢弃，而界面因为 force:true 恒返回 applied，还会提示"已保存"。
+   * 表单值先进 storage（成为新的唯一事实源），再用同一份值推给后端。
    */
-  async function saveLlm(): Promise<boolean> {
-    const llm = readBrowserLlm();
+  async function saveLlm(llm: BrowserLlmConfig): Promise<boolean> {
     writeBrowserLlm(llm);
-    const result = await applyLlmToBackend({ force: true });
+    const result = await applyLlmToBackend({ force: true, config: llm });
     await refreshBackendModel();
     switch (result.status) {
       case "applied":

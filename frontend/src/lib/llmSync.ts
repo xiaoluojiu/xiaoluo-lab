@@ -42,9 +42,18 @@ export function isBrowserLlmComplete(value: BrowserLlmConfig): boolean {
  * 采取「保留原值」语义（settings.py:106），所以只改模型名也是合法操作。
  */
 export async function applyLlmToBackend(
-  options: { force?: boolean; serverState?: LlmModelSettings | null } = {},
+  options: { force?: boolean; serverState?: LlmModelSettings | null; config?: BrowserLlmConfig } = {},
 ): Promise<ApplyResult> {
-  const browser = readBrowserLlm();
+  /**
+   * ★ `config` 是**显式传入的配置**（如设置页表单里的当前值）。
+   *
+   * 历史缺陷（严重）：这里原来无条件 `readBrowserLlm()` 从 storage 读。而设置页的
+   * 表单 state 与 storage 是两份互不相通的数据——表单编辑只 setState、从不落盘，
+   * 于是「测试连接」用表单新值成功、「保存并应用」却把 storage 里的**旧值**推给后端，
+   * 并且因为 force:true 跳过一致性判断，界面还提示「已保存并应用」。
+   * 现在调用方可以把表单值显式传进来，storage 只作为「没传」时的兜底。
+   */
+  const browser = options.config ?? readBrowserLlm();
   if (!isBrowserLlmComplete(browser)) return { status: "not-configured" };
 
   let server = options.serverState ?? null;

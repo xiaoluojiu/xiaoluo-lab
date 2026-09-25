@@ -27,12 +27,13 @@ import {
   confirmRun,
   denyRun,
   getRun,
+  replyClarification,
   sendMessage,
   type AgentToolInfo,
 } from "../../../api/agent";
 import { shouldAutoConfirm } from "../../../lib/toolPermissions";
 import { toolDisplayName } from "../../../store/aiLab";
-import type { AgentRun, ChatMessage, InspectorTab, PermissionRequest } from "../../../types/agent";
+import type { AgentRun, ChatMessage, ClarificationRequest, InspectorTab, PermissionRequest } from "../../../types/agent";
 import { useAgentEvents, type EventEffects } from "./useAgentEvents";
 import { useAgentUsage } from "./useAgentUsage";
 
@@ -41,12 +42,39 @@ const STATUS_LABEL: Record<string, string> = {
   planning: "规划中",
   running: "执行中",
   waiting_confirmation: "等待确认",
+  // ★ 后端 RunStatus 里有这个状态（runtime/models.py），前端曾长期缺它：
+  // ① 标签缺失 ⇒ 界面直接回显原始字符串；② 轮询把它当终态立刻停止；
+  // ③ 没有任何 UI 渲染待澄清问题 ⇒ 表现为「进度停在 8% 永久不动」。
+  waiting_clarification: "等待补充信息",
   completed: "已完成",
   failed: "失败",
 };
 
 /** 轮询失败上限：后端不可达 / run 被删除（404）时不能 2s 一次无限重试。 */
 const MAX_POLL_FAILURES = 8;
+/**
+ * 轮询的墙钟上限。
+ *
+ * `document.hidden` 时轮询会跳过本次请求（省后台资源），若标签页长期不回到前台，
+ * 定时器既不推进也不计失败 ⇒ 无限期挂起。给一条总时长上限兜住这种情况。
+ */
+const POLL_MAX_MS = 300_000;
+/** 需要用户介入的状态：轮询到这里必须停（继续轮询没有意义，答案在用户那里）。 */
+const AWAITING_USER_STATUSES = new Set(["waiting_confirmation", "waiting_clarification"]);
+
+/**
+ * SSE 流的墙钟上限。
+ *
+ * 裸 `fetch` 没有超时（axios 侧有 60s，见 api/client.ts），后端 SSE tail 最长可挂
+ * `AGENT_SSE_CONFIRM_WAIT_SECONDS`（默认 900s）。流不结束 ⇒ `busy` / `sendingRef`
+ * 不复位 ⇒ 界面停在「发送中」、后续输入被静默吞掉。这里到点直接 abort 同一条流。
+ */
+const STREAM_TIMEOUT_MS = 120_000;
+
+/** 仍在进行中的状态（轮询需要继续）。与 AWAITING_USER_STATUSES 互补。 */
+function isInFlight(status: string): boolean {
+  return !AWAITING_USER_STATUSES.has(status) && ["pending", "planning", "running"].includes(status);
+}
 
 function stageOfRun(full: AgentRun): string {
   if (full.status === "completed") return "任务完成";
@@ -59,6 +87,9 @@ function progressOfRun(full: AgentRun): number {
   const total = full.plan?.steps?.length || 0;
   const done = full.tool_call_count || 0;
   if (total) return Math.min(95, Math.round((done / total) * 100));
+  // 等待用户补充信息时给一个稳定的中间值，避免用「事件数 ×5」算出随事件数漂移的
+  // 数字 —— 那会让「等待回答」看起来像「还在跑」。
+  if (full.status === "waiting_clarification") return 30;
   return Math.min(90, 10 + (full.events?.length ?? 0) * 5);
 }
 
@@ -91,6 +122,10 @@ export function useAgentRun(opts: UseAgentRunOptions) {
   const [progress, setProgress] = useState(0);
   const [stage, setStage] = useState("等待任务");
   const [permission, setPermission] = useState<PermissionRequest | null>(null);
+  /** 后端下发的待澄清问题（存在即表示运行停在「等你补充信息」）。 */
+  const [clarification, setClarification] = useState<ClarificationRequest | null>(null);
+  /** 澄清回答提交中。 */
+  const [clarifying, setClarifying] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [inspectorTab, setInspectorTabState] = useState<InspectorTab>("overview");
   /**
@@ -122,6 +157,12 @@ export function useAgentRun(opts: UseAgentRunOptions) {
   onRunRestoredRef.current = onRunRestored;
   const lastRunIdRef = useRef(lastRunId);
   lastRunIdRef.current = lastRunId;
+  // send() 的守卫要读最新值，但 clarification 不能进 send 的依赖数组
+  // （否则每次收到澄清事件都会重建 send → 触发页面侧的重渲染链）。
+  const clarificationRef = useRef<ClarificationRequest | null>(null);
+  clarificationRef.current = clarification;
+  /** 本轮 SSE 是否因超时被中断（用于把「超时」与「用户主动中断」区分开）。 */
+  const timedOutRef = useRef(false);
 
   /** 用户手动切页签：置上「用户已选择」标记，之后不再被自动切换覆盖。 */
   const setInspectorTab = useCallback((tab: InspectorTab) => {
@@ -133,6 +174,18 @@ export function useAgentRun(opts: UseAgentRunOptions) {
   const autoInspectorTab = useCallback((tab: InspectorTab) => {
     if (tabPinnedRef.current) return;
     setInspectorTabState(tab);
+  }, []);
+
+  /**
+   * 由**轮询 / 详情回拉**驱动的进度更新，只前进不回退。
+   *
+   * 进度有两套口径：事件侧按「每个 tool_call +8」推，轮询侧按
+   * `已完成步数 / 计划总步数` 算。两者不一致，直接覆盖会在 4 步计划刚跑完第 1 步时
+   * 把事件推上去的 89% 打回 25% —— 用户看到进度条**倒着走**。
+   * 真正的回退只有一处（重新规划时显式回退），那走的是事件侧。
+   */
+  const bumpProgress = useCallback((next: number) => {
+    setProgress((prev) => (next >= prev ? next : prev));
   }, []);
 
   // 运行中 SSE 事件已经带 run_id；流结束后才有 run 对象。二者取其一即可，
@@ -153,13 +206,36 @@ export function useAgentRun(opts: UseAgentRunOptions) {
     }
   }, []);
 
+  /**
+   * 把运行详情里的澄清载荷同步到界面。
+   *
+   * 轮询 / 刷新 / 会话恢复都要走同一份逻辑：状态是 `waiting_clarification`
+   * 却没有载荷（已被别的请求领走）时，问题面板必须撤掉，否则会留下一个永远
+   * 点不动的死面板。
+   */
+  const syncClarification = useCallback((full: AgentRun) => {
+    const pending = full.pending_clarification ?? null;
+    if (pending && full.status === "waiting_clarification") {
+      setClarification(pending);
+      return;
+    }
+    setClarification((prev) => (prev && full.status === "waiting_clarification" ? prev : null));
+  }, []);
+
   const startPolling = useCallback(
     (runId: string) => {
       if (pollRef.current) window.clearInterval(pollRef.current);
       const seq = seqRef.current;
       let failures = 0;
+      const startedAt = Date.now();
       // 后台标签页暂停轮询：`document.hidden` 为 true 时跳过本次请求，回到前台自动恢复。
       pollRef.current = window.setInterval(async () => {
+        // 墙钟兜底：长期处于后台标签页时定时器既不推进也不计失败，必须有个上限。
+        if (Date.now() - startedAt > POLL_MAX_MS) {
+          stopPolling();
+          onError("运行状态同步已超时停止，可刷新页面查看最新结果。");
+          return;
+        }
         if (document.hidden) return;
         try {
           const full = await getRun(runId);
@@ -172,12 +248,14 @@ export function useAgentRun(opts: UseAgentRunOptions) {
           failures = 0;
           setRun(full);
           setEvents(full.events ?? []);
-          setProgress(progressOfRun(full));
+          bumpProgress(progressOfRun(full));
           setStage(stageOfRun(full));
           if (full.pending_confirmation) setPermission(full.pending_confirmation);
-          if (full.status !== "pending" && full.status !== "planning" && full.status !== "running") {
-            stopPolling();
-          }
+          syncClarification(full);
+          // 终止判断用**黑名单**表达「仍在进行」，等价于「不在进行态就停」；
+          // 写成集合是为了让「等待用户」这一类语义显形 —— 它们同样要停轮询，
+          // 但停止的原因不同（答案在用户那里，继续轮询永远等不到）。
+          if (!isInFlight(full.status)) stopPolling();
         } catch (e) {
           failures += 1;
           if (failures >= MAX_POLL_FAILURES) {
@@ -188,7 +266,8 @@ export function useAgentRun(opts: UseAgentRunOptions) {
         }
       }, 2000);
     },
-    [setEvents, onError, stopPolling],
+    // syncClarification 只依赖 setter，行为稳定；显式列出以免 lint 报缺失依赖。
+    [setEvents, onError, stopPolling, syncClarification, bumpProgress],
   );
 
   /** 拉取单次运行详情并落到面板（SSE onDone 之后使用）。 */
@@ -200,16 +279,20 @@ export function useAgentRun(opts: UseAgentRunOptions) {
         if (seq !== seqRef.current) return;
         setRun(full);
         setEvents(full.events ?? []);
-        setProgress(progressOfRun(full));
+        bumpProgress(progressOfRun(full));
         setStage(stageOfRun(full));
         if (full.pending_confirmation) setPermission(full.pending_confirmation);
+        syncClarification(full);
         // ★ 只做「用户没手动选过」时的自动定位，绝不把用户正在看的页签打回去。
         autoInspectorTab(full.tool_calls.length ? "chain" : "activity");
       } catch {
-        /* 流已结束，轮询会兜底 */
+        // ★ 详情没拉到时**必须**也要把页签定位走。
+        //   否则面板停在切会话时被重置的「概览」：用户看到的是「任务跑完了，
+        //   但状态面板从头到尾没动过」—— 这正是「运行面板锁死在概览」的直接成因。
+        autoInspectorTab("activity");
       }
     },
-    [setEvents, autoInspectorTab],
+    [setEvents, autoInspectorTab, syncClarification, bumpProgress],
   );
 
   /** 把一条事件的增量应用到界面。授权请求在这里触发自动放行判定。 */
@@ -221,6 +304,8 @@ export function useAgentRun(opts: UseAgentRunOptions) {
       // ★ 收到 SSE 事件**不得**打断流，也不得把用户手动选中的页签改写掉。
       if (fx.tab) autoInspectorTab(fx.tab);
       if (fx.append) appendMessage(fx.append);
+      // 三态：`undefined` 不动、`null` 撤面板、对象则展示问题。
+      if (fx.clarification !== undefined) setClarification(fx.clarification);
       if (!fx.permission) return;
       const req = fx.permission;
       const autoKey = `${runId}:${req.step_index}:${req.tool}`;
@@ -237,6 +322,54 @@ export function useAgentRun(opts: UseAgentRunOptions) {
     // autoAllow 在下方定义，此处读取的是最近一次渲染的闭包；它只用 ref 与 setter，行为稳定。
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [tools, appendMessage, onNotice, autoInspectorTab],
+  );
+
+  /**
+   * 回答待澄清问题。
+   *
+   * 后端收到后从 Pre-flight / 原步骤继续（同步跑完），所以这里拿到的是**已推进**的
+   * 运行对象；若又产生了新的反问，继续展示，不要把它当成「回答失败」。
+   */
+  const answerClarification = useCallback(
+    async (answer: string) => {
+      const target = activeRunId;
+      const trimmed = (answer ?? "").trim();
+      if (!target || !trimmed || clarifying) return;
+      const seq = seqRef.current;
+      setClarifying(true);
+      onError(null);
+      // 回答澄清等于**开启新一轮执行**：上一轮用户手动选过的页签不该继续锁住本轮，
+      // 否则续跑过程中的工具调用完全不会反映到面板上。
+      tabPinnedRef.current = false;
+      try {
+        appendMessage({ role: "user", content: trimmed });
+        const resumed = await replyClarification(target, trimmed);
+        if (seq !== seqRef.current) return;
+        setClarification(null);
+        bumpProgress(progressOfRun(resumed));
+        setStage(stageOfRun(resumed));
+        // summary() 不带事件列表，回拉一次全量，保证时间线与工具链同步。
+        const full = await getRun(target);
+        if (seq !== seqRef.current) return;
+        setRun(full);
+        setEvents(full.events ?? []);
+        if (full.pending_confirmation) setPermission(full.pending_confirmation);
+        syncClarification(full);
+        if (full.final_answer) {
+          appendMessage({
+            role: "assistant",
+            content: full.final_answer,
+            source: full.answer_source ?? null,
+          });
+        }
+        if (isInFlight(full.status)) startPolling(target);
+      } catch (e) {
+        if (seq === seqRef.current) onError(errText(e, "提交回答失败"));
+      } finally {
+        if (seq === seqRef.current) setClarifying(false);
+      }
+    },
+    [activeRunId, clarifying, appendMessage, onError, setEvents, syncClarification, startPolling, bumpProgress],
   );
 
   /** 设置页已把该工具设为「自动放行」时的免确认路径。失败回退为手动授权弹窗。 */
@@ -272,6 +405,12 @@ export function useAgentRun(opts: UseAgentRunOptions) {
 
   const send = useCallback(
     async (content: string) => {
+      // 运行停在等待补充信息时，后端会拒绝新消息（会话存在活动 Turn → 409）。
+      // 与其让用户点一次发送收到一条看不懂的 409，不如在这里直接说清楚。
+      if (clarificationRef.current) {
+        onError("请先回答上面的补充问题，或点「停止」放弃本次运行后再发新消息。");
+        return;
+      }
       if (!content.trim() || sendingRef.current) return;
       sendingRef.current = true;
       // 先建会话再动运行状态：ensureSession 会写入 sessionId，
@@ -294,6 +433,13 @@ export function useAgentRun(opts: UseAgentRunOptions) {
       abortStream();
       const controller = new AbortController();
       abortRef.current = controller;
+      // 超时复用**同一个** controller：多建一个 controller 会让「一次中断」变成
+      // 两次 abort 调用，也让「谁中断的」变得难以区分。
+      timedOutRef.current = false;
+      const streamTimer = window.setTimeout(() => {
+        timedOutRef.current = true;
+        controller.abort();
+      }, STREAM_TIMEOUT_MS);
       appendMessage({ role: "user", content });
       setProgress(5);
       setStage("理解任务");
@@ -317,16 +463,42 @@ export function useAgentRun(opts: UseAgentRunOptions) {
             if (runId) {
               void refreshRun(runId);
               startPolling(runId);
+              return;
             }
+            // ★ 一条事件都没收到就结束了（后端在建立运行对象之前就失败、
+            //   或 SSE 只推了 bootstrap failed）。此时既没有 run 也没有轮询，
+            //   界面会停在「理解任务 / 5%」不动 —— 表现为「任务永远没结束」。
+            //   这里是唯一的收尾点，必须显式给出终态。
+            setStage("任务未产生运行记录");
+            setProgress(100);
+            autoInspectorTab("activity");
           },
         });
       } catch (e) {
-        // abort 导致的异常是「正常中断」（切会话 / 卸载 / 新请求顶替），不应当成发送失败报错。
+        // ★ 判定顺序：先超时、再外部中断、最后才是真失败。
+        //   超时也是通过 abort 实现的，但它**必须**告诉用户——否则一次 900s 的
+        //   后端挂起会表现成「点了发送，什么都没发生」。
+        const timedOut = timedOutRef.current;
+        timedOutRef.current = false;
         const aborted = controller.signal.aborted || (e instanceof DOMException && e.name === "AbortError");
-        if (!aborted) onError(errText(e, "发送失败"));
+        if (timedOut) {
+          onError(`Agent ${Math.round(STREAM_TIMEOUT_MS / 1000)} 秒未响应，已停止等待。任务可能仍在后台运行，可稍后查看该会话的运行记录。`);
+        } else if (!aborted) {
+          onError(errText(e, "发送失败"));
+        }
         setBusy(false);
         sendingRef.current = false;
-        if (runId && !aborted) startPolling(runId);
+        if (runId) {
+          startPolling(runId);
+        } else {
+          // 连 run_id 都没收到就断了：没有轮询兜底，必须自己收尾，
+          // 否则界面停在「理解任务 / 5%」，看起来像任务永远没结束。
+          setStage("任务未产生运行记录");
+          setProgress(100);
+          autoInspectorTab("activity");
+        }
+      } finally {
+        window.clearTimeout(streamTimer);
       }
     },
     [
@@ -342,6 +514,7 @@ export function useAgentRun(opts: UseAgentRunOptions) {
       applyEffects,
       refreshRun,
       startPolling,
+      autoInspectorTab,
     ],
   );
 
@@ -385,6 +558,7 @@ export function useAgentRun(opts: UseAgentRunOptions) {
   const deny = useCallback(() => {
     // 拒绝必须通知后端终止 run，否则 run 卡在 WAITING_CONFIRMATION，会话被 409 锁死。
     setPermission(null);
+    setClarification(null);
     appendMessage({ role: "assistant", content: "已拒绝该高风险操作的授权，对应步骤不会执行。" });
     const target = activeRunId;
     if (!target) return;
@@ -410,6 +584,8 @@ export function useAgentRun(opts: UseAgentRunOptions) {
     if (!target) return;
     setStage("正在取消…");
     onError(null);
+    // 取消同时撤回待澄清面板：等待态已终止，再显示问题会误导用户。
+    setClarification(null);
     try {
       await cancelRun(target);
       setStage("已请求取消，将在当前步骤结束后停止");
@@ -448,6 +624,7 @@ export function useAgentRun(opts: UseAgentRunOptions) {
     clear();
     setRun(null);
     setPermission(null);
+    setClarification(null);
     setProgress(0);
     setStage("等待任务");
     tabPinnedRef.current = false;
@@ -467,9 +644,12 @@ export function useAgentRun(opts: UseAgentRunOptions) {
         if (cancelled) return;
         setRun(full);
         setEvents(full.events ?? []);
-        setProgress(progressOfRun(full));
+        bumpProgress(progressOfRun(full));
         setStage(stageOfRun(full));
         if (full.pending_confirmation) setPermission(full.pending_confirmation);
+        syncClarification(full);
+        // 恢复的是**上一次运行**，页签直接按内容定位（不用 autoInspectorTab）：
+        // 这里不存在「用户正在看某个页签」的前提，刚切完会话一切都是新的。
         setInspectorTabState(full.tool_calls.length ? "chain" : "activity");
         // 恢复成功才通知页面（展开面板）。这是「通知」，不是「切换」——
         // 它不参与任何清理逻辑，也不会反过来让 effect 再跑一次。
@@ -506,6 +686,9 @@ export function useAgentRun(opts: UseAgentRunOptions) {
     stage,
     permission,
     confirming,
+    /** 后端等待用户补充信息的问题（非空时应渲染成可回答的面板）。 */
+    clarification,
+    clarifying,
     inspectorTab,
     setInspectorTab,
     activeRunId,
@@ -516,5 +699,6 @@ export function useAgentRun(opts: UseAgentRunOptions) {
     allow,
     deny,
     stop,
+    answerClarification,
   };
 }

@@ -7,7 +7,9 @@ const EVENT_META: Record<AgentEventType, { label: string; cls: string }> = {
   route: { label: "路由", cls: "success" },
   chat: { label: "对话", cls: "success" },
   planning: { label: "规划", cls: "success" },
+  preflight: { label: "开工前检查", cls: "success" },
   permission: { label: "等待授权", cls: "warning" },
+  clarification: { label: "待补充信息", cls: "warning" },
   tool_call: { label: "调用工具", cls: "success" },
   tool_result: { label: "工具结果", cls: "success" },
   validation: { label: "结果校验", cls: "success" },
@@ -36,6 +38,12 @@ function describe(ev: AgentEvent, tools: AgentToolInfo[]): string {
       return String(p.stage ?? "上下文就绪");
     case "permission":
       return `${tn(p.tool)} ${p.reason ?? ""}`.trim();
+    case "preflight":
+      return `判定 ${String(p.outcome ?? "-")}（检查 ${String(p.checks_run ?? []).length ? (p.checks_run as unknown[]).length : 0} 项）`;
+    case "clarification":
+      return String(p.stage ?? "") === "answered"
+        ? `已回答：${String(p.answer ?? "")}`
+        : `等待补充信息：${String(p.question ?? p.code ?? "")}`;
     case "tool_call":
       return `${tn(p.tool)}（步骤 ${(p.step_index as number | undefined) ?? "-"}）`;
     case "tool_result":

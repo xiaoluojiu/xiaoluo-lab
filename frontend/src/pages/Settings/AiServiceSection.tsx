@@ -19,8 +19,14 @@ export function AiServiceSection({
   /** 「启用远程 API 大模型」总开关；关闭 = Agent 走平台自带模型。 */
   remoteEnabled: boolean;
   onToggleRemote: (enabled: boolean) => void;
-  /** 返回「是否真的应用到了后端」：失败时不能清掉「未保存改动」标记。 */
-  onSave: () => Promise<boolean>;
+  /**
+   * 保存表单里的当前值。
+   *
+   * ★ 必须带 `llm` 入参：表单 state 与 storage 是两份数据，表单编辑不落盘，
+   * 若这里不传值，保存函数只能去 storage 读旧值 —— 表现为「测试连接成功、
+   * 保存却没生效」。失败时应返回 false，让调用方保留「未应用」标记。
+   */
+  onSave: (llm: BrowserLlmConfig) => Promise<boolean>;
   onTest: (llm: BrowserLlmConfig) => Promise<string>;
 }) {
   const [llm, setLlm] = useState<BrowserLlmConfig>(readBrowserLlm);
@@ -37,6 +43,15 @@ export function AiServiceSection({
   const complete = Boolean(llm.base_url.trim() && llm.model.trim() && llm.api_key.trim());
   // 开关关掉时这组配置整体停用，因此不再提示「有未应用的改动」——那时应用了也不生效。
   const pendingApply = remoteEnabled && (dirty || !backendKeySet);
+  /**
+   * 停用标记：**只影响提示，不再禁用输入与按钮**。
+   *
+   * 历史缺陷：`locked` 曾经同时给三个输入框和「保存并应用」「测试连接」都加上
+   * `disabled`。而开关的语义是「凭据原样保留，重新开启立即生效」（见下方 InfoHint），
+   * 也就是说关闭期间配置凭据是**有意义的**操作 —— 一禁用，用户按「关闭外部 LLM 后
+   * 测试」的流程走，会发现整块变灰、保存点不动，直接表现为「保存并应用失败」。
+   * 现在改为：停用期间照常可编辑可保存，只是明确说明「何时才生效」。
+   */
   const locked = !remoteEnabled;
 
   const badge = locked
@@ -53,7 +68,8 @@ export function AiServiceSection({
    * 页面始终显示「有尚未应用的改动」。现在由保存动作本身按返回结果清除。
    */
   async function runSave() {
-    if (await onSave()) setDirty(false);
+    // 把表单当前值交给保存函数（而不是让它去 storage 里读旧值）。
+    if (await onSave(llm)) setDirty(false);
   }
 
   async function runTest() {
@@ -107,12 +123,12 @@ export function AiServiceSection({
       <div className="settings-form-grid" style={{ marginTop: 18 }}>
         <label className="field">
           Base URL（OpenAI Compatible）
-          <input type="text" value={llm.base_url} placeholder="https://api.example.com/v1" disabled={locked}
+          <input type="text" value={llm.base_url} placeholder="https://api.example.com/v1"
             onChange={(e) => patch({ base_url: e.target.value })} />
         </label>
         <label className="field">
           模型名
-          <input type="text" value={llm.model} placeholder="例如 gpt-4o-mini / deepseek-chat" disabled={locked}
+          <input type="text" value={llm.model} placeholder="例如 gpt-4o-mini / deepseek-chat"
             onChange={(e) => patch({ model: e.target.value })} />
         </label>
       </div>
@@ -128,13 +144,18 @@ export function AiServiceSection({
         </span>
         <div className="settings-key-wrap">
           <input id="llm-api-key" type={keyVisible ? "text" : "password"} value={llm.api_key} placeholder="输入 API Key"
-            disabled={locked} onChange={(e) => patch({ api_key: e.target.value })} />
+            onChange={(e) => patch({ api_key: e.target.value })} />
           <button className="btn settings-key-toggle" type="button" onClick={() => setKeyVisible((v) => !v)}>
             {keyVisible ? "隐藏" : "显示"}
           </button>
         </div>
       </label>
 
+      {locked && (
+        <p className="settings-note">
+          远程模型当前已停用，这组配置保存后<strong>不会立即被 Agent 使用</strong>；凭据会保留，重新开启开关即刻生效。
+        </p>
+      )}
       {pendingApply && complete && (
         <p className="settings-note settings-note-warn">
           有尚未应用的改动（或后端尚未收到 Key）。点「保存并应用」后 Agent 才会使用这组配置。
@@ -142,13 +163,13 @@ export function AiServiceSection({
       )}
 
       <div className="settings-actions">
-        <button className="btn primary" type="button" onClick={() => void runSave()} disabled={!complete || locked}>
+        <button className="btn primary" type="button" onClick={() => void runSave()} disabled={!complete}>
           保存并应用
         </button>
-        <button className="btn" type="button" disabled={testing || locked} onClick={() => void runTest()}>
+        <button className="btn" type="button" disabled={testing} onClick={() => void runTest()}>
           {testing ? "连接测试中..." : "测试连接"}
         </button>
-        {dirty && <button className="btn" type="button" disabled={locked} onClick={() => { setLlm(readBrowserLlm()); setDirty(false); }}>
+        {dirty && <button className="btn" type="button" onClick={() => { setLlm(readBrowserLlm()); setDirty(false); }}>
           放弃改动
         </button>}
         {testMessage && (

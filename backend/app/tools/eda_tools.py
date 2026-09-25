@@ -34,8 +34,20 @@ def _extract_signals(result: Any) -> list[str]:
     if isinstance(explicit, list):
         return [str(s) for s in explicit]
     # 其他分析器的确定性推断（异常值检测 → outliers_detected）。
+    #
+    # ★ 历史缺陷：这里判的是**顶层** `outliers` / `outlier_count` 键，而
+    #   `EdaOutlierAnalyzer.analyze` 返回的是 `{"method": ..., "columns": [...]}`，
+    #   异常数嵌在 `columns[i]["outlier_count"]` 里 —— 条件永远不成立，
+    #   `outliers_detected` 信号**从未被产出过**。
+    #   `decision/signal.py` 的白名单因此有一条永远走不到的分支，
+    #   「分布 → 异常」这类信号驱动的下一步实际不会发生。
     if "outliers" in result or "outlier_count" in result:
         return ["outliers_detected"]
+    columns = result.get("columns")
+    if isinstance(columns, list):
+        for item in columns:
+            if isinstance(item, dict) and int(item.get("outlier_count") or 0) > 0:
+                return ["outliers_detected"]
     return []
 
 

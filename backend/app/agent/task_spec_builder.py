@@ -53,6 +53,8 @@ class TaskSpecBuilder:
         user_request: str,
         *,
         bound_dataset_id: int | None = None,
+        bound_dataset_name: str | None = None,
+        available_datasets: list[dict[str, Any]] | None = None,
         available_columns: list[str] | None = None,
         recent_tools: list[str] | None = None,
         intent_decision: Any = None,
@@ -70,6 +72,8 @@ class TaskSpecBuilder:
             DecisionContext(
                 user_request=user_request,
                 bound_dataset_id=bound_dataset_id,
+                bound_dataset_name=bound_dataset_name,
+                available_datasets=list(available_datasets or []),
                 available_columns=list(available_columns or []),
                 recent_tools=list(recent_tools or []),
             ),

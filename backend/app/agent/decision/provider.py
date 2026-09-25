@@ -59,7 +59,12 @@ from app.core.contracts import Decision
 #: 这里标记「**这一步的决策**是谁给的」。两者都进 DecisionTrace，供训练闭环用。
 class DecisionSource:
     RULE = "rule"
+    #: 词法 Router（TF-IDF + LinearSVC，见 `app.local_router.model`）。
     LOCAL_ROUTER = "local_router"
+    #: 神经 Router（Qwen3-0.6B + LoRA，见 `app.local_router.qwen`）。
+    #: 与 LOCAL_ROUTER 分开是为了在 DecisionTrace 里能分别评估两层；
+    #: 任何「只认 local_router」的白名单都必须同时接受这一个。
+    LOCAL_QWEN = "local_qwen"
     LOCAL_MODEL = "local_model"
     LOCAL_AGENT = "local_agent"
     REMOTE_LLM = "remote_llm"
@@ -142,6 +147,13 @@ class DecisionContext:
     task_spec: Any = None
     #: 当前已绑定的数据集 id（None 表示未绑定）。
     bound_dataset_id: int | None = None
+    #: 已绑定数据集的**名字**。神经 Router 要按训练口径把
+    #: 「已绑定数据集 {name}（dataset_id={id}）」写进提示词。
+    bound_dataset_name: str | None = None
+    #: 可见数据集 `[{"name": ..., "id": ...}]`。
+    #: 神经 Router 靠它把「sales 表」解析成具体 dataset_id；解析层同时用它做
+    #: **幻觉校验**（模型吐出的 id 不在本表里 ⇒ 丢弃）。
+    available_datasets: list[dict[str, Any]] = field(default_factory=list)
     #: 可见列名（来自真实 schema，禁止臆造）。
     available_columns: list[str] = field(default_factory=list)
     #: 近期工具（多轮指代消解用）。

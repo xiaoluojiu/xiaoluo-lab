@@ -6,6 +6,7 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { DatasetSelector } from "../../features/merge/DatasetSelector";
 import { ChatPanel } from "../../features/agent/ChatPanel";
 import { PermissionRequest } from "../../features/agent/PermissionRequest";
+import { ClarificationPanel } from "../../features/agent/ClarificationPanel";
 import { SmartAnalysisButton } from "../../features/agent/SmartAnalysisButton";
 import { RunInspector } from "../../features/agent/RunInspector";
 import { SessionSidebar } from "../../features/agent/SessionSidebar";
@@ -85,10 +86,11 @@ export default function AI() {
   useEffect(() => {
     if (run.busy && !prevBusyRef.current) panelUserCollapsedRef.current = false; // 新一轮任务开始：重置收起意图
     if (!run.busy) panelUserCollapsedRef.current = false;                         // 任务结束：复位
-    if (run.permission) { setPanelOpen(true); return; }                           // 授权弹窗必须可见
+    // 授权弹窗 / 澄清面板都必须可见：它们都是「等待用户」的界面，收起面板等于把问题藏起来。
+    if (run.permission || run.clarification) { setPanelOpen(true); return; }
     if (run.busy && !panelUserCollapsedRef.current) setPanelOpen(true);
     prevBusyRef.current = run.busy;
-  }, [run.busy, run.permission]);
+  }, [run.busy, run.permission, run.clarification]);
 
   /** 生成报告后直接跳到报告详情路由，不再整页刷新跳转列表页。 */
   async function generateDataReport() {
@@ -147,6 +149,7 @@ export default function AI() {
           <DatasetSelector value={session.selectedDatasets} onChange={session.setSelectedDatasets} multi compact showLabel={false} />
           <span className={`ai-chip${session.selectedDatasets.length ? "" : " warn"}`}>{session.selectedDatasets.length ? `已关联 ${session.selectedDatasets.length} 个数据集` : "未选择数据集"}</span>
           {run.permission && <span className="ai-chip danger">待授权确认</span>}
+          {run.clarification && <span className="ai-chip warn">待补充信息</span>}
         </div>
         <div className="ai-context-actions">
           <SmartAnalysisButton disabled={run.busy || !session.selectedDatasets.length} busy={run.busy} onClick={() => void run.send("请对当前关联的数据集做一次智能分析：先检查数据质量，再给出关键统计与问题摘要。")} />
@@ -220,6 +223,14 @@ export default function AI() {
         </div>
       </div>
       <PermissionRequest request={run.permission} busy={run.confirming} onAllow={() => void run.allow()} onDeny={() => void run.deny()} />
+      {/* 待澄清问题：后端停在「等你补充信息」时必须看得见、答得上，
+          否则运行会一直挂在等待态，界面只剩一个不动的进度条。 */}
+      <ClarificationPanel
+        request={run.clarification}
+        busy={run.clarifying}
+        onSubmit={(answer) => void run.answerClarification(answer)}
+        onCancel={() => void run.stop()}
+      />
       <ConfirmDialog
         open={pendingDelete !== null}
         title="删除这个会话？"

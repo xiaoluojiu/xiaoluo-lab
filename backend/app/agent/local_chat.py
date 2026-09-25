@@ -281,12 +281,134 @@ def _render_distribution_overview(data: Any) -> str:
     return "\n".join(lines)
 
 
+def _render_describe(data: Any) -> str:
+    """``eda.describe`` → 行数、数值列量级与离散度、缺失最多的列。
+
+    只给**结论式摘要**（哪几列值得看、哪里有缺失），不逐列堆全部统计量。
+    """
+    if not isinstance(data, dict):
+        return ""
+    columns = data.get("columns") or []
+    if not isinstance(columns, list) or not columns:
+        return ""
+    lines = [f"共 {data.get('row_count', '?')} 行、{len(columns)} 列。"]
+    missing: list[tuple[str, int]] = []
+    numeric: list[tuple[str, Any, Any]] = []
+    for item in columns:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("column", "?"))
+        miss = int(item.get("missing_count") or 0)
+        if miss:
+            missing.append((name, miss))
+        if "mean" in item and item.get("mean") is not None:
+            numeric.append((name, item.get("mean"), item.get("std")))
+    if numeric:
+        lines.append("数值列量级（前 8 列，均值 ± 标准差）：")
+        for name, mean, std in numeric[:8]:
+            lines.append(f"  • {name}：{_fmt_num(mean)} ± {_fmt_num(std)}")
+    if missing:
+        missing.sort(key=lambda kv: -kv[1])
+        shown = "、".join(f"{n}（{m} 条）" for n, m in missing[:6])
+        lines.append(f"存在缺失的列：{shown}。")
+    else:
+        lines.append("未发现缺失值。")
+    return "\n".join(lines)
+
+
+def _render_outlier(data: Any) -> str:
+    """``eda.outlier`` → 哪些列有异常、异常占比多少。
+
+    历史缺陷：`_extract_signals` 判的是顶层 `outliers` / `outlier_count` 键，
+    而本分析器只返回 `{"method", "columns"}`，异常数嵌在 `columns[i]` 里 ——
+    信号永远产不出来。这里直接读真实结构，不依赖信号。
+    """
+    if not isinstance(data, dict):
+        return ""
+    columns = data.get("columns") or []
+    if not isinstance(columns, list) or not columns:
+        return ""
+    rows: list[tuple[str, int, float]] = []
+    skipped = 0
+    for item in columns:
+        if not isinstance(item, dict):
+            continue
+        if item.get("status") != "ok":
+            skipped += 1
+            continue
+        count = int(item.get("outlier_count") or 0)
+        ratio = float(item.get("outlier_ratio") or 0.0)
+        if count:
+            rows.append((str(item.get("column", "?")), count, ratio))
+    if not rows:
+        tail = f"（{skipped} 列因空列/常数列已跳过）" if skipped else ""
+        return f"按 {data.get('method', '默认')} 方法检测：各数值列均未发现异常值{tail}。"
+    rows.sort(key=lambda r: -r[1])
+    lines = [f"按 {data.get('method', '默认')} 方法检测，{len(rows)} 个数值列存在异常值："]
+    for name, count, ratio in rows[:8]:
+        lines.append(f"  • {name}：{count} 条（占 {ratio * 100:.2f}%）")
+    if skipped:
+        lines.append(f"另有 {skipped} 列因空列/常数列跳过。")
+    return "\n".join(lines)
+
+
+def _render_correlation(data: Any) -> str:
+    """``eda.correlation`` → 强相关对（|r| ≥ 0.8，与 report.generate 同口径）。
+
+    矩阵本身不适合直接给人看，「哪两列强相关」才是结论。
+    """
+    if not isinstance(data, dict):
+        return ""
+    matrix = data.get("matrix")
+    if not isinstance(matrix, dict) or not matrix:
+        return ""
+    pairs: list[tuple[str, str, float]] = []
+    cols = list(matrix)
+    for i, a in enumerate(cols):
+        row = matrix.get(a)
+        if not isinstance(row, dict):
+            continue
+        for b in cols[i + 1:]:
+            r = row.get(b)
+            if r is None:
+                continue
+            try:
+                value = float(r)
+            except (TypeError, ValueError):
+                continue
+            if abs(value) >= 0.8:
+                pairs.append((str(a), str(b), value))
+    if not pairs:
+        return f"按 {data.get('method', '默认')} 方法计算：未发现 |r| ≥ 0.8 的强相关列对。"
+    pairs.sort(key=lambda p: -abs(p[2]))
+    lines = [f"按 {data.get('method', '默认')} 方法，|r| ≥ 0.8 的强相关列对："]
+    for a, b, r in pairs[:8]:
+        kind = "正相关" if r > 0 else "负相关"
+        lines.append(f"  • {a} ↔ {b}：r = {r:.3f}（{kind}）")
+    return "\n".join(lines)
+
+
+#: 工具名 → 结构化渲染器。
+#:
+#: 历史缺陷：这里**只有一个** `eda.distribution_overview` 的渲染器，其余 35 个工具
+#: 全部退化成「• 工具名：静态 description」—— 而 EDA 工具的 summary 就是类描述常量，
+#: 于是「统计一下数据」「看看异常值」跑完之后，用户看到的是一句工具介绍，
+#: 完全没有分析结论（表现为「执行了工具，但没有结论」）。
+#: 按工具名分派是刻意的：不同工具的数据结构没有共同 schema，硬写一套通用
+#: 渲染器只能得到一堆无意义的键名。拿不到结构的仍走 summary 兜底。
+_RESULT_RENDERERS: dict[str, Any] = {
+    "eda.distribution_overview": _render_distribution_overview,
+    "eda.describe": _render_describe,
+    "eda.outlier": _render_outlier,
+    "eda.correlation": _render_correlation,
+}
+
+
 def local_result_summary(tool_calls: list[Any]) -> str:
     """无远程 LLM 时，基于**真实 ToolResult.data** 生成最终答案。
 
-    统一渲染原则：只识别数据里的**通用结构**（``numeric_columns`` /
-    ``categorical_columns`` / ``signals``），不为每个工具各写一个 formatter。
-    拿不到可识别的结构化数据时，退回到逐条工具 summary（现状的最低兜底），
+    渲染原则：按工具名分派到结构化渲染器，只读数据里的**通用字段**给结论式摘要，
+    不为每个数据集硬编码。拿不到可识别结构时退回到逐条工具 summary（最低兜底），
     但绝不只丢一句「已完成 N 个步骤」就把用户打发了。
 
     ``tool_calls`` 是 ``ToolCallRecord`` 列表（有 ``.tool`` / ``.status`` /
@@ -299,8 +421,8 @@ def local_result_summary(tool_calls: list[Any]) -> str:
     parts: list[str] = []
     for c in ok_calls:
         data = getattr(c.result, "data", None)
-        # 统一：优先从数据里生成有意义的叙述，退回到 tool 自带的 summary。
-        rendered = _render_distribution_overview(data) if c.tool == "eda.distribution_overview" else ""
+        renderer = _RESULT_RENDERERS.get(getattr(c, "tool", ""))
+        rendered = renderer(data) if renderer is not None else ""
         if rendered:
             parts.append(rendered)
         else:

@@ -35,7 +35,38 @@ export interface AgentCapabilities {
 
 /** 与 Backend Agent Runtime 模型对齐。 */
 
-export type AgentRunStatus = "pending" | "planning" | "running" | "waiting_confirmation" | "completed" | "failed";
+/**
+ * 与后端 `RunStatus`（backend/app/agent/runtime/models.py）**逐项对齐**。
+ *
+ * 曾经漏掉 `waiting_clarification`：后端进入澄清态后，前端既没有对应分支，
+ * 轮询又会在第一次取到该状态时立即停止 ⇒ 运行永久卡住、界面停在 8% 且没有任何提示。
+ * 改这个联合类型时务必同步 `useAgentRun.ts` 的 `STATUS_LABEL` 与轮询的终止判断。
+ */
+export type AgentRunStatus =
+  | "pending"
+  | "planning"
+  | "running"
+  | "waiting_confirmation"
+  | "waiting_clarification"
+  | "completed"
+  | "failed";
+
+/** 后端下发的待澄清问题（`run.pending_clarification`）。 */
+export interface ClarificationRequest {
+  /** 反问编码，如 `preflight.target_unknown`；回答时原样回传给 /clarify。 */
+  code?: string;
+  question?: string;
+  /**
+   * 可选项；有值时前端渲染成选择器，`value` 才是回传给后端的机读值。
+   * 后端 `ClarificationOption.to_dict()` 给的是 `value / label / note`。
+   */
+  options?: { value: string; label?: string; note?: string; hint?: string }[];
+  /** 默认值（用户直接回车时的取值）。 */
+  default?: string | null;
+  outcome?: string;
+  step_index?: number | null;
+  tool?: string | null;
+}
 
 export interface ToolCall {
   step_index: number;
@@ -111,6 +142,8 @@ export interface AgentRun {
   tool_calls: ToolCall[];
   tool_call_count: number;
   pending_confirmation: PermissionRequest | null;
+  /** 待澄清问题；与 pending_confirmation 互斥（前者问「做哪个」，后者问「做不做」）。 */
+  pending_clarification?: ClarificationRequest | null;
   cancel_requested?: boolean;
   token_usage: AgentTokenUsage;
   /** 回答来源（后端下发的判定结果，前端不做推测）。 */
@@ -120,7 +153,21 @@ export interface AgentRun {
 }
 
 /** `usage` = Token 账本的增量快照，运行过程中持续下发（不只结束后算总账）。 */
-export type AgentEventType = "route" | "chat" | "planning" | "permission" | "tool_call" | "tool_result" | "validation" | "replanning" | "completed" | "failed" | "usage";
+/** 与后端 `EVENT_TYPES`（runtime/models.py）对齐；`preflight` / `clarification` 是后加的两种。 */
+export type AgentEventType =
+  | "route"
+  | "chat"
+  | "planning"
+  | "preflight"
+  | "permission"
+  | "clarification"
+  | "tool_call"
+  | "tool_result"
+  | "validation"
+  | "replanning"
+  | "completed"
+  | "failed"
+  | "usage";
 
 export interface AgentEvent {
   seq: number;

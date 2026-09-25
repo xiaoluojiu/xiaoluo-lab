@@ -86,6 +86,28 @@
 | 测试 | pytest + pytest-asyncio + 共享 conftest.py |
 | 代码规范 | ruff（line-length=100，target Python 3.11+） |
 | 部署 | Docker + docker-compose |
+| 本地意图路由（可选） | Qwen3-0.6B + LoRA（torch / transformers / peft，**可选依赖**） |
+
+### 本地意图路由器（可选能力）
+
+Agent 的第一层意图理解可以跑一个本地小模型（Qwen3-0.6B + LoRA），
+**它只做意图识别与路由，不执行工具、不做复杂推理、不产出最终回答**：
+
+```
+用户 → L0 升级规则 → L1 Qwen 神经路由 →（未命中）L1 词法路由 → 反问规则
+     → RouterDecision → Planner → Tool Registry → Permission → Executor
+     → Validator / Replanner → 最终回答
+```
+
+- 三档开关 `LOCAL_ROUTER_MODE`：`off`（默认）/ `shadow`（只记录不改行为）/ `active`。
+- 权重不随仓库分发，放在 `models/` 下即可，路径支持相对与绝对两种写法。
+- 依赖是**可选的**：不装 torch 也能完整运行平台，本地路由自动退回词法模型 + 规则。
+- 模型输出只经 `json.loads` 解析成既有 `RouterDecision`，随后走既有的
+  Planner / Tool Registry / Permission 流程，不存在 `eval` / `exec` 执行路径。
+- 加载失败、JSON 解析失败、推理超时、工具不在注册表、`dataset_id` 幻觉
+  都有明确处置，不会出现空白回复或 SSE 挂死。
+
+详见 [`backend/docs/LOCAL_ROUTER_QWEN.md`](backend/docs/LOCAL_ROUTER_QWEN.md)。
 
 ---
 

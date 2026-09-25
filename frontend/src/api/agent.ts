@@ -35,6 +35,15 @@ export function getRun(runId: string) { return unwrap<AgentRun>(client.get(`/age
 export function confirmRun(runId: string) { return unwrap<AgentRun>(client.post(`/agent/runs/${runId}/confirm`)); }
 export function denyRun(runId: string) { return unwrap<AgentRun>(client.post(`/agent/runs/${runId}/deny`)); }
 export function cancelRun(runId: string) { return unwrap<AgentRun>(client.post(`/agent/runs/${runId}/cancel`)); }
+/**
+ * 回答 Agent 的待澄清问题（与 /confirm 的区别：confirm 是「做不做」，clarify 是「做哪个」）。
+ *
+ * `answer` 必须是**机读值**（取 ClarificationRequest.options[].value），不是自由文本；
+ * 后端对空串直接抛 400，所以前端要保证非空（有 default 时兜底成 default）。
+ */
+export function replyClarification(runId: string, answer: string) {
+  return unwrap<AgentRun>(client.post(`/agent/runs/${runId}/clarify`, { answer }));
+}
 export function runTraceUrl(runId: string, format: "md" | "json" = "md") {
   return `${import.meta.env.VITE_API_BASE_URL ?? ""}/api/v1/agent/runs/${runId}/trace?format=${format}`;
 }
@@ -64,7 +73,7 @@ export interface SendMessageOptions {
   datasetIds?: number[];
   onEvent: (event: AgentEvent) => void;
   onDone?: () => void;
-  /** 外部取消句柄：组件卸载 / 切会话时中断流，避免后端 tail 线程挂到 AGENT_SSE_CONFIRM_WAIT_SECONDS。 */
+  /** 外部取消句柄：组件卸载 / 切会话 / 超时时中断流，避免后端 tail 线程挂到 AGENT_SSE_CONFIRM_WAIT_SECONDS。 */
   signal?: AbortSignal;
 }
 
@@ -81,6 +90,11 @@ export async function sendMessage(sessionId: string, options: SendMessageOptions
     return;
   }
 
+  //
+  // ★ 超时不在这里做，交给 `useAgentRun` 用**同一个** AbortController 触发。
+  //   曾在这里新建一个内部 controller 再转发外部 abort，结果「一次中断」变成
+  //   两次 `abort()` 调用 —— 前端测试钉的就是「切会话只中断一次」。
+  //   保持本函数只有一个取消来源（调用方传入的 signal），语义最干净。
   const base = `${import.meta.env.VITE_API_BASE_URL ?? ""}/api/v1`;
   const resp = await fetch(`${base}/agent/sessions/${sessionId}/messages`, {
     method: "POST",

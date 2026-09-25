@@ -78,8 +78,19 @@ def _release_reservation(session_id: str) -> None:
         _RESERVED_SESSIONS.discard(session_id)
 
 
-# RunStatus 目前只有 completed/failed 两个终态（cancel 实际是终止执行后落到其中之一）
-_TERMINAL_STATUSES = {RunStatus.COMPLETED, RunStatus.FAILED}
+#: SSE tail 循环的退出条件：落到这些状态就收流。
+#
+# 注意 WAITING_CLARIFICATION **必须**在这里：澄清态的恢复走独立的
+# ``POST /runs/{id}/clarify``（与 /confirm 一样是同步跑完的另一个 HTTP 请求），
+# 而前端在 SSE 未结束时 ``busy`` / ``sendingRef`` 都不会复位——界面停在「发送中」、
+# 用户输入被静默吞掉，用户根本没有机会去回答那个问题。
+# 早期这里只有 completed/failed（那时还没有澄清态），于是澄清态被当成「还在跑」，
+# tail 一直挂到 AGENT_SSE_CONFIRM_WAIT_SECONDS（默认 900s）—— 这就是「8% 永久不动」。
+# 收流后前端走 refreshRun + 轮询拉全量事件，恢复阶段的事件通过 /clarify 的响应拿到。
+#
+# WAITING_CONFIRMATION **不**在这里：授权闭环依赖同一条流把 resume 之后的事件
+# 继续推给浏览器（见 _sse_live_run 的 docstring），这条路径已验证，保持原样。
+_TERMINAL_STATUSES = {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.WAITING_CLARIFICATION}
 
 
 def _sse_from_events(events: list) -> StreamingResponse:

@@ -155,9 +155,20 @@ class AgentRuntime:
         #    旧 Planner 只在本地没把握 / 复杂任务 / 显式 plan_override 时兜底。
         if plan_override is None:
             direct_plan = self._local_direct_plan(run, session, context, candidate_tools)
+            # ★ 直连闸门没命中时，先用 TaskSpec 兜底再谈关键词规划：本地 Router 已经
+            #   选中了工具，不能因为「参数现在还凑不齐」就被 wants_eda 那类硬编码覆盖。
+            if direct_plan is None:
+                direct_plan = self._task_spec_plan(run, context, candidate_tools, all_tools)
             if direct_plan is not None:
                 run.plan = direct_plan.to_dict()
-                self._emit(run, "planning", {"stage": "local_direct", "tool": direct_plan.steps[0].tool if direct_plan.steps else None, "source": "local_router"}, on_event)
+                _spec = (context.task_context or {}).get("task_spec") or {}
+                self._emit(run, "planning", {
+                    "stage": "local_direct",
+                    "tool": direct_plan.steps[0].tool if direct_plan.steps else None,
+                    # 如实上报是 Qwen 还是词法判的：前端与 trace 都要能区分，
+                    # 写死 "local_router" 会让接了 Qwen 之后完全看不出来源变化。
+                    "source": (_spec.get("source") if isinstance(_spec, dict) else None) or "local_router",
+                }, on_event)
                 self._emit_usage(run, on_event)
                 if not direct_plan.steps:
                     self._direct_chat(run, session, on_event)
@@ -219,12 +230,22 @@ class AgentRuntime:
         tool = task_spec.get("entities", {}).get("tool") if isinstance(task_spec, dict) else None
         if not tool:
             return None
+        # ★ 建模链路不直连：模型训练必然是多步（detect → prepare → train → evaluate），
+        #   单步直连只能执行到 `ml.detect_task` 就收尾 —— 那既没有真正建模，
+        #   也让 `ml.train` 的授权闭环（WAITING_CONFIRMATION）根本不会发生。
+        #   「帮我训练一个分类模型」被压成一步 detect_task，就是这条路径造成的。
+        #   建模交给规划器生成完整多步计划。
+        if str(tool).startswith("ml."):
+            return None
         complexity = task_spec.get("complexity_hint") if isinstance(task_spec, dict) else None
         source = task_spec.get("source") if isinstance(task_spec, dict) else ""
         # simple 与 medium 都走本地直连（medium = 本地多步，交给 _run_dynamic 循环推进）。
         if complexity not in ("simple", "medium"):
             return None
-        if source not in ("local_router", "local_model"):
+        # ★ `local_qwen` 必须在这里：Qwen 神经路由与词法路由是同一层的两种实现，
+        #   漏掉它等于「Qwen 判对了、但判定被静默丢弃、又退回旧 Planner 用关键词重猜一遍」
+        #   —— 症状是接了模型却看不出任何变化，且没有任何报错。
+        if source not in ("local_router", "local_model", "local_qwen"):
             return None
         # 工具必须在候选集里（与 _validate 同口径，不越权）。
         candidate_names = {t.get("name") for t in candidate_tools}
@@ -254,6 +275,52 @@ class AgentRuntime:
         return AgentPlan(goal=task_spec.get("goal") or run.user_request,
                          steps=[PlanStep(tool=tool, arguments=arguments, expected_output=task_spec.get("sub_goal") or "")])
 
+    def _task_spec_plan(self, run: AgentRun, context: AgentContext,
+                        candidate_tools: list[dict[str, Any]], all_tools: list[dict[str, Any]]) -> AgentPlan | None:
+        """TaskSpec 兜底计划：`_local_direct_plan` 没命中时，仍以本地理解选的工具为准。
+
+        为什么需要它：`_local_direct_plan` 有六道闸门（复杂度 / 来源 / 候选集 /
+        dataset_id 是否唯一可确定…），任一不满足就返回 None，计划权随即交回旧
+        规则规划器。而规则规划器是**关键词**驱动的 —— 它会把本地 Router 已经判对的
+        「看看这批数据的分布」硬编码成 `dataset.inspect + eda.describe`
+        （`planner.py::_rule_plan` 的 `wants_eda` 分支）。
+
+        换句话说：本地语义判对了，却因为一个与语义无关的参数闸门被关键词覆盖掉。
+        这条兜底只放宽「参数能不能现在确定」这一项（确定不了就留空，让后续的参数
+        解析 / 反问显式处理），**不放宽**语义相关的闸门（没有 tool、工具未注册）。
+
+        ★ 只对 ``simple`` 生效，这是刻意的边界：本兜底产出的是**单步**计划。
+        ``medium``（本地多步编排）与 ``complex`` 需要多步推进，交给规划器更合适 ——
+        否则「帮我训练一个分类模型」会被压成只跑一步 `ml.detect_task` 就收尾，
+        授权闭环（ml.train 需确认）与真正的建模步骤都不再发生。
+        """
+        task_spec = (context.task_context or {}).get("task_spec") or {}
+        if not isinstance(task_spec, dict):
+            return None
+        if str(task_spec.get("complexity_hint")) != "simple":
+            return None
+        tool = (task_spec.get("entities") or {}).get("tool")
+        if not tool:
+            return None
+        # 与 `_local_direct_plan` 同口径：建模不直连，交回规划器走完整多步。
+        if str(tool).startswith("ml."):
+            return None
+        candidate_names = {t.get("name") for t in (candidate_tools or [])}
+        known_names = {t.get("name") for t in (all_tools or [])}
+        if tool not in known_names:
+            return None
+        if tool not in candidate_names:
+            # 工具合法注册但不在本轮候选集里：不静默越权，留一条可观测的痕迹。
+            logger.info("TaskSpec 兜底：%s 不在候选工具集内，仍按本地理解执行", tool)
+        arguments: dict[str, Any] = {}
+        tool_def = self.registry.get(tool)
+        if tool_def is not None:
+            required = (tool_def.input_schema or {}).get("required") or []
+            ids = context.dataset_ids()
+            if "dataset_id" in required and len(ids) == 1:
+                arguments["dataset_id"] = ids[0]
+        return AgentPlan(goal=task_spec.get("goal") or run.user_request,
+                         steps=[PlanStep(tool=tool, arguments=arguments, expected_output=task_spec.get("sub_goal") or "")])
 
     def _datasets_without_version(self, context: AgentContext) -> list[str]:
         """会话里「还没有任何数据版本」的数据集名称。
@@ -464,16 +531,28 @@ class AgentRuntime:
                 #   ③ 不允许降级（开关关着 / 这次错误不该兜底）⇒ 原样抛出，让这次运行如实失败。
                 # 历史缺陷：三种一律走成「固定错误文案 + LLM_ERROR_FALLBACK」，
                 # 既没真的兜底，又把一个纯报错标成了「已降级到规则」。
-                if not fallback_allowed(exc):
-                    raise
                 from app.agent.local_chat import local_reply,no_llm_notice
+                # ★ 闲聊先问平台自己的确定性能力，**再**谈降级开关。
+                #   问候 / 自述 / 能力清单这类问题平台**本来就会答**，远程挂掉只是少了
+                #   一种措辞，不该变成「无响应」。把它们也塞进 AGENT_ALLOW_MODEL_FALLBACK
+                #   管辖，等于让「平台会不会打招呼」取决于一个开关 —— 语义错位，
+                #   也是之前「你好在 API 欠费时没有任何回复」的直接成因。
                 reply=local_reply(run.user_request,degraded=True)
                 if reply is not None:
                     answer=reply
                     run.answer_source=LLM_ERROR_FALLBACK
+                elif not fallback_allowed(exc):
+                    # 平台答不上 + 这次错误不该兜底 ⇒ 原样抛出，如实失败（不伪装成回答）。
+                    raise
                 else:
                     answer=no_llm_notice(reason=str(exc))
                     run.answer_source=NO_ANSWER
+        if not answer:
+            # 最后一道保险：闲聊链路**绝不产出空回答**。空回答在前端表现为
+            # 「消息发出去了但什么都没回来」，比一句「这次没答上」更难排查。
+            from app.agent.local_chat import no_llm_notice
+            answer=no_llm_notice()
+            run.answer_source=run.answer_source or NO_ANSWER
         run.final_answer=answer; run.status=RunStatus.COMPLETED; session.history.append({"role":"assistant","content":answer}); self._emit_usage(run,on_event); self._emit(run,"completed",{"final_answer":answer,"mode":"chat","answer_source":describe(run.answer_source)},on_event)
 
     def _candidate_tools(self,context:AgentContext,all_tools:list[dict[str,Any]])->list[dict[str,Any]]:
@@ -694,6 +773,15 @@ class AgentRuntime:
             if run.cancel_requested:
                 self._fail(run, "运行已被用户取消", on_event)
                 return
+            # ★ 熔断必须在这里也过一次：动态循环原先完全没有 `assert_limits`，
+            #   于是 `ReplanLimits(max_tool_calls=0)` 这类上限对它形同虚设 ——
+            #   静态计划会失败，动态循环照样跑完。两条执行路径的护栏必须同口径。
+            self.replanner.assert_limits(
+                tool_calls=run.tool_call_count + 1,
+                elapsed_seconds=run.elapsed(),
+                total_tokens=run.token_ledger.actual_total_tokens,
+                max_total_tokens=settings.AGENT_LLM_MAX_TOTAL_TOKENS,
+            )
             # Observe → Decide：用当前 signals + 已执行工具 构造决策上下文。
             # 首步：若调用方给了 first_tool（多步任务拆解出的首步），直接用，
             # 不再对原文重新路由（原文会命中 multi_step 升级，导致首步无法确定）。
@@ -752,6 +840,22 @@ class AgentRuntime:
             if record.status != "ok":
                 self._fail(run, f"第 {step_no + 1} 步工具 {tool} 执行失败：{record.error or '未知错误'}", on_event)
                 return
+
+            # 结果校验：与 `_run_plan` 同口径发 `validation` 事件——动态循环原先
+            # 不发，于是「工具跑完了、结果是否可用」在界面与 Trace 里都看不到。
+            # 校验不通过不再强行推进（动态循环没有 Replanner），用已有结果收尾。
+            validation = self.validator.validate(step, record.result, self._tool_output_schema(tool))
+            self._emit(run, "validation", {
+                "step_index": abs_idx, "tool": tool, "valid": validation.valid,
+                "errors": validation.errors, "warnings": validation.warnings,
+            }, on_event)
+            if not validation.valid:
+                self._emit(run, "planning", {
+                    "stage": "dynamic_stop",
+                    "reason": f"{tool} 的结果未通过校验，停止继续推进",
+                    "detail": "；".join(validation.errors[:3]),
+                }, on_event)
+                break
 
             executed.append(tool)
             # Observe：提取真实 signals 反馈进下一轮（数据通路真正打通）。
@@ -859,6 +963,36 @@ class AgentRuntime:
         except Exception as exc:  # noqa: BLE001 — 埋点失败不得影响运行
             logger.warning("DecisionTrace 写入失败：%s", exc)
 
+    def _dataset_choices(self, session: AgentSession, context: AgentContext) -> tuple[str | None, list[dict[str, Any]]]:
+        """给神经 Router 的数据集上下文：`(绑定数据集名字, 可见数据集清单)`。
+
+        为什么必须有：训练语料里模型的提示词带着「可用数据集：sales(id=2)、…」，
+        它就靠这张表把「帮我看看 sales 表」解析成 ``dataset_id=2``。线上不给这张表，
+        模型只能瞎猜一个训练时记住的 id —— 而错的 id 要一路走到 SQL 才报错。
+
+        刻意**只读元信息**（一次分页查询），不读 Parquet：这个上下文在「理解」阶段
+        就要用，那时还没确定到底要读哪个数据集。
+
+        失败一律退化成空清单：少一条线索只影响解析质量，不该让运行失败。
+        """
+        bound_id = session.dataset_ids[0] if session.dataset_ids else None
+        bound_name: str | None = None
+        if bound_id is not None:
+            meta = (context.dataset_context or {}).get(str(bound_id)) or {}
+            bound_name = str(meta.get("name") or "") or None
+        options: list[dict[str, Any]] = []
+        try:
+            limit = max(1, int(settings.LOCAL_ROUTER_MAX_CONTEXT_DATASETS))
+            items, _total = self.data_engine.dataset_service.list(page=1, page_size=limit)
+            options = [{"name": str(item.name), "id": int(item.id)} for item in items]
+        except Exception:  # noqa: BLE001 — 上下文缺失不该打断运行
+            options = []
+        if bound_id is not None and not any(o["id"] == bound_id for o in options):
+            # 绑定集必须出现在清单里：否则模型即使被明确告知「已绑定 X」，
+            # 也可能因为清单里没有 X 而不敢用它的 id。
+            options.insert(0, {"name": bound_name or f"dataset_{bound_id}", "id": int(bound_id)})
+        return bound_name, options
+
     def _understand(self, run: AgentRun, session: AgentSession, context: AgentContext) -> None:
         """本地理解：把用户语言转成 TaskSpec，挂到 context.task_context。
 
@@ -875,9 +1009,12 @@ class AgentRuntime:
             # 复用运行期 decision_router（携带 llm），使本地理解阶段在本地 Router 判
             # 「本地不足」时也能**真正触发一次远程升级**（Phase 4），而非只产出空壳。
             builder = TaskSpecBuilder(router=self.decision_router)
+            bound_name, dataset_options = self._dataset_choices(session, context)
             understanding = builder.understand(
                 run.user_request,
                 bound_dataset_id=(session.dataset_ids[0] if session.dataset_ids else None),
+                bound_dataset_name=bound_name,
+                available_datasets=dataset_options,
                 intent_decision=classify(run.user_request, has_datasets=bool(session.dataset_ids)),
             )
             # TaskSpec 挂到 task_context（AgentContext 的可变状态里最贴切的位置）。
@@ -913,6 +1050,14 @@ class AgentRuntime:
             }, on_event=None)
         except Exception as exc:  # noqa: BLE001 — 本地理解失败不得拖垮主流程
             logger.warning("本地理解失败（%s）：%s", type(exc).__name__, exc)
+            # ★ 只写日志等于**静默**：TaskSpec 一消失，后面的计划权必然交回关键词
+            #   规划器（表现为「看看这批数据的分布」被改成 dataset.inspect +
+            #   eda.describe），而界面和 Trace 里都看不出为什么会这样。
+            #   这里补一条可见事件：不改变流程，但让「本地理解没跑起来」这件事有据可查。
+            self._emit(run, "planning", {
+                "stage": "understand_failed",
+                "reason": f"{type(exc).__name__}: {exc}",
+            }, on_event=None)
 
     def _escalate(self, run: AgentRun, session: AgentSession, context: AgentContext) -> dict[str, Any]:
         """Phase 4 远程升级：本地不足时发起**一次**远程战略指导，本地仍负责执行。

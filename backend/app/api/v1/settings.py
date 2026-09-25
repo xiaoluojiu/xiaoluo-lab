@@ -93,6 +93,21 @@ def local_router_settings() -> ApiResponse[dict[str, Any]]:
             )
     except Exception as exc:  # noqa: BLE001 — 状态查询不该因模型层异常而 500
         summary["probe_error"] = f"{type(exc).__name__}: {exc}"
+
+    # Qwen 神经路由的可用性探测。**刻意不在这里触发加载**（加载要几秒，
+    # 一次状态查询不该付出这个代价），只回答三件事：依赖装没装、权重在不在、
+    # 现在是否已加载。真正的加载留给第一次真实请求。
+    try:
+        from app.local_router import qwen as qwen_module
+
+        summary |= {
+            "qwen_deps_installed": qwen_module.available(),
+            "qwen_deps_error": qwen_module.unavailable_reason(),
+            "qwen_loaded": qwen_module.is_loaded(),
+            "qwen_device": qwen_module.device_of(),
+        }
+    except Exception as exc:  # noqa: BLE001
+        summary["qwen_probe_error"] = f"{type(exc).__name__}: {exc}"
     return ApiResponse[dict[str, Any]](data=summary)
 
 

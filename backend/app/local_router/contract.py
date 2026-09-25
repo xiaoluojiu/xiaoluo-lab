@@ -250,6 +250,14 @@ class RouterRequest(BaseModel):
     bound_dataset_id: int | None = None
     available_columns: list[str] = Field(default_factory=list)
     recent_tools: list[str] = Field(default_factory=list)
+    #: 已绑定数据集的**名字**。词法模型用不到（它只关心「绑没绑」这个二值信号），
+    #: 但神经模型必须按训练口径把「已绑定数据集 {name}（dataset_id={id}）」写进提示词
+    #: —— 训练语料里就是这个形态，不写会造成输入分布漂移。
+    bound_dataset_name: str | None = None
+    #: 当前可见数据集，形如 `[{"name": "sales", "id": 2}]`。
+    #: 神经模型靠它把「sales 表」解析成具体 dataset_id；解析层同时用它做**幻觉校验**
+    #: （模型吐出的 id 不在本表里 ⇒ 丢弃，不采信）。
+    available_datasets: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class RouterDecision(BaseModel):
