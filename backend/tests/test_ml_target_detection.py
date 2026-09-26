@@ -132,21 +132,20 @@ class TestUserRequestReachesTools:
     """
 
     def test_tool_context_carries_user_request(self):
+        from app.agent.loop import AgentLoop
         from app.agent.runtime.models import AgentSession
-        from app.agent.runtime.runtime import AgentRuntime
 
         session = AgentSession(id="s-1", user_id="u-1", dataset_ids=[9])
-        # 该方法不触碰 self，直接以未绑定方式调用即可验证注入逻辑
-        ctx = AgentRuntime._tool_context(None, session, "analyst", user_request="预测出发延误")
+        ctx = AgentLoop(None)._tool_context(session, user_request="预测出发延误")
         assert ctx.extra["user_request"] == "预测出发延误"
         assert ctx.dataset_ids == {9}
 
     def test_tool_context_without_request_is_empty_string(self):
+        from app.agent.loop import AgentLoop
         from app.agent.runtime.models import AgentSession
-        from app.agent.runtime.runtime import AgentRuntime
 
         session = AgentSession(id="s-2", user_id="u-1")
-        ctx = AgentRuntime._tool_context(None, session, "analyst")
+        ctx = AgentLoop(None)._tool_context(session, user_request="")
         assert ctx.extra["user_request"] == ""
 
     def test_intent_prefers_explicit_goal(self):

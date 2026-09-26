@@ -55,7 +55,7 @@
 └───────────────┬──────────────────────────────────────────────┘
                 │  Depends
 ┌───────────────▼──────────────────────────────────────────────┐
-│  依赖装配  app/api/deps.py                                     │  进程级单例：AGENT_STORE、WORKFLOW_SERVICE、Planner 缓存
+│  依赖装配  app/api/deps.py                                     │  进程级单例：AGENT_STORE、WORKFLOW_SERVICE
 └───────────────┬──────────────────────────────────────────────┘
                 │
 ┌───────────────▼──────────────────────────────────────────────┐
@@ -119,7 +119,7 @@ app/
 ├── __init__.py                   __version__
 │
 ├── api/
-│   ├── deps.py                   ★ 依赖装配与进程级单例（AGENT_STORE / WORKFLOW_SERVICE / Planner 缓存）
+│   ├── deps.py                   ★ 依赖装配与进程级单例（AGENT_STORE / WORKFLOW_SERVICE）
 │   └── v1/
 │       ├── __init__.py           ★ api_router（prefix=/api/v1），注册 12 个 router
 │       ├── datasets.py           数据集 CRUD、版本列表
@@ -205,15 +205,18 @@ app/
 │
 └── agent/
     ├── runtime/
-    │   ├── agent_runtime.py      AgentRuntime 门面（事件增量持久化 + 授权范围）
-    │   ├── runtime.py            核心编排：_route / _run_plan / resume / deny / cancel
+    │   ├── agent_runtime.py      AgentRuntime 门面（事件增量持久化）
+    │   ├── runtime.py            会话/Run 生命周期 + 等待态原子领取 + resume/deny/cancel（turn 委托 AgentLoop）
     │   ├── models.py             AgentStore（RLock + JSON 持久化）/ AgentRun / AgentSession / TokenLedger
     │   └── step_resolution.py    {{stepN.field}} 结构化依赖解析
-    ├── planner/                  models / planner（计划生成 + 缓存）/ replanner（失败重规划）
+    ├── loop.py                   ★ 统一 Stateful Agent Loop（Observe→Decide→Execute→Update→Continue/Finish，唯一控制流）
+    ├── state.py                  ★ 统一 TaskState（跨 Run 持续 + PendingAction 队列 + 紧凑远程视图）
+    ├── playbooks.py              ★ 确定性层（取消/槽位/信号→工具/九类确定性 playbook，零 LLM）
     ├── context/                  builder（上下文构建）/ budget（预算）/ cache / models
     ├── permission/               manager / models / rules（风险分级与授权判定）
     ├── executor/                 executor（工具执行与重试记录）
     ├── validator/                validator / models（结果校验）
+    ├── trace/                    DecisionTrace（决策链 JSONL 出口）
     └── llm/
         ├── base.py / capabilities.py / usage.py
         ├── openai_compatible.py  OpenAI 兼容协议（DeepSeek 等）
@@ -221,13 +224,17 @@ app/
         └── mock.py               离线/测试用 Mock
 ```
 
+> 重构（统一 Agent Loop）删除的模块：`agent/decision/`（router/provider/rule/signal/local_model/remote）、
+> `agent/planner/`（planner/replanner/models）、`agent/task_spec.py`、`agent/task_spec_builder.py`。
+> 其职责已收敛进 `loop.py`（唯一决策分层）+ `state.py`（统一状态）+ `playbooks.py`（确定性层）。
+
 ### 2.3 入口文件
 
 | 入口 | 文件 | 说明 |
 | --- | --- | --- |
 | ASGI 应用 | `app/main.py` | 创建 `FastAPI`、注册 `RequestContextMiddleware`、`include_router(api_router)`、定义 `/api/v1/health` |
 | 路由汇总 | `app/api/v1/__init__.py` | `api_router`（prefix `/api/v1`），注册 12 个 router（注意 `experiments.router` 与 `experiments.ml_router` 是**两个** router） |
-| 依赖装配 | `app/api/deps.py` | 进程级单例 `AGENT_STORE`、`WORKFLOW_SERVICE`；`_shared_planner()`（带锁 + 上限 8 的缓存）；`get_db` 复用 |
+| 依赖装配 | `app/api/deps.py` | 进程级单例 `AGENT_STORE`、`WORKFLOW_SERVICE`；`get_agent_runtime` 构造 `AgentRuntime`（内部装配 `AgentLoop`）；`get_db` 复用 |
 | 配置 | `app/core/config.py` | `Settings`；`database_url` 属性把相对 sqlite 路径按 `BACKEND_ROOT` 解析（避免从项目根启动连到空库） |
 | 迁移 | `migrations/env.py` + `alembic.ini` | 复用 `Settings.database_url`（勿改回直接用 `settings.DATABASE_URL`） |
 | 脚本 | `scripts/demo_data.py`、`scripts/experiments/*` | 演示数据与实验脚本，非运行时依赖 |
@@ -313,7 +320,7 @@ POST /reports/export   → _report_from_dict（本轮改为逐字段取值，见
                        → export_markdown / export_html / export_pdf
 ```
 
-### 3.6 Agent Turn（含 SSE 与授权确认闭环）
+### 3.6 Agent Turn（统一 Stateful Loop，含 SSE 与授权确认闭环）
 
 ```
 POST /agent/sessions/{id}/messages  （api/v1/agent.py: post_message）
@@ -323,21 +330,49 @@ POST /agent/sessions/{id}/messages  （api/v1/agent.py: post_message）
   3b. stream=true  → _sse_live_run()
         · 起 daemon 线程执行 runtime.run(...)，事件经 queue 推流
         · run 停在 WAITING_CONFIRMATION 时 SSE **保持打开**并持续 tail run.events
-          （AGENT_SSE_CONFIRM_WAIT_SECONDS，默认 900s；本轮新增 tail_stop 断连检测）
         · 用户确认 → POST /agent/runs/{id}/confirm → runtime.resume() 同步执行
-          → 新事件继续经同一条 SSE 推出（这是"点确认不卡死"的关键）
+          → 新事件继续经同一条 SSE 推出
         · 终态/断连 → 结束流
 
-runtime.run 内部：
-  _route → ContextBuilder → _fill_tools/retrieve_with_scores
-        → AgentPlanner.build_plan_resilient
-        → _run_plan → _resolve_step_arguments（{{stepN.field}}）
-        → executor.execute_step → registry.execute
-        → PermissionManager.check（高风险 → WAITING_CONFIRMATION）
-        → tool.execute → validator.validate → 失败则 replanner.replan
+runtime.run（runtime.py，370 行瘦身）：
+  _hydrate_state(session.task_state)          # 接续 / 重置 TaskState
+  → AgentLoop.turn(run, session, state)       # 唯一控制流，见下
+  → _snapshot_plan(run, state)                # run.plan 快照（只读消费）
+  → 回写 session.task_state + persist(force)
+
+AgentLoop.turn（loop.py）—— 统一 Observe→Decide→Execute→Update 循环：
+  Observe   ContextBuilder 元数据 + 按阶段召回候选工具 + state.last_result/signals
+  Decide    单一分层（每跳带 source/confidence/rationale）：
+            ① 取消/熔断 ② Pre-flight/必填槽位反问 ③ 待办队首（重校验参数）
+            ④ 客观信号→工具白名单 ⑤ local_router（TF-IDF/Qwen，唯一入口，异常诚实降级）
+            ⑥ 确定性 playbook（建模/工作流/合并/变换/综合分析/质量/EDA/intake）
+            ⑦ Remote 结构化升级（RemoteDecision：execute_tool/ask_user/chat/stop + ≤4 步队列）
+            ⑧ CHAT 动作
+  Execute   executor.execute_step 单点；高风险 → WAITING_CONFIRMATION；反问 → WAITING_CLARIFICATION
+  Update    validator 校验；失败三策略（依赖断裂即止 / 参数错误不重试 / 瞬时≤2 次）；
+            熔断（步数/工具数/时长/Token/重规划/2000 事件）；uncertainty 动态重算（可中途升级一次）
+  Finish    确定性结果渲染优先；仅明确要求综合时才一次远程总结；answer_source 诚实标注
 ```
 
-**授权语义**：一次确认放行**整份计划**内所有受控工具（不是逐个工具二次确认），越权由 PermissionManager 与 deny/cancel 兜底。
+**三层资源调度**（Token 一等公民）：确定性工具不调模型 → local_router（TF-IDF/Qwen）单步低成本决策 → Remote LLM 仅在低置信/复杂/冲突/失败时介入**一次**（结构化决策，不直接执行工具，控制权立即回到本地 Loop）。
+
+**授权语义**：一次确认只放行**被确认的那一个**高风险工具（一次性凭据，用掉即失效），越权由 PermissionManager 与 deny/cancel 兜底。
+
+**多轮接续**：会话级 `TaskState` 跨 Run 持续。追问读 facts/findings/last_result 零工具作答；改要求 `apply_constraint_change` 真实改写待办参数；新任务 reset 状态。
+
+**架构减法对照（as-is → to-be）**：
+
+| 维度 | 重构前（as-is） | 重构后（to-be） |
+| --- | --- | --- |
+| 控制流 | Chat/Agent 硬分流（`_route`）+ 三套规划入口 + 两条执行引擎 | 单一 `AgentLoop`（CHAT 是循环内动作之一） |
+| 状态 | 运行间无持续任务状态 | 统一 `TaskState`（随会话持久化） |
+| 决策 | `decision/` 包 + TaskSpecBuilder + AgentPlanner（一次性大规划） | 单层 `_prime`/`_decide` 分层（增量决策，每步 Observe 真实结果） |
+| 执行 | `_run_plan`（静态计划）+ `_run_dynamic`（signals） | 单一迭代体 |
+| 远程 | 自由文本指导 + 无条件远程总结 | 结构化 `RemoteDecision`（限次、不触工具、必要才介入） |
+| 复杂度 | 首次理解后固定 | `uncertainty` 每轮重算，可中途升降级 |
+| 账本 | llm_calls/remote_escalations | + qwen_calls/tool_calls/task_steps/escalation_count/total_cost 实时下发 |
+
+**Token 账本字段**（`AgentTokenLedger.to_dict()`）：remote_calls、remote_input_tokens、remote_output_tokens、qwen_calls、tool_calls、task_steps、escalation_count、total_cost（旧键 llm_calls/remote_escalations/actual/budget/optimization 保留）。
 
 ### 3.7 Workflow DAG 执行
 

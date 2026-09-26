@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.agent.planner.models import PlanStep
+from app.agent.state import PendingAction
 from app.agent.runtime.models import AgentRun, AgentSession
 from app.agent.context.models import AgentContext
 from app.core.exceptions import ValidationException
@@ -47,7 +47,7 @@ def _outputs_by_step(run: AgentRun) -> dict[int, Any]:
     return outputs
 
 
-def resolve_arguments(step: PlanStep, run: AgentRun, session: AgentSession, context: AgentContext, schema: dict[str, Any]) -> PlanStep:
+def resolve_arguments(step: PendingAction, run: AgentRun, session: AgentSession, context: AgentContext, schema: dict[str, Any]) -> PendingAction:
     """解析 {{step1.workflow_id}} 等依赖引用，并按工具 schema 做基础标量归一化。"""
     outputs = _outputs_by_step(run)
     properties = schema.get("properties") or {}
@@ -132,4 +132,4 @@ def resolve_arguments(step: PlanStep, run: AgentRun, session: AgentSession, cont
             except ValueError:
                 pass
 
-    return PlanStep(tool=step.tool, arguments=args, expected_output=step.expected_output, permission=step.permission)
+    return PendingAction(tool=step.tool, arguments=args, expected_output=step.expected_output, permission=step.permission)

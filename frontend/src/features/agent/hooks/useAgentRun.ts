@@ -112,10 +112,12 @@ export interface UseAgentRunOptions {
   onNotice: (message: string | null) => void;
   /** 切会话时成功回填了上一次运行——页面据此自动展开运行面板。 */
   onRunRestored?: () => void;
+  /** 运行进入终态（completed / failed）后触发——会话域据此回拉列表，刷新标题/消息数/run_ids。 */
+  onRunFinished?: () => void;
 }
 
 export function useAgentRun(opts: UseAgentRunOptions) {
-  const { sessionId, lastRunId, switchToken, datasetIds, tools, ensureSession, appendMessage, onError, onNotice, onRunRestored } = opts;
+  const { sessionId, lastRunId, switchToken, datasetIds, tools, ensureSession, appendMessage, onError, onNotice, onRunRestored, onRunFinished } = opts;
 
   const [run, setRun] = useState<AgentRun | null>(null);
   const [busy, setBusy] = useState(false);
@@ -285,6 +287,8 @@ export function useAgentRun(opts: UseAgentRunOptions) {
         syncClarification(full);
         // ★ 只做「用户没手动选过」时的自动定位，绝不把用户正在看的页签打回去。
         autoInspectorTab(full.tool_calls.length ? "chain" : "activity");
+        // 运行进入终态：通知会话域回拉列表，刷新侧栏标题/消息数/run_ids（切回可恢复最后 run）。
+        if (full.status === "completed" || full.status === "failed") onRunFinished?.();
       } catch {
         // ★ 详情没拉到时**必须**也要把页签定位走。
         //   否则面板停在切会话时被重置的「概览」：用户看到的是「任务跑完了，
@@ -292,7 +296,7 @@ export function useAgentRun(opts: UseAgentRunOptions) {
         autoInspectorTab("activity");
       }
     },
-    [setEvents, autoInspectorTab, syncClarification, bumpProgress],
+    [setEvents, autoInspectorTab, syncClarification, bumpProgress, onRunFinished],
   );
 
   /** 把一条事件的增量应用到界面。授权请求在这里触发自动放行判定。 */
@@ -383,13 +387,7 @@ export function useAgentRun(opts: UseAgentRunOptions) {
         setEvents(resumed.events ?? []);
         setPermission(null);
         onNotice(`已按设置自动放行「${toolDisplayName(req.tool, tools)}」。`);
-        if (resumed.final_answer) {
-          appendMessage({
-            role: "assistant",
-            content: resumed.final_answer,
-            source: resumed.answer_source ?? null,
-          });
-        }
+        // ★ 与手动 confirm 同理：completed 事件由 SSE 补发（唯一出口），此处不再追加。
         if (resumed.status === "waiting_confirmation" && resumed.pending_confirmation) {
           setPermission(resumed.pending_confirmation);
         }
@@ -540,9 +538,8 @@ export function useAgentRun(opts: UseAgentRunOptions) {
       setPermission(null);
       onNotice(null);
       setStage(stageOfRun(resumed));
-      if (resumed.final_answer) {
-        appendMessage({ role: "assistant", content: resumed.final_answer });
-      }
+      // ★ 助手回答不再从这里追加：confirm 时 SSE 保持打开，resume 后的 completed 事件
+      //   会经同一条流补发（唯一追加出口），这里再 append 一次就会重复上屏。
       if (resumed.status === "waiting_confirmation" && resumed.pending_confirmation) {
         setPermission(resumed.pending_confirmation);
       }

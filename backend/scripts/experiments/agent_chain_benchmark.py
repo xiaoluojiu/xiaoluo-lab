@@ -60,7 +60,6 @@ import app.models.file  # noqa: F401
 import app.models.operation  # noqa: F401
 import polars as pl
 from app.agent.llm.openai_compatible import OpenAICompatibleProvider
-from app.agent.planner.replanner import ReplanLimits
 from app.agent.runtime.agent_runtime import AgentRuntime
 from app.agent.runtime.models import AgentStore, RunStatus
 from app.core.config import settings
@@ -221,7 +220,6 @@ def run_once(env: dict[str, Any], task: dict[str, Any], use_llm: bool, store: Ag
         db=env["db"],
         llm=build_llm(use_llm),
         store=store,
-        limits=ReplanLimits(max_steps=settings.AGENT_MAX_STEPS, timeout_seconds=180.0),
     )
     session = runtime.create_session(title=f"benchmark-{task['id']}", dataset_ids=dataset_ids)
 

@@ -219,10 +219,10 @@ def local_reply(utterance: str, *, degraded: bool = False) -> str | None:
     if any(pattern in low for pattern in _USAGE_PATTERNS):
         return _usage_reply(degraded=degraded)
 
-    # 复用 `_route` 那张问候语表，避免两处词表各自漂移（延迟 import 以免循环依赖）
-    from app.agent.runtime.runtime import AgentRuntime
+    # 问候语表的唯一真源在 app.agent.intent（路由/playbook/本地应答共用一份）。
+    from app.agent.intent import GREETINGS
 
-    if low in {word.lower() for word in AgentRuntime.GREETINGS}:
+    if low in {word.lower() for word in GREETINGS}:
         return _greeting_reply(degraded=degraded)
 
     return None

@@ -1,0 +1,1568 @@
+{
+  "generated_at": "2026-09-25 18:11:31",
+  "elapsed_s": 1.1,
+  "environment": {
+    "local_router_mode": "off",
+    "remote": "CountingLLM(pseudo-token=chars/2)",
+    "plan_cache": false,
+    "fixture_rows": 80
+  },
+  "summary": {
+    "total": 14,
+    "passed": 3,
+    "failed": 11,
+    "simple_remote_rate": 1.0
+  },
+  "scenarios": [
+    {
+      "id": 1,
+      "name": "普通问候",
+      "env": "mock",
+      "turns": [
+        {
+          "run_id": "r-1",
+          "request": "你好",
+          "status": "completed",
+          "elapsed_ms": 5.9,
+          "final_answer": "【mock 对话】你好，我是小洛实验室助手，可以帮你做数据分析。",
+          "error": "",
+          "ledger": {
+            "llm_calls": 1,
+            "remote_escalations": 0,
+            "actual": {
+              "input_tokens": 42,
+              "output_tokens": 16,
+              "total_tokens": 58
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 11,
+              "remaining_total_tokens": 59942
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 0,
+              "estimated_saved_tokens": 0,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 0,
+          "tool_sequence": [],
+          "tool_sequence_ok": []
+        }
+      ],
+      "metrics": {
+        "remote_calls": 1,
+        "remote_input_tokens": 42,
+        "remote_output_tokens": 16,
+        "qwen_calls": 0,
+        "tool_calls": 0,
+        "tool_calls_ok": 0,
+        "task_steps": 0,
+        "escalation_count": 0,
+        "elapsed_ms": 5.9
+      },
+      "tool_sequence": [],
+      "assertions": [
+        {
+          "name": "运行完成",
+          "passed": true,
+          "detail": "completed:"
+        },
+        {
+          "name": "产出非空回答",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "问候零远程调用",
+          "passed": false,
+          "detail": "remote_calls=1"
+        },
+        {
+          "name": "问候不调工具",
+          "passed": true,
+          "detail": "[]"
+        }
+      ],
+      "passed": false,
+      "remote_calls_detail": [
+        {
+          "turn": 1,
+          "kind": "chat",
+          "purpose": "chat",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 42,
+          "output_tokens": 16
+        }
+      ],
+      "wall_ms": 227.6
+    },
+    {
+      "id": 2,
+      "name": "问候中启动分析任务",
+      "env": "mock",
+      "turns": [
+        {
+          "run_id": "r-1",
+          "request": "你好，请帮我分析一下这个数据。",
+          "status": "completed",
+          "elapsed_ms": 92.9,
+          "final_answer": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。",
+          "error": "",
+          "ledger": {
+            "llm_calls": 2,
+            "remote_escalations": 0,
+            "actual": {
+              "input_tokens": 8814,
+              "output_tokens": 105,
+              "total_tokens": 8919
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 10,
+              "remaining_total_tokens": 51081
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 44,
+              "estimated_saved_tokens": 44,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 0,
+          "tool_sequence": [
+            "dataset.inspect",
+            "dataset.profile"
+          ],
+          "tool_sequence_ok": [
+            "dataset.inspect",
+            "dataset.profile"
+          ]
+        }
+      ],
+      "metrics": {
+        "remote_calls": 2,
+        "remote_input_tokens": 8814,
+        "remote_output_tokens": 105,
+        "qwen_calls": 0,
+        "tool_calls": 2,
+        "tool_calls_ok": 2,
+        "task_steps": 2,
+        "escalation_count": 0,
+        "elapsed_ms": 92.9
+      },
+      "tool_sequence": [
+        "dataset.inspect",
+        "dataset.profile"
+      ],
+      "assertions": [
+        {
+          "name": "运行完成",
+          "passed": true,
+          "detail": "completed:"
+        },
+        {
+          "name": "产出非空回答",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "建任务并执行本地工具",
+          "passed": true,
+          "detail": "['dataset.inspect', 'dataset.profile']"
+        },
+        {
+          "name": "任务零远程调用",
+          "passed": false,
+          "detail": "remote_calls=2"
+        }
+      ],
+      "passed": false,
+      "remote_calls_detail": [
+        {
+          "turn": 1,
+          "kind": "structured",
+          "purpose": "",
+          "shape": "plan",
+          "schema": "AgentPlan",
+          "input_tokens": 7657,
+          "output_tokens": 87
+        },
+        {
+          "turn": 1,
+          "kind": "chat",
+          "purpose": "summary",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 1157,
+          "output_tokens": 18
+        }
+      ],
+      "wall_ms": 118.2
+    },
+    {
+      "id": 3,
+      "name": "查询行数（简单任务）",
+      "env": "mock",
+      "turns": [
+        {
+          "run_id": "r-1",
+          "request": "看看这批数据有多少行",
+          "status": "completed",
+          "elapsed_ms": 14.7,
+          "final_answer": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。",
+          "error": "",
+          "ledger": {
+            "llm_calls": 1,
+            "remote_escalations": 0,
+            "actual": {
+              "input_tokens": 291,
+              "output_tokens": 18,
+              "total_tokens": 309
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 11,
+              "remaining_total_tokens": 59691
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 0,
+              "estimated_saved_tokens": 0,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 0,
+          "tool_sequence": [
+            "dataset.inspect"
+          ],
+          "tool_sequence_ok": [
+            "dataset.inspect"
+          ]
+        }
+      ],
+      "metrics": {
+        "remote_calls": 1,
+        "remote_input_tokens": 291,
+        "remote_output_tokens": 18,
+        "qwen_calls": 0,
+        "tool_calls": 1,
+        "tool_calls_ok": 1,
+        "task_steps": 1,
+        "escalation_count": 0,
+        "elapsed_ms": 14.7
+      },
+      "tool_sequence": [
+        "dataset.inspect"
+      ],
+      "assertions": [
+        {
+          "name": "运行完成",
+          "passed": true,
+          "detail": "completed:"
+        },
+        {
+          "name": "产出非空回答",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "简单任务零远程调用",
+          "passed": false,
+          "detail": "remote_calls=1"
+        },
+        {
+          "name": "执行了 dataset.inspect",
+          "passed": true,
+          "detail": "['dataset.inspect']"
+        }
+      ],
+      "passed": false,
+      "remote_calls_detail": [
+        {
+          "turn": 1,
+          "kind": "chat",
+          "purpose": "summary",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 291,
+          "output_tokens": 18
+        }
+      ],
+      "wall_ms": 42.3
+    },
+    {
+      "id": 4,
+      "name": "分析数据分布（简单任务）",
+      "env": "mock",
+      "turns": [
+        {
+          "run_id": "r-1",
+          "request": "分析一下数据分布",
+          "status": "completed",
+          "elapsed_ms": 24.1,
+          "final_answer": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。",
+          "error": "",
+          "ledger": {
+            "llm_calls": 1,
+            "remote_escalations": 0,
+            "actual": {
+              "input_tokens": 1530,
+              "output_tokens": 18,
+              "total_tokens": 1548
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 11,
+              "remaining_total_tokens": 58452
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 36,
+              "estimated_saved_tokens": 36,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 0,
+          "tool_sequence": [
+            "eda.distribution_overview",
+            "eda.outlier"
+          ],
+          "tool_sequence_ok": [
+            "eda.distribution_overview",
+            "eda.outlier"
+          ]
+        }
+      ],
+      "metrics": {
+        "remote_calls": 1,
+        "remote_input_tokens": 1530,
+        "remote_output_tokens": 18,
+        "qwen_calls": 0,
+        "tool_calls": 2,
+        "tool_calls_ok": 2,
+        "task_steps": 2,
+        "escalation_count": 0,
+        "elapsed_ms": 24.1
+      },
+      "tool_sequence": [
+        "eda.distribution_overview",
+        "eda.outlier"
+      ],
+      "assertions": [
+        {
+          "name": "运行完成",
+          "passed": true,
+          "detail": "completed:"
+        },
+        {
+          "name": "产出非空回答",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "简单任务零远程调用",
+          "passed": false,
+          "detail": "remote_calls=1"
+        },
+        {
+          "name": "执行了分布类工具",
+          "passed": true,
+          "detail": "['eda.distribution_overview', 'eda.outlier']"
+        }
+      ],
+      "passed": false,
+      "remote_calls_detail": [
+        {
+          "turn": 1,
+          "kind": "chat",
+          "purpose": "summary",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 1530,
+          "output_tokens": 18
+        }
+      ],
+      "wall_ms": 49.8
+    },
+    {
+      "id": 5,
+      "name": "知识型问题：什么是异常值",
+      "env": "mock",
+      "turns": [
+        {
+          "run_id": "r-1",
+          "request": "什么是异常值？",
+          "status": "completed",
+          "elapsed_ms": 18.2,
+          "final_answer": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。",
+          "error": "",
+          "ledger": {
+            "llm_calls": 1,
+            "remote_escalations": 0,
+            "actual": {
+              "input_tokens": 745,
+              "output_tokens": 18,
+              "total_tokens": 763
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 11,
+              "remaining_total_tokens": 59237
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 36,
+              "estimated_saved_tokens": 36,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 0,
+          "tool_sequence": [
+            "eda.outlier"
+          ],
+          "tool_sequence_ok": [
+            "eda.outlier"
+          ]
+        }
+      ],
+      "metrics": {
+        "remote_calls": 1,
+        "remote_input_tokens": 745,
+        "remote_output_tokens": 18,
+        "qwen_calls": 0,
+        "tool_calls": 1,
+        "tool_calls_ok": 1,
+        "task_steps": 1,
+        "escalation_count": 0,
+        "elapsed_ms": 18.2
+      },
+      "tool_sequence": [
+        "eda.outlier"
+      ],
+      "assertions": [
+        {
+          "name": "运行完成",
+          "passed": true,
+          "detail": "completed:"
+        },
+        {
+          "name": "产出非空回答",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "passed": true,
+      "remote_calls_detail": [
+        {
+          "turn": 1,
+          "kind": "chat",
+          "purpose": "summary",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 745,
+          "output_tokens": 18
+        }
+      ],
+      "wall_ms": 45.1
+    },
+    {
+      "id": 6,
+      "name": "检查异常值（简单任务）",
+      "env": "mock",
+      "turns": [
+        {
+          "run_id": "r-1",
+          "request": "检查这批数据的异常值",
+          "status": "completed",
+          "elapsed_ms": 18.3,
+          "final_answer": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。",
+          "error": "",
+          "ledger": {
+            "llm_calls": 1,
+            "remote_escalations": 0,
+            "actual": {
+              "input_tokens": 747,
+              "output_tokens": 18,
+              "total_tokens": 765
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 11,
+              "remaining_total_tokens": 59235
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 36,
+              "estimated_saved_tokens": 36,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 0,
+          "tool_sequence": [
+            "eda.outlier"
+          ],
+          "tool_sequence_ok": [
+            "eda.outlier"
+          ]
+        }
+      ],
+      "metrics": {
+        "remote_calls": 1,
+        "remote_input_tokens": 747,
+        "remote_output_tokens": 18,
+        "qwen_calls": 0,
+        "tool_calls": 1,
+        "tool_calls_ok": 1,
+        "task_steps": 1,
+        "escalation_count": 0,
+        "elapsed_ms": 18.3
+      },
+      "tool_sequence": [
+        "eda.outlier"
+      ],
+      "assertions": [
+        {
+          "name": "运行完成",
+          "passed": true,
+          "detail": "completed:"
+        },
+        {
+          "name": "产出非空回答",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "简单任务零远程调用",
+          "passed": false,
+          "detail": "remote_calls=1"
+        },
+        {
+          "name": "执行了 eda.outlier",
+          "passed": true,
+          "detail": "['eda.outlier']"
+        }
+      ],
+      "passed": false,
+      "remote_calls_detail": [
+        {
+          "turn": 1,
+          "kind": "chat",
+          "purpose": "summary",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 747,
+          "output_tokens": 18
+        }
+      ],
+      "wall_ms": 43.4
+    },
+    {
+      "id": 7,
+      "name": "分析过程中继续追问",
+      "env": "mock",
+      "turns": [
+        {
+          "run_id": "r-1",
+          "request": "检查一下数据质量",
+          "status": "completed",
+          "elapsed_ms": 16.5,
+          "final_answer": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。",
+          "error": "",
+          "ledger": {
+            "llm_calls": 1,
+            "remote_escalations": 0,
+            "actual": {
+              "input_tokens": 595,
+              "output_tokens": 18,
+              "total_tokens": 613
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 11,
+              "remaining_total_tokens": 59387
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 15,
+              "estimated_saved_tokens": 15,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 0,
+          "tool_sequence": [
+            "dataset.quality"
+          ],
+          "tool_sequence_ok": [
+            "dataset.quality"
+          ]
+        },
+        {
+          "run_id": "r-2",
+          "request": "为什么这里缺失这么多？",
+          "status": "completed",
+          "elapsed_ms": 14.9,
+          "final_answer": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。",
+          "error": "",
+          "ledger": {
+            "llm_calls": 2,
+            "remote_escalations": 0,
+            "actual": {
+              "input_tokens": 7818,
+              "output_tokens": 106,
+              "total_tokens": 7924
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 10,
+              "remaining_total_tokens": 52076
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 15,
+              "estimated_saved_tokens": 15,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 0,
+          "tool_sequence": [
+            "dataset.inspect",
+            "dataset.quality"
+          ],
+          "tool_sequence_ok": [
+            "dataset.inspect",
+            "dataset.quality"
+          ]
+        }
+      ],
+      "metrics": {
+        "remote_calls": 2,
+        "remote_input_tokens": 7818,
+        "remote_output_tokens": 106,
+        "qwen_calls": 0,
+        "tool_calls": 3,
+        "tool_calls_ok": 3,
+        "task_steps": 3,
+        "escalation_count": 0,
+        "elapsed_ms": 31.4
+      },
+      "tool_sequence": [
+        "dataset.quality",
+        "dataset.inspect",
+        "dataset.quality"
+      ],
+      "assertions": [
+        {
+          "name": "运行完成",
+          "passed": true,
+          "detail": "completed:|completed:"
+        },
+        {
+          "name": "产出非空回答",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "追问不重复只读工具",
+          "passed": false,
+          "detail": "turn2_tools=['dataset.inspect', 'dataset.quality']"
+        },
+        {
+          "name": "追问零工具零远程（读状态作答）",
+          "passed": false,
+          "detail": "tools=['dataset.inspect', 'dataset.quality'], diff={'remote_calls': 1, 'remote_input_tokens': 7223, 'remote_output_tokens': 88, 'escalation_count': 0}"
+        },
+        {
+          "name": "追问回答引用缺失事实",
+          "passed": false,
+          "detail": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。"
+        }
+      ],
+      "passed": false,
+      "remote_calls_detail": [
+        {
+          "turn": 1,
+          "kind": "chat",
+          "purpose": "summary",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 595,
+          "output_tokens": 18
+        },
+        {
+          "turn": 2,
+          "kind": "structured",
+          "purpose": "",
+          "shape": "plan",
+          "schema": "AgentPlan",
+          "input_tokens": 7015,
+          "output_tokens": 88
+        },
+        {
+          "turn": 2,
+          "kind": "chat",
+          "purpose": "summary",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 803,
+          "output_tokens": 18
+        }
+      ],
+      "wall_ms": 56.7
+    },
+    {
+      "id": 8,
+      "name": "分析过程中修改要求（删除改填充）",
+      "env": "mock",
+      "turns": [
+        {
+          "run_id": "r-1",
+          "request": "检查一下数据质量",
+          "status": "completed",
+          "elapsed_ms": 17.6,
+          "final_answer": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。",
+          "error": "",
+          "ledger": {
+            "llm_calls": 1,
+            "remote_escalations": 0,
+            "actual": {
+              "input_tokens": 595,
+              "output_tokens": 18,
+              "total_tokens": 613
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 11,
+              "remaining_total_tokens": 59387
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 15,
+              "estimated_saved_tokens": 15,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 0,
+          "tool_sequence": [
+            "dataset.quality"
+          ],
+          "tool_sequence_ok": [
+            "dataset.quality"
+          ]
+        },
+        {
+          "run_id": "r-2",
+          "request": "缺失值不要删除，改成均值填充",
+          "status": "completed",
+          "elapsed_ms": 24.3,
+          "final_answer": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。",
+          "error": "",
+          "ledger": {
+            "llm_calls": 2,
+            "remote_escalations": 1,
+            "actual": {
+              "input_tokens": 598,
+              "output_tokens": 33,
+              "total_tokens": 631
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 10,
+              "remaining_total_tokens": 59369
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 0,
+              "estimated_saved_tokens": 0,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 1,
+          "tool_sequence": [
+            "dataset.inspect",
+            "data.clean",
+            "data.clean"
+          ],
+          "tool_sequence_ok": [
+            "dataset.inspect",
+            "data.clean"
+          ]
+        }
+      ],
+      "metrics": {
+        "remote_calls": 2,
+        "remote_input_tokens": 598,
+        "remote_output_tokens": 33,
+        "qwen_calls": 0,
+        "tool_calls": 4,
+        "tool_calls_ok": 3,
+        "task_steps": 4,
+        "escalation_count": 1,
+        "elapsed_ms": 41.9
+      },
+      "tool_sequence": [
+        "dataset.quality",
+        "dataset.inspect",
+        "data.clean",
+        "data.clean"
+      ],
+      "assertions": [
+        {
+          "name": "运行完成",
+          "passed": true,
+          "detail": "completed:|completed:"
+        },
+        {
+          "name": "产出非空回答",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "清洗策略为填充而非删除",
+          "passed": false,
+          "detail": "strategy=drop"
+        }
+      ],
+      "passed": false,
+      "remote_calls_detail": [
+        {
+          "turn": 1,
+          "kind": "chat",
+          "purpose": "summary",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 595,
+          "output_tokens": 18
+        },
+        {
+          "turn": 2,
+          "kind": "chat",
+          "purpose": "guidance",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 210,
+          "output_tokens": 15
+        },
+        {
+          "turn": 2,
+          "kind": "chat",
+          "purpose": "summary",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 388,
+          "output_tokens": 18
+        }
+      ],
+      "wall_ms": 63.0
+    },
+    {
+      "id": 9,
+      "name": "多步骤 EDA+预处理+建模",
+      "env": "mock",
+      "turns": [
+        {
+          "run_id": "r-1",
+          "request": "帮我全面分析这个数据集并训练一个分类模型预测label",
+          "status": "completed",
+          "elapsed_ms": 201.5,
+          "final_answer": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。",
+          "error": "",
+          "ledger": {
+            "llm_calls": 2,
+            "remote_escalations": 0,
+            "actual": {
+              "input_tokens": 10824,
+              "output_tokens": 371,
+              "total_tokens": 11195
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 10,
+              "remaining_total_tokens": 48805
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 59,
+              "estimated_saved_tokens": 59,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 1,
+          "tool_sequence": [
+            "dataset.inspect",
+            "dataset.schema",
+            "dataset.profile",
+            "dataset.quality",
+            "ml.detect_task",
+            "ml.prepare",
+            "ml.train",
+            "ml.train"
+          ],
+          "tool_sequence_ok": [
+            "dataset.inspect",
+            "dataset.schema",
+            "dataset.profile",
+            "dataset.quality",
+            "ml.detect_task",
+            "ml.prepare",
+            "ml.train"
+          ]
+        }
+      ],
+      "metrics": {
+        "remote_calls": 2,
+        "remote_input_tokens": 10824,
+        "remote_output_tokens": 371,
+        "qwen_calls": 0,
+        "tool_calls": 8,
+        "tool_calls_ok": 7,
+        "task_steps": 8,
+        "escalation_count": 0,
+        "elapsed_ms": 201.5
+      },
+      "tool_sequence": [
+        "dataset.inspect",
+        "dataset.schema",
+        "dataset.profile",
+        "dataset.quality",
+        "ml.detect_task",
+        "ml.prepare",
+        "ml.train",
+        "ml.train"
+      ],
+      "assertions": [
+        {
+          "name": "运行完成",
+          "passed": true,
+          "detail": "completed:"
+        },
+        {
+          "name": "产出非空回答",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "detect→prepare→train 链路",
+          "passed": true,
+          "detail": "['dataset.inspect', 'dataset.schema', 'dataset.profile', 'dataset.quality', 'ml.detect_task', 'ml.prepare', 'ml.train']"
+        },
+        {
+          "name": "训练成功",
+          "passed": true,
+          "detail": ""
+        }
+      ],
+      "passed": true,
+      "remote_calls_detail": [
+        {
+          "turn": 1,
+          "kind": "structured",
+          "purpose": "",
+          "shape": "plan",
+          "schema": "AgentPlan",
+          "input_tokens": 7794,
+          "output_tokens": 353
+        },
+        {
+          "turn": 1,
+          "kind": "chat",
+          "purpose": "summary",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 3030,
+          "output_tokens": 18
+        }
+      ],
+      "wall_ms": 229.3
+    },
+    {
+      "id": 10,
+      "name": "Qwen 不可用（词法兜底）",
+      "env": "qwen_unavailable",
+      "turns": [
+        {
+          "run_id": "r-1",
+          "request": "检查这批数据的异常值",
+          "status": "completed",
+          "elapsed_ms": 17.2,
+          "final_answer": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。",
+          "error": "",
+          "ledger": {
+            "llm_calls": 1,
+            "remote_escalations": 0,
+            "actual": {
+              "input_tokens": 747,
+              "output_tokens": 18,
+              "total_tokens": 765
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 11,
+              "remaining_total_tokens": 59235
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 36,
+              "estimated_saved_tokens": 36,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 0,
+          "tool_sequence": [
+            "eda.outlier"
+          ],
+          "tool_sequence_ok": [
+            "eda.outlier"
+          ]
+        }
+      ],
+      "metrics": {
+        "remote_calls": 1,
+        "remote_input_tokens": 747,
+        "remote_output_tokens": 18,
+        "qwen_calls": 0,
+        "tool_calls": 1,
+        "tool_calls_ok": 1,
+        "task_steps": 1,
+        "escalation_count": 0,
+        "elapsed_ms": 17.2
+      },
+      "tool_sequence": [
+        "eda.outlier"
+      ],
+      "assertions": [
+        {
+          "name": "运行完成",
+          "passed": true,
+          "detail": "completed:"
+        },
+        {
+          "name": "产出非空回答",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "简单任务零远程调用",
+          "passed": false,
+          "detail": "remote_calls=1"
+        },
+        {
+          "name": "执行了 eda.outlier",
+          "passed": true,
+          "detail": "['eda.outlier']"
+        }
+      ],
+      "passed": false,
+      "remote_calls_detail": [
+        {
+          "turn": 1,
+          "kind": "chat",
+          "purpose": "summary",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 747,
+          "output_tokens": 18
+        }
+      ],
+      "wall_ms": 43.8
+    },
+    {
+      "id": 11,
+      "name": "Remote LLM 不可用",
+      "env": "no_remote",
+      "turns": [
+        {
+          "run_id": "r-1",
+          "request": "看看这批数据有多少行",
+          "status": "completed",
+          "elapsed_ms": 14.2,
+          "final_answer": "• dataset.inspect：数据集 scenario-fixture 共 1 个版本",
+          "error": "",
+          "ledger": {
+            "llm_calls": 0,
+            "remote_escalations": 0,
+            "actual": {
+              "input_tokens": 0,
+              "output_tokens": 0,
+              "total_tokens": 0
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 12,
+              "remaining_total_tokens": 60000
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 0,
+              "estimated_saved_tokens": 0,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 0,
+          "tool_sequence": [
+            "dataset.inspect"
+          ],
+          "tool_sequence_ok": [
+            "dataset.inspect"
+          ]
+        }
+      ],
+      "metrics": {
+        "remote_calls": 0,
+        "remote_input_tokens": 0,
+        "remote_output_tokens": 0,
+        "qwen_calls": 0,
+        "tool_calls": 1,
+        "tool_calls_ok": 1,
+        "task_steps": 1,
+        "escalation_count": 0,
+        "elapsed_ms": 14.2
+      },
+      "tool_sequence": [
+        "dataset.inspect"
+      ],
+      "assertions": [
+        {
+          "name": "运行完成",
+          "passed": true,
+          "detail": "completed:"
+        },
+        {
+          "name": "产出非空回答",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "执行了 dataset.inspect",
+          "passed": true,
+          "detail": "['dataset.inspect']"
+        },
+        {
+          "name": "无远程时数据任务成功",
+          "passed": true,
+          "detail": "tools=['dataset.inspect']"
+        }
+      ],
+      "passed": true,
+      "remote_calls_detail": null,
+      "wall_ms": 41.3
+    },
+    {
+      "id": 12,
+      "name": "本地无法判断时自动升级",
+      "env": "mock",
+      "turns": [
+        {
+          "run_id": "r-1",
+          "request": "这个分析我总觉得哪里不对，你看着办，多比较几种思路，给我最合适的方案",
+          "status": "completed",
+          "elapsed_ms": 18.0,
+          "final_answer": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。",
+          "error": "",
+          "ledger": {
+            "llm_calls": 2,
+            "remote_escalations": 0,
+            "actual": {
+              "input_tokens": 6805,
+              "output_tokens": 107,
+              "total_tokens": 6912
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 10,
+              "remaining_total_tokens": 53088
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 44,
+              "estimated_saved_tokens": 44,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 0,
+          "tool_sequence": [
+            "dataset.inspect",
+            "dataset.profile"
+          ],
+          "tool_sequence_ok": [
+            "dataset.inspect",
+            "dataset.profile"
+          ]
+        }
+      ],
+      "metrics": {
+        "remote_calls": 2,
+        "remote_input_tokens": 6805,
+        "remote_output_tokens": 107,
+        "qwen_calls": 0,
+        "tool_calls": 2,
+        "tool_calls_ok": 2,
+        "task_steps": 2,
+        "escalation_count": 0,
+        "elapsed_ms": 18.0
+      },
+      "tool_sequence": [
+        "dataset.inspect",
+        "dataset.profile"
+      ],
+      "assertions": [
+        {
+          "name": "运行完成",
+          "passed": true,
+          "detail": "completed:"
+        },
+        {
+          "name": "产出非空回答",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "发生远程升级",
+          "passed": false,
+          "detail": "escalation_count=0"
+        }
+      ],
+      "passed": false,
+      "remote_calls_detail": [
+        {
+          "turn": 1,
+          "kind": "structured",
+          "purpose": "",
+          "shape": "plan",
+          "schema": "AgentPlan",
+          "input_tokens": 5639,
+          "output_tokens": 89
+        },
+        {
+          "turn": 1,
+          "kind": "chat",
+          "purpose": "summary",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 1166,
+          "output_tokens": 18
+        }
+      ],
+      "wall_ms": 45.5
+    },
+    {
+      "id": 13,
+      "name": "远程判断后回到本地执行",
+      "env": "mock",
+      "turns": [
+        {
+          "run_id": "r-1",
+          "request": "这个分析我总觉得哪里不对，你看着办，多比较几种思路，给我最合适的方案",
+          "status": "completed",
+          "elapsed_ms": 18.1,
+          "final_answer": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。",
+          "error": "",
+          "ledger": {
+            "llm_calls": 2,
+            "remote_escalations": 0,
+            "actual": {
+              "input_tokens": 6805,
+              "output_tokens": 107,
+              "total_tokens": 6912
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 10,
+              "remaining_total_tokens": 53088
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 44,
+              "estimated_saved_tokens": 44,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 0,
+          "tool_sequence": [
+            "dataset.inspect",
+            "dataset.profile"
+          ],
+          "tool_sequence_ok": [
+            "dataset.inspect",
+            "dataset.profile"
+          ]
+        }
+      ],
+      "metrics": {
+        "remote_calls": 2,
+        "remote_input_tokens": 6805,
+        "remote_output_tokens": 107,
+        "qwen_calls": 0,
+        "tool_calls": 2,
+        "tool_calls_ok": 2,
+        "task_steps": 2,
+        "escalation_count": 0,
+        "elapsed_ms": 18.1
+      },
+      "tool_sequence": [
+        "dataset.inspect",
+        "dataset.profile"
+      ],
+      "assertions": [
+        {
+          "name": "运行完成",
+          "passed": true,
+          "detail": "completed:"
+        },
+        {
+          "name": "产出非空回答",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "升级后本地执行工具",
+          "passed": true,
+          "detail": "['dataset.inspect', 'dataset.profile']"
+        },
+        {
+          "name": "升级后远程仅调用1次",
+          "passed": false,
+          "detail": "remote_calls=2, escalations=0"
+        }
+      ],
+      "passed": false,
+      "remote_calls_detail": [
+        {
+          "turn": 1,
+          "kind": "structured",
+          "purpose": "",
+          "shape": "plan",
+          "schema": "AgentPlan",
+          "input_tokens": 5639,
+          "output_tokens": 89
+        },
+        {
+          "turn": 1,
+          "kind": "chat",
+          "purpose": "summary",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 1166,
+          "output_tokens": 18
+        }
+      ],
+      "wall_ms": 44.0
+    },
+    {
+      "id": 14,
+      "name": "多轮不重复发送完整上下文",
+      "env": "mock",
+      "turns": [
+        {
+          "run_id": "r-1",
+          "request": "检查这批数据的异常值",
+          "status": "completed",
+          "elapsed_ms": 16.6,
+          "final_answer": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。",
+          "error": "",
+          "ledger": {
+            "llm_calls": 1,
+            "remote_escalations": 0,
+            "actual": {
+              "input_tokens": 747,
+              "output_tokens": 18,
+              "total_tokens": 765
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 11,
+              "remaining_total_tokens": 59235
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 36,
+              "estimated_saved_tokens": 36,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 0,
+          "tool_sequence": [
+            "eda.outlier"
+          ],
+          "tool_sequence_ok": [
+            "eda.outlier"
+          ]
+        },
+        {
+          "run_id": "r-2",
+          "request": "为什么这里缺失这么多？",
+          "status": "completed",
+          "elapsed_ms": 13.9,
+          "final_answer": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。",
+          "error": "",
+          "ledger": {
+            "llm_calls": 2,
+            "remote_escalations": 0,
+            "actual": {
+              "input_tokens": 7819,
+              "output_tokens": 106,
+              "total_tokens": 7925
+            },
+            "budget": {
+              "max_llm_calls": 12,
+              "max_total_tokens": 60000,
+              "remaining_llm_calls": 10,
+              "remaining_total_tokens": 52075
+            },
+            "optimization": {
+              "estimated_context_saved_tokens": 0,
+              "estimated_result_saved_tokens": 15,
+              "estimated_saved_tokens": 15,
+              "avoided_planner_calls": 0,
+              "plan_cache_hits": 0
+            },
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。"
+          },
+          "continuations": 0,
+          "tool_sequence": [
+            "dataset.inspect",
+            "dataset.quality"
+          ],
+          "tool_sequence_ok": [
+            "dataset.inspect",
+            "dataset.quality"
+          ]
+        }
+      ],
+      "metrics": {
+        "remote_calls": 2,
+        "remote_input_tokens": 7819,
+        "remote_output_tokens": 106,
+        "qwen_calls": 0,
+        "tool_calls": 3,
+        "tool_calls_ok": 3,
+        "task_steps": 3,
+        "escalation_count": 0,
+        "elapsed_ms": 30.5
+      },
+      "tool_sequence": [
+        "eda.outlier",
+        "dataset.inspect",
+        "dataset.quality"
+      ],
+      "assertions": [
+        {
+          "name": "运行完成",
+          "passed": true,
+          "detail": "completed:|completed:"
+        },
+        {
+          "name": "产出非空回答",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "追问不重复只读工具",
+          "passed": false,
+          "detail": "turn2_tools=['dataset.inspect', 'dataset.quality']"
+        },
+        {
+          "name": "追问零工具零远程（读状态作答）",
+          "passed": false,
+          "detail": "tools=['dataset.inspect', 'dataset.quality'], diff={'remote_calls': 1, 'remote_input_tokens': 7072, 'remote_output_tokens': 88, 'escalation_count': 0}"
+        },
+        {
+          "name": "追问回答引用缺失事实",
+          "passed": false,
+          "detail": "【mock 总结】基于真实工具结果，分析已完成，关键指标以工具输出为准。"
+        },
+        {
+          "name": "远程载荷不含完整原始结果",
+          "passed": true,
+          "detail": "marker_hits=0"
+        },
+        {
+          "name": "后续决策输入不膨胀",
+          "passed": false,
+          "detail": "later_max=7016, growth=7016"
+        }
+      ],
+      "passed": false,
+      "remote_calls_detail": [
+        {
+          "turn": 1,
+          "kind": "chat",
+          "purpose": "summary",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 747,
+          "output_tokens": 18
+        },
+        {
+          "turn": 2,
+          "kind": "structured",
+          "purpose": "",
+          "shape": "plan",
+          "schema": "AgentPlan",
+          "input_tokens": 7016,
+          "output_tokens": 88
+        },
+        {
+          "turn": 2,
+          "kind": "chat",
+          "purpose": "summary",
+          "shape": "",
+          "schema": null,
+          "input_tokens": 803,
+          "output_tokens": 18
+        }
+      ],
+      "wall_ms": 57.2
+    }
+  ]
+}

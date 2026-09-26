@@ -85,7 +85,7 @@ def test_describe_survives_settings_failure(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 二、闲聊链路 `_direct_chat`
+# 四、对外下发：summary() 必须带上来源
 # ---------------------------------------------------------------------------
 
 
@@ -95,131 +95,6 @@ def _run(text: str = "你好") -> AgentRun:
 
 def _session() -> AgentSession:
     return AgentSession(id="s-src", user_id="u-src")
-
-
-class _FakeLLM:
-    def __init__(self, content: str = "远程回答", *, raise_exc: Exception | None = None) -> None:
-        self.content = content
-        self._raise = raise_exc
-        self.calls = 0
-
-    def chat(self, messages):
-        self.calls += 1
-        if self._raise is not None:
-            raise self._raise
-        return SimpleNamespace(content=self.content)
-
-
-def _stub(llm=None) -> SimpleNamespace:
-    return SimpleNamespace(
-        llm=llm,
-        _emit=lambda *a, **k: None,
-        _emit_usage=lambda *a, **k: None,
-    )
-
-
-def test_chat_without_llm_is_marked_as_platform_rules():
-    run, session = _run("你好"), _session()
-    AgentRuntime._direct_chat(_stub(), run, session, None)
-    assert run.answer_source == A.PLATFORM_RULES_CHAT
-    assert A.describe(run.answer_source)["by_llm"] is False
-
-
-def test_chat_without_llm_and_unknown_intent_is_notice():
-    """规则答不了时给出的是「状态说明」，不是答案 —— 两者必须能区分。"""
-    run, session = _run("讲个笑话"), _session()
-    AgentRuntime._direct_chat(_stub(), run, session, None)
-    assert run.answer_source == A.PLATFORM_RULES_NOTICE
-
-
-def test_chat_with_llm_is_marked_as_remote():
-    run, session = _run("你好"), _session()
-    AgentRuntime._direct_chat(_stub(_FakeLLM()), run, session, None)
-    assert run.answer_source == A.REMOTE_LLM_CHAT
-    assert A.describe(run.answer_source)["by_llm"] is True
-
-
-def test_chat_with_llm_error_is_marked_as_degraded():
-    """★ 本次透明化缺陷的核心用例：开关开着、凭据也在，但这一次调用失败了。
-
-    历史缺陷：这条路径只是把异常文本拼成一句「暂时无法完成对话请求：…」就完了，
-    然后把来源标成 `LLM_ERROR_FALLBACK` —— 既**没有真的兜底**（用户拿到的只是一句报错），
-    又假装自己「已降级到规则」。
-
-    现在：远程失败必须真的走 `local_reply()`，拿得到本地回答才算降级；
-    来源照旧是 `LLM_ERROR_FALLBACK`（`by_llm=False`），但回答内容必须是真的本地应答。
-    """
-    run, session = _run("你好"), _session()
-    AgentRuntime._direct_chat(_stub(_FakeLLM(raise_exc=RuntimeError("连接超时"))), run, session, None)
-    assert run.answer_source == A.LLM_ERROR_FALLBACK
-    assert A.describe(run.answer_source)["by_llm"] is False
-    # 「降级」必须真的产出了替代回答，而不是把异常文本当成回答。
-    assert "暂时无法完成对话请求" not in run.final_answer
-    assert run.final_answer and "AI 助手" in run.final_answer
-    # 文案必须说明是「这一次调用失败」，不能谎称「远程已停用」。
-    assert "远程大模型已停用" not in run.final_answer
-
-
-# ---------------------------------------------------------------------------
-# 三、工具结果汇总链路 `_compose_answer`
-# ---------------------------------------------------------------------------
-
-
-def _run_with_tool_call() -> AgentRun:
-    run = _run("看看这批数据的分布")
-    run.tool_calls = [SimpleNamespace(status="ok", tool="eda.describe", result=SimpleNamespace(summary="3 列 / 100 行"))]
-    return run
-
-
-def _compose_stub(llm=None) -> SimpleNamespace:
-    return SimpleNamespace(
-        llm=llm,
-        _emit=lambda *a, **k: None,
-        _emit_usage=lambda *a, **k: None,
-        # 汇总只关心压缩后的视图，这里给 None（等价于「无有效视图」）即可，
-        # 不影响来源判定。
-        _result_for_llm=lambda run, call, compact=False: None,
-    )
-
-
-def test_summary_without_llm_is_marked_as_platform_rules():
-    run = _run_with_tool_call()
-    answer = AgentRuntime._compose_answer(_compose_stub(), run)
-    assert run.answer_source == A.PLATFORM_RULES_SUMMARY
-    assert A.describe(run.answer_source)["by_llm"] is False
-    # 规则汇总必须交代**真实工具结果**（而非一句「已完成 N 个步骤」打发用户）：
-    # 这里应引用工具名与真实 summary（"3 列 / 100 行"）。
-    assert "eda.describe" in answer and "3 列 / 100 行" in answer, \
-        "规则汇总应引用真实工具结果，而非空泛的完成提示"
-
-
-def test_summary_with_llm_is_marked_as_remote():
-    run = _run_with_tool_call()
-    answer = AgentRuntime._compose_answer(_compose_stub(_FakeLLM("远程汇总的结论")), run)
-    assert run.answer_source == A.REMOTE_LLM_SUMMARY
-    assert answer == "远程汇总的结论"
-
-
-def test_summary_with_llm_error_is_marked_as_degraded():
-    """★ 同上：工具跑成功了、但汇总时大模型挂了 ⇒ 这段总结是规则拼的。"""
-    run = _run_with_tool_call()
-    answer = AgentRuntime._compose_answer(_compose_stub(_FakeLLM(raise_exc=RuntimeError("429"))), run)
-    assert run.answer_source == A.LLM_ERROR_FALLBACK
-    assert A.describe(run.answer_source)["by_llm"] is False
-    # 降级到规则汇总时，同样必须引用真实工具结果，而不是一句「已完成 N 个步骤」。
-    assert "eda.describe" in answer and "3 列 / 100 行" in answer
-
-
-def test_summary_with_empty_llm_content_is_degraded():
-    """模型返回空串也算「这次没拿到模型输出」，不能算远程生成。"""
-    run = _run_with_tool_call()
-    AgentRuntime._compose_answer(_compose_stub(_FakeLLM("")), run)
-    assert run.answer_source == A.LLM_ERROR_FALLBACK
-
-
-# ---------------------------------------------------------------------------
-# 四、对外下发：summary() 必须带上来源
-# ---------------------------------------------------------------------------
 
 
 def test_summary_exposes_answer_source():

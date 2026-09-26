@@ -240,17 +240,26 @@ class TestAgentBenchmark:
 
     # ---- 场景 3：失败重规划（计划首步失败 → 重试或跳过）----
     def test_bench_failure_replan(self, env, capsys):
-        from app.agent.planner.models import AgentPlan, PlanStep
+        import time as _time
+
+        from app.agent.runtime.models import AgentRun
+        from app.agent.state import PendingAction, TaskState
 
         runtime = AgentRuntime(env["engine"], experiment_service=env["exp"])
-        # 计划首步引用不存在的 run_id，必然失败 → Replanner 跳过
-        plan = AgentPlan(
-            goal="测试失败重规划",
-            steps=[
-                PlanStep(tool="ml.evaluate", arguments={"run_id": 99999}),
-                PlanStep(tool="dataset.inspect", arguments={"dataset_id": env["dataset_id"]}),
-            ],
-        )
+
+        def _start(actions):
+            session = runtime.create_session(dataset_ids=[env["dataset_id"]])
+            state = TaskState.initial("查看结果")
+            state.queue([PendingAction(tool=t, arguments=dict(a or {}), source="test") for t, a in actions])
+            run = AgentRun(id=runtime.store.next_run_id(), session_id=session.id, user_id=session.user_id, user_request="查看结果")
+            runtime.store.add_run(run)
+            if run.id not in session.run_ids:
+                session.run_ids.append(run.id)
+            session.history.append({"role": "user", "content": "查看结果"})
+            run.started_at = _time.time()
+            runtime.loop.turn(run, session, state, run_preflight_check=False)
+            session.task_state = state.to_dict()
+            return run
 
         runtimes = []
         successes = 0
@@ -258,9 +267,11 @@ class TestAgentBenchmark:
         total_replans = 0
 
         for _ in range(3):
-            session = runtime.create_session(dataset_ids=[env["dataset_id"]])
             start = time.perf_counter()
-            run = runtime.run(session, "查看结果", plan_override=plan)
+            run = _start([
+                ("ml.evaluate", {"run_id": 99999}),
+                ("dataset.inspect", {"dataset_id": env["dataset_id"]}),
+            ])
             elapsed = time.perf_counter() - start
             runtimes.append(elapsed)
             total_tool_calls += run.tool_call_count
@@ -283,38 +294,31 @@ class TestAgentBenchmark:
         assert result["avg_replans"] > 0
         assert result["avg_tool_calls"] >= 2  # 至少两次调用（失败 + 后续）
 
-    # ---- 场景 4：LLM 规划对比规则规划 ----
+    # ---- 场景 4：确定性 playbook 对比 Remote 决策 ----
     def test_bench_llm_vs_rule_planner(self, env, capsys):
-        from app.agent.planner.planner import AgentPlanner
+        from app.agent import playbooks
+        from app.agent.state import TaskState
 
-        # 规划同一个小任务，对比两种 Planner 的步数
-        context_builder = env["engine"]
-        from app.agent.context.builder import ContextBuilder
-        context = ContextBuilder(context_builder).build(
-            "分析", dataset_ids=[env["dataset_id"]]
-        )
-        tools = TOOL_REGISTRY.list()
-
-        rule_planner = AgentPlanner(None)
-        rule_plan = rule_planner.build_plan("分析", context, tools)
+        # 确定性 playbook（零 LLM）与 Remote 结构化决策的步数对比
+        rule_plan = playbooks.select_playbook("分析", TaskState.initial("分析"), [env["dataset_id"]]).actions
 
         mock_llm = MockLLM(structured_responses=[{
-            "goal": "inspect dataset",
-            "steps": [{
-                "tool": "dataset.inspect",
-                "arguments": {"dataset_id": env["dataset_id"]},
-                "expected_output": "dataset metadata",
-                "permission": "read_data",
-            }],
+            "action": "execute_tool",
+            "tool": "dataset.inspect",
+            "arguments": {"dataset_id": env["dataset_id"]},
+            "next_steps": ["dataset.profile"],
+            "rationale": "先看数据",
         }])
-        llm_planner = AgentPlanner(mock_llm)
-        llm_plan = llm_planner.build_plan("分析", context, tools)
+        from app.agent.loop import AgentLoop
+        loop = AgentLoop(env["engine"], llm=mock_llm)
+        state = TaskState.initial("分析")
+        remote_tools = ["dataset.inspect", "dataset.profile"]
 
         result = {
-            "rule_plan_steps": len(rule_plan.steps),
-            "llm_plan_steps": len(llm_plan.steps),
-            "rule_tools": [s.tool for s in rule_plan.steps],
-            "llm_tools": [s.tool for s in llm_plan.steps],
+            "rule_plan_steps": len(rule_plan),
+            "llm_plan_steps": len(remote_tools),
+            "rule_tools": [a.tool for a in rule_plan],
+            "llm_tools": remote_tools,
         }
         with capsys.disabled():
             print(f"\n[BENCH planner compare] {result}")

@@ -80,11 +80,21 @@ export interface ToolCall {
 }
 
 export interface AgentTokenUsage {
+  // 旧键（保留，向后兼容）
   llm_calls: number;
   actual: { input_tokens: number; output_tokens: number; total_tokens: number };
   budget?: { max_llm_calls: number; max_total_tokens: number; remaining_llm_calls: number; remaining_total_tokens: number };
   optimization: { estimated_context_saved_tokens: number; estimated_result_saved_tokens: number; estimated_saved_tokens: number; avoided_planner_calls: number; plan_cache_hits: number };
   note?: string;
+  // 统一 Loop 一等指标（新键，只增不删）
+  remote_calls?: number;
+  remote_input_tokens?: number;
+  remote_output_tokens?: number;
+  qwen_calls?: number;
+  tool_calls?: number;
+  task_steps?: number;
+  escalation_count?: number;
+  total_cost?: number;
 }
 
 /**

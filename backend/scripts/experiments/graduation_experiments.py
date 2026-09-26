@@ -32,7 +32,6 @@ import polars as pl
 from app.agent.llm.mock import MockLLM
 from app.agent.permission.manager import PermissionDecision, PermissionManager
 from app.agent.permission.models import Decision
-from app.agent.planner.models import AgentPlan, PlanStep
 from app.agent.runtime.models import RunStatus
 from app.agent.runtime.runtime import AgentRuntime
 from app.agent.validator.models import ValidationResult
@@ -117,32 +116,11 @@ def setup_env() -> dict[str, Any]:
 
 
 # ============================================================
-# 统一计划与准确率提取
+# 统一请求文本与准确率提取
 # ============================================================
-def _build_plan(dataset_id: int) -> AgentPlan:
-    """5 步计划：inspect → profile → quality → detect_task → ml.train。"""
-    return AgentPlan(
-        goal=f"分析数据集 {dataset_id} 并训练分类模型",
-        steps=[
-            PlanStep(tool="dataset.inspect", arguments={"dataset_id": dataset_id}),
-            PlanStep(tool="dataset.profile", arguments={"dataset_id": dataset_id}),
-            PlanStep(tool="dataset.quality", arguments={"dataset_id": dataset_id}),
-            PlanStep(
-                tool="ml.detect_task",
-                arguments={"dataset_id": dataset_id, "target": "label"},
-            ),
-            PlanStep(
-                tool="ml.train",
-                arguments={
-                    "dataset_id": dataset_id,
-                    "model": "logistic_regression",
-                    "task": "classification",
-                    "target": "label",
-                    "seed": 42,
-                },
-            ),
-        ],
-    )
+# 重构后（统一 Agent Loop）不再用 plan_override 固定计划：建模链由确定性
+# playbook（inspect → schema → profile → detect_task → prepare → train）自然产出。
+_AGENT_REQUEST = "分析数据集并训练分类模型"
 
 
 def _extract_accuracy(run: Any) -> float | None:
@@ -162,7 +140,6 @@ def _run_agent(
     *,
     registry: ToolRegistry | None = None,
     validator: AgentResultValidator | None = None,
-    plan: AgentPlan,
     confirmed: bool = False,
 ) -> tuple[Any, int]:
     """运行 AgentRuntime；若 ml.train 等待确认则自动 resume，返回 (run, 人工介入次数)。"""
@@ -178,7 +155,7 @@ def _run_agent(
         kwargs["validator"] = validator
     runtime = AgentRuntime(data_engine, **kwargs)
     session = runtime.create_session(dataset_ids=[dataset_id])
-    run = runtime.run(session, "分析数据集并训练分类模型", plan_override=plan, confirmed=confirmed)
+    run = runtime.run(session, _AGENT_REQUEST, confirmed=confirmed)
 
     interventions = 0
     if run.status == RunStatus.WAITING_CONFIRMATION:
@@ -229,7 +206,7 @@ def run_scenario_1_manual(env: dict[str, Any], dataset_id: int) -> dict[str, Any
     }
 
 
-def run_scenario_2_llm_tools(env: dict[str, Any], dataset_id: int, plan: AgentPlan) -> dict[str, Any]:
+def run_scenario_2_llm_tools(env: dict[str, Any], dataset_id: int) -> dict[str, Any]:
     """场景 2：LLM + Tools —— 无权限校验、无结果校验（ml.train 直接执行）。"""
     t0 = time.perf_counter()
     run, interventions = _run_agent(
@@ -237,7 +214,6 @@ def run_scenario_2_llm_tools(env: dict[str, Any], dataset_id: int, plan: AgentPl
         dataset_id,
         registry=_build_permissive_registry(),
         validator=_NoopValidator(),
-        plan=plan,
         confirmed=False,  # permissive manager 不会要求确认
     )
     elapsed = time.perf_counter() - t0
@@ -251,14 +227,13 @@ def run_scenario_2_llm_tools(env: dict[str, Any], dataset_id: int, plan: AgentPl
     }
 
 
-def run_scenario_3_with_permission(env: dict[str, Any], dataset_id: int, plan: AgentPlan) -> dict[str, Any]:
+def run_scenario_3_with_permission(env: dict[str, Any], dataset_id: int) -> dict[str, Any]:
     """场景 3：LLM + Tools + 权限 —— 有权限校验（ml.train 需确认），无结果校验。"""
     t0 = time.perf_counter()
     run, interventions = _run_agent(
         env,
         dataset_id,
         validator=_NoopValidator(),  # 无校验
-        plan=plan,
         confirmed=False,  # ml.train 触发确认 → resume
     )
     elapsed = time.perf_counter() - t0
@@ -272,14 +247,13 @@ def run_scenario_3_with_permission(env: dict[str, Any], dataset_id: int, plan: A
     }
 
 
-def run_scenario_4_with_validation(env: dict[str, Any], dataset_id: int, plan: AgentPlan) -> dict[str, Any]:
+def run_scenario_4_with_validation(env: dict[str, Any], dataset_id: int) -> dict[str, Any]:
     """场景 4：LLM + Tools + 权限 + 校验 —— 有权限 + 结果校验。"""
     t0 = time.perf_counter()
     run, interventions = _run_agent(
         env,
         dataset_id,
         # 使用默认 validator（AgentResultValidator）
-        plan=plan,
         confirmed=False,
     )
     elapsed = time.perf_counter() - t0
@@ -295,22 +269,16 @@ def run_scenario_4_with_validation(env: dict[str, Any], dataset_id: int, plan: A
     }
 
 
-def run_scenario_5_full_agent(env: dict[str, Any], dataset_id: int, plan: AgentPlan) -> dict[str, Any]:
-    """场景 5：完整 Agent + 重规划 —— 全部安全机制 + 失败重规划。
+def run_scenario_5_full_agent(env: dict[str, Any], dataset_id: int) -> dict[str, Any]:
+    """场景 5：完整 Agent —— 全部安全机制。
 
-    计划首步故意引用不存在的 run_id（ml.evaluate），触发 Replanner
-    「重试一次 → 跳过」流程，随后继续真实步骤，展示完整 Agent 鲁棒性。
+    重构后（统一 Loop）失败恢复由 Loop 的失败三策略处理（依赖断裂即止 /
+    参数错误不重试 / 瞬时≤2 次），不再依赖旧 Replanner 的 plan_override 注入。
     """
-    failing_step = PlanStep(tool="ml.evaluate", arguments={"run_id": 99999})
-    replan_plan = AgentPlan(
-        goal=f"完整 Agent：分析数据集 {dataset_id} 并训练分类模型（含失败恢复）",
-        steps=[failing_step, *plan.steps],
-    )
     t0 = time.perf_counter()
     run, interventions = _run_agent(
         env,
         dataset_id,
-        plan=replan_plan,
         confirmed=False,
     )
     elapsed = time.perf_counter() - t0
@@ -380,19 +348,18 @@ def main() -> None:
 
     env = setup_env()
     dataset_id = env["dataset_id"]
-    plan = _build_plan(dataset_id)
 
     rows: list[dict[str, Any]] = []
     print("\n[场景 1] 传统手工分析 …")
     rows.append(run_scenario_1_manual(env, dataset_id))
     print("[场景 2] LLM + Tools（无权限 / 无校验）…")
-    rows.append(run_scenario_2_llm_tools(env, dataset_id, plan))
+    rows.append(run_scenario_2_llm_tools(env, dataset_id))
     print("[场景 3] LLM + Tools + 权限（无校验）…")
-    rows.append(run_scenario_3_with_permission(env, dataset_id, plan))
+    rows.append(run_scenario_3_with_permission(env, dataset_id))
     print("[场景 4] LLM + Tools + 权限 + 校验 …")
-    rows.append(run_scenario_4_with_validation(env, dataset_id, plan))
+    rows.append(run_scenario_4_with_validation(env, dataset_id))
     print("[场景 5] 完整 Agent + 重规划 …")
-    rows.append(run_scenario_5_full_agent(env, dataset_id, plan))
+    rows.append(run_scenario_5_full_agent(env, dataset_id))
 
     print("\n" + "=" * 72)
     print("对比结果")
@@ -404,7 +371,7 @@ def main() -> None:
     print("  - 场景 2 无安全机制：零介入但高风险（ml.train 未经确认直接执行）。")
     print("  - 场景 3/4 引入权限：ml.train 需 1 次人工确认，兼顾效率与安全。")
     print("  - 场景 4 增加校验：每步结果经 AgentResultValidator 把关，防止 NaN/Inf 入答。")
-    print("  - 场景 5 完整 Agent：首步失败由 Replanner 自动重试并跳过，任务仍完成。")
+    print("  - 场景 5 完整 Agent：失败由统一 Loop 的失败三策略恢复，任务仍完成。")
 
     save_json(rows, "graduation_experiments.json")
 

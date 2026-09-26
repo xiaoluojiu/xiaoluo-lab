@@ -465,7 +465,7 @@ def test_shadow_tracing_never_changes_run_behaviour(monkeypatch):
     session = SimpleNamespace(id="s-test", dataset_ids=[])
 
     # 埋点抛异常时必须被吞掉：用户请求不该因为「记录轨迹失败」而失败
-    runtime._trace_route(run, session, "agent", "reason")
+    runtime._trace_route(run, session)
 
 
 def test_intent_enum_is_shared_with_local_router_contract():

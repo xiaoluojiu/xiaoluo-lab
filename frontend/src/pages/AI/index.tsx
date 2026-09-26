@@ -67,12 +67,13 @@ export default function AI() {
     // ⇒ 表现为「刚发出去的消息没有回应、运行面板里的运行消失、SSE 被前端自己掐断、
     // Inspector 页签被锁死在概览」。
     onRunRestored: useCallback(() => setPanelOpen(true), []),
+    // 运行终态后回拉会话列表，刷新侧栏标题/消息数/run_ids（切回可恢复最后 run）。
+    onRunFinished: session.refreshActiveSession,
   });
 
-  const displayMessages = useMemo(
-    () => session.messages.filter((m, i, a) => i === 0 || m.content !== a[i - 1].content || m.role !== a[i - 1].role),
-    [session.messages],
-  );
+  // ★ 助手消息唯一追加出口已收敛到 SSE/回放的 completed 事件（见 useAgentRun），
+  //   不再需要页面层「相邻同内容去重」补丁——直接展示会话消息。
+  const displayMessages = session.messages;
 
   /**
    * 面板自动展开：只在「任务开始」这一次转变上触发（busy 由 false → true），

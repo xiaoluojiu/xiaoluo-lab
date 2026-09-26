@@ -118,6 +118,22 @@ export function useAiSession({ onError, onNotice }: UseAiSessionOptions) {
     [createAndActivate],
   );
 
+  /**
+   * 运行终态后回拉会话列表：刷新侧栏标题 / 消息数 / run_ids。
+   *
+   * 历史缺陷：`sessions` 只在挂载时拉一次，运行结束后后端的 title/history/run_ids
+   * 已更新，但侧栏仍是旧快照——标题不变、消息数不涨、run_ids 指向旧 run，
+   * 切走再切回会「丢失最后一次运行」。这里只在终态后回拉一次（节流在 run 侧保证）。
+   */
+  const refreshActiveSession = useCallback(async () => {
+    try {
+      const items = await listSessions();
+      setSessions(items);
+    } catch {
+      /* 回拉失败不打断主流程：下次切换/挂载仍会重新拉取 */
+    }
+  }, []);
+
   const newSession = useCallback(async () => {
     onError(null);
     const s = await createAndActivate("新数据分析会话");
@@ -276,6 +292,7 @@ export function useAiSession({ onError, onNotice }: UseAiSessionOptions) {
     deletingSessionId,
     bulkDeleting,
     ensureSession,
+    refreshActiveSession,
     newSession,
     activate,
     toggleArchive,

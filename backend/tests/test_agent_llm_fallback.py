@@ -28,7 +28,6 @@ from app.agent.context.builder import ContextBuilder
 from app.agent.llm import openai_compatible as O
 from app.agent.llm.base import LLMException, LLMMessage, LLMProvider, is_fallbackable_error
 from app.agent.llm.openai_compatible import OpenAICompatibleProvider
-from app.agent.planner.planner import AgentPlanner
 from app.agent.runtime.models import RunStatus
 from app.agent.runtime.runtime import AgentRuntime
 from app.core.config import settings
@@ -116,7 +115,6 @@ def _runtime(env, llm) -> AgentRuntime:
         experiment_service=env["exp"],
         db=env["db"],
         llm=llm,
-        planner=AgentPlanner(llm, max_steps=settings.AGENT_MAX_STEPS),
     )
 
 
@@ -125,8 +123,12 @@ def _runtime(env, llm) -> AgentRuntime:
 # ---------------------------------------------------------------------------
 
 
-def test_chat_falls_back_to_local_reply_when_remote_fails(env, monkeypatch):
-    """★ P0：远程开着但调用失败 ⇒ 真的走 `local_reply()`，不是把异常文本当回答。"""
+def test_greeting_is_answered_locally_without_remote(env, monkeypatch):
+    """★ 问候（greeting）走确定性本地应答，零远程调用 —— 欠费与否都不影响它。
+
+    重构后 greeting 由统一 Loop 的确定性层直接回答，不再发起远程调用，
+    因此「远程失败 → 降级本地」这条后路在问候场景下**天然不需要**。
+    """
     monkeypatch.setattr(settings, "AGENT_ALLOW_MODEL_FALLBACK", True)
     llm = FailingLLM(LLMException("账户余额不足"))
     rt = _runtime(env, llm)
@@ -134,14 +136,11 @@ def test_chat_falls_back_to_local_reply_when_remote_fails(env, monkeypatch):
 
     run = rt.run(session, "你好")
 
-    assert run.status == RunStatus.COMPLETED, "降级成功就是完成，不该被打成失败"
-    assert run.answer_source == A.LLM_ERROR_FALLBACK
+    assert run.status == RunStatus.COMPLETED
+    assert run.answer_source == A.PLATFORM_RULES_CHAT
+    assert llm.chat_calls == 0, "问候不应发起远程调用"
     assert A.describe(run.answer_source)["by_llm"] is False
-    # 真兜底：拿到的是本地应答，不是「暂时无法完成对话请求：<异常文本>」
-    assert "暂时无法完成对话请求" not in run.final_answer
     assert run.final_answer and "AI 助手" in run.final_answer
-    # 文案必须说「这一次调用失败」，不能谎称「远程已停用」（用户会跑去翻开关）
-    assert "远程大模型已停用" not in run.final_answer
 
 
 def test_chat_falls_back_to_notice_when_local_cannot_answer(env, monkeypatch):
@@ -173,7 +172,7 @@ def test_chat_fails_when_fallback_is_disabled(env, monkeypatch):
     rt = _runtime(env, llm)
     session = rt.create_session()
 
-    run = rt.run(session, "你好")
+    run = rt.run(session, "讲个笑话")
 
     assert run.status == RunStatus.FAILED
     assert run.answer_source == A.NO_ANSWER
@@ -191,7 +190,7 @@ def test_program_bug_is_not_masked_as_fallback(env, monkeypatch):
     rt = _runtime(env, llm)
     session = rt.create_session()
 
-    run = rt.run(session, "你好")
+    run = rt.run(session, "讲个笑话")
 
     assert run.status == RunStatus.FAILED
     assert run.answer_source == A.NO_ANSWER
@@ -233,34 +232,6 @@ def test_data_task_falls_back_to_rule_planner_and_executes(env, monkeypatch):
     assert A.describe(run.answer_source)["by_llm"] is False
     assert run.final_answer
 
-
-def test_build_plan_resilient_falls_back_only_once(env, monkeypatch):
-    """★ 一次规划只允许切到 Rule Planner 一次；规则计划是终点，不回头再试远程。
-
-    「禁止无限循环」的可观测证据：远程规划最多被调用 2 次（候选工具集 + 全量工具集），
-    之后无论规则规划结果如何都不会再发起远程调用。
-    """
-    monkeypatch.setattr(settings, "AGENT_ALLOW_MODEL_FALLBACK", True)
-    llm = FailingLLM(LLMException("连接超时"))
-    planner = AgentPlanner(llm, max_steps=settings.AGENT_MAX_STEPS)
-    context = ContextBuilder(env["engine"]).build("检查一下数据质量", dataset_ids=[env["dataset_id"]])
-
-    plan = planner.build_plan_resilient("检查一下数据质量", context, [], all_tools=TOOL_REGISTRY.list())
-
-    assert plan.planner_fallback is True
-    assert llm.structured_calls <= 2, f"远程规划只应尝试有限次，实际 {llm.structured_calls} 次"
-    assert any(step.tool == "dataset.quality" for step in plan.steps)
-
-
-def test_planning_fails_when_fallback_is_disabled(env, monkeypatch):
-    """总闸关着 ⇒ 远程规划失败直接抛，不允许偷偷换成规则计划。"""
-    monkeypatch.setattr(settings, "AGENT_ALLOW_MODEL_FALLBACK", False)
-    llm = FailingLLM(LLMException("连接超时"))
-    planner = AgentPlanner(llm, max_steps=settings.AGENT_MAX_STEPS)
-    context = ContextBuilder(env["engine"]).build("检查一下数据质量", dataset_ids=[env["dataset_id"]])
-
-    with pytest.raises(LLMException):
-        planner.build_plan_resilient("检查一下数据质量", context, [], all_tools=TOOL_REGISTRY.list())
 
 
 # ---------------------------------------------------------------------------
@@ -385,12 +356,11 @@ def test_unretryable_4xx_is_not_retried(monkeypatch):
 @pytest.mark.parametrize(
     "label,utterance,llm_factory,expect_source,expect_by_llm",
     [
-        ("远程正常", "你好", lambda: OkLLM(), A.REMOTE_LLM_CHAT, True),
-        ("远程失败+本地答得上", "你好", lambda: FailingLLM(LLMException("余额不足")), A.LLM_ERROR_FALLBACK, False),
-        # 同一个问法换个 LLM 状态，来源必须跟着变 —— 这是「来源不许撒谎」最硬的一条
+        ("远程正常", "讲个笑话", lambda: OkLLM(), A.REMOTE_LLM_CHAT, True),
         ("远程失败+本地答不上", "讲个笑话", lambda: FailingLLM(LLMException("余额不足")), A.NO_ANSWER, False),
-        ("远程未启用+本地答得上", "你好", lambda: None, A.PLATFORM_RULES_CHAT, False),
+        # 同一个问法换个 LLM 状态，来源必须跟着变 —— 这是「来源不许撒谎」最硬的一条
         ("远程未启用+本地答不上", "讲个笑话", lambda: None, A.PLATFORM_RULES_NOTICE, False),
+        ("问候走本地零远程", "你好", lambda: OkLLM(), A.PLATFORM_RULES_CHAT, False),
     ],
 )
 def test_answer_source_never_lies(env, monkeypatch, label, utterance, llm_factory, expect_source, expect_by_llm):

@@ -1,22 +1,17 @@
-"""Agent 端到端链路测试：用户请求 → 工具 → 结果。
+"""Agent 端到端链路测试：确认 / 反问闭环（真实 Executor + 自定义工具）。
 
-与 `test_agent.py` 的分工
-------------------------
-`test_agent.py` 逐层验 Context / Planner / Executor / Validator / Replanner；
-本文件验的是**这些层串起来之后还对不对**——也就是真实用户会碰到的那几条路径：
+重构后（统一 Agent Loop）：决策（playbook / local_router / remote）与执行分离。
+失败重试、参数错误、熔断等「执行层语义」已由 ``test_agent_loop.py``（FakeExecutor）
+覆盖；本文件只保留**必须经真实 Executor + PermissionManager 才能验证**的闭环：
 
-1. 正常执行
-2. 工具第一次失败 → 重规划 → 重试成功
-3. 参数错误（不盲目重试）与执行失败（重试到上限后终止）
-4. 高风险工具 → 待确认 → 确认 → 继续
-5. 反问 → 待澄清 → 回答 → 从原步骤继续（前面的步骤不重跑）
-6. 死循环被各道熔断闸截断
+1. 高风险工具 → WAITING_CONFIRMATION → resume（原子领取 + 授权一次性凭据）
+2. 反问 → WAITING_CLARIFICATION → answer_clarification（从原步骤继续，不重跑前置步骤）
 
-为了确定性，工具集用**独立 ToolRegistry**（不污染进程级 TOOL_REGISTRY），
-计划用 `plan_override` 固定；只有场景 1 走 MockLLM 规划器，以覆盖「规划」这一环。
+驱动方式：不再用 plan_override（已随旧 Planner 删除），改用「预置待办动作 + loop.turn」。
 """
-
 from __future__ import annotations
+
+import time
 
 import polars as pl
 import pytest
@@ -26,16 +21,11 @@ from app.agent.clarify import (
     ClarificationOption,
     ClarificationRequired,
 )
-from app.agent.llm.mock import MockLLM
 from app.agent.permission.models import ROLE_PERMISSIONS, Permission
-
-# Permission 未用到 RiskLevel 之外的值，这里显式导入以便测试工具声明风险等级
 from app.agent.permission.rules import RiskLevel  # noqa: F401
-from app.agent.planner.models import AgentPlan, PlanStep
-from app.agent.planner.planner import AgentPlanner
-from app.agent.planner.replanner import ReplanLimits, Replanner
-from app.agent.runtime.models import RunStatus
+from app.agent.runtime.models import AgentRun, RunStatus
 from app.agent.runtime.runtime import AgentRuntime
+from app.agent.state import PendingAction, TaskState
 from app.core.exceptions import NotFoundException, ValidationException
 from app.data_engine.service import DataEngineService
 from app.services.dataset_service import DatasetService
@@ -44,22 +34,17 @@ from app.tools.context import ToolExecutionContext
 from app.tools.registry import ToolRegistry
 from app.tools.result import ToolResult
 
+
 # ---------------------------------------------------------------------------
-# 测试工具：行为可控，便于构造失败 / 反问 / 高风险等分支
+# 测试工具：行为可控，便于构造高风险 / 反问分支
 # ---------------------------------------------------------------------------
 
 
 class EchoTool(Tool):
-    """记录调用次数并回显参数。"""
-
     name = "test.echo"
-    description = "回显输入文本，用于端到端链路验证"
+    description = "回显输入文本"
     category = "test"
-    input_schema = {
-        "type": "object",
-        "properties": {"text": {"type": "string"}},
-        "required": ["text"],
-    }
+    input_schema = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
     permission = Permission.ANALYZE_DATA
     risk_level = RiskLevel.LOW
 
@@ -69,63 +54,6 @@ class EchoTool(Tool):
     def execute(self, params, context, services) -> ToolResult:
         self.calls.append(dict(params))
         return ToolResult.ok({"echo": params.get("text")}, summary=f"回显：{params.get('text')}")
-
-
-class FlakyTool(Tool):
-    """前 ``fail_times`` 次失败，之后成功（用于验「重试后恢复」）。"""
-
-    name = "test.flaky"
-    description = "会瞬时失败的测试工具"
-    category = "test"
-    input_schema = {"type": "object", "properties": {}}
-    permission = Permission.ANALYZE_DATA
-    risk_level = RiskLevel.LOW
-
-    def __init__(self, fail_times: int = 1) -> None:
-        self.fail_times = fail_times
-        self.calls = 0
-
-    def execute(self, params, context, services) -> ToolResult:
-        self.calls += 1
-        if self.calls <= self.fail_times:
-            return ToolResult.fail(f"瞬时故障（第 {self.calls} 次）")
-        return ToolResult.ok({"ok": True}, summary=f"第 {self.calls} 次成功")
-
-
-class AlwaysFailTool(Tool):
-    """永远失败（用于验「重试到上限后终止」）。"""
-
-    name = "test.always_fail"
-    description = "永远失败的测试工具"
-    category = "test"
-    input_schema = {"type": "object", "properties": {}}
-    permission = Permission.ANALYZE_DATA
-    risk_level = RiskLevel.LOW
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def execute(self, params, context, services) -> ToolResult:
-        self.calls += 1
-        return ToolResult.fail("持续失败")
-
-
-class MissingParamTool(Tool):
-    """声明必填参数，用于验「参数错误不盲目重试」。"""
-
-    name = "test.missing_param"
-    description = "需要必填参数的测试工具"
-    category = "test"
-    input_schema = {
-        "type": "object",
-        "properties": {"target": {"type": "string"}},
-        "required": ["target"],
-    }
-    permission = Permission.ANALYZE_DATA
-    risk_level = RiskLevel.LOW
-
-    def execute(self, params, context, services) -> ToolResult:
-        return ToolResult.ok({"target": params.get("target")}, summary="不应被执行")
 
 
 class RiskyTool(Tool):
@@ -147,19 +75,14 @@ class RiskyTool(Tool):
 
 
 class SecondRiskyTool(RiskyTool):
-    """第二个高风险工具。
-
-    P0 回归用：与 `RiskyTool` 只有注册名不同（同名无法共存于一个 Registry），
-    用来构造「Step1 高风险 → 确认 → Step2 高风险」这条链路，验证一次确认
-    不会顺带放行第二个高风险调用。
-    """
+    """第二个高风险工具：验证「一次确认不会顺带放行第二个高风险调用」。"""
 
     name = "test.risky2"
     description = "第二个高风险的测试工具（写操作）"
 
 
 class ClarifyTool(Tool):
-    """计划执行中发起结构化反问（模拟 agent.clarify 的下游行为）。"""
+    """计划执行中发起结构化反问；回答一次后不再问。"""
 
     name = "test.clarify"
     description = "需要用户补充信息的测试工具"
@@ -170,13 +93,10 @@ class ClarifyTool(Tool):
 
     def __init__(self) -> None:
         self.calls = 0
-        self.seen_answers: list[dict] = []
 
     def execute(self, params, context, services) -> ToolResult:
         self.calls += 1
         extra = getattr(context, "extra", {}) or {}
-        self.seen_answers.append({k: dict(v) for k, v in extra.items() if isinstance(v, dict)})
-        # 用户回答过就不再反问（模拟 agent.clarify 的幂等语义）
         answers = extra.get(ANSWERS_KEY) or {}
         if answers.get("test.target"):
             return ToolResult.ok({"target": answers["test.target"]}, summary="已按回答继续")
@@ -184,10 +104,7 @@ class ClarifyTool(Tool):
             Clarification(
                 code="test.target",
                 question="请问要分析哪一列？",
-                options=[
-                    ClarificationOption(value="x1", label="x1"),
-                    ClarificationOption(value="x2", label="x2"),
-                ],
+                options=[ClarificationOption(value="x1", label="x1"), ClarificationOption(value="x2", label="x2")],
                 default="x1",
             )
         )
@@ -198,152 +115,54 @@ class ClarifyTool(Tool):
 # ---------------------------------------------------------------------------
 
 
-def _make_df(rows: int = 60) -> pl.DataFrame:
-    half = max(rows // 2, 1)
-    return pl.DataFrame(
-        {
-            "x1": [float(i + 1) for i in range(rows)],
-            "x2": [float(rows - i) for i in range(rows)],
-            "target": ["pos" if i < half else "neg" for i in range(rows)],
-        }
-    )
-
-
 @pytest.fixture()
 def engine(db, storage):
     ds = DatasetService(db, storage)
     dataset = ds.create("e2e", "端到端测试数据")
-    ds.create_version(dataset.id, _make_df())
+    ds.create_version(dataset.id, pl.DataFrame({"x": [1.0, 2.0, 3.0]}))
     return {"ds": ds, "engine": DataEngineService(ds), "dataset_id": dataset.id}
 
 
-def _runtime(engine, *, tools, llm=None, limits=None, planner=None) -> AgentRuntime:
-    """构造带独立工具注册表的 Runtime（不污染进程级 TOOL_REGISTRY）。"""
+def _runtime(engine, *, tools) -> AgentRuntime:
     registry = ToolRegistry()
     for tool in tools:
         registry.register(tool)
-    return AgentRuntime(
-        engine["engine"],
-        llm=llm,
-        registry=registry,
-        planner=planner,
-        limits=limits,
+    return AgentRuntime(engine["engine"], llm=None, registry=registry)
+
+
+def _start_run(runtime: AgentRuntime, session, actions, request: str = "执行操作") -> AgentRun:
+    """用预置待办动作启动一轮运行（等价于旧 plan_override 固定计划）。"""
+    state = TaskState.initial(request)
+    state.queue([PendingAction(tool=t, arguments=dict(args or {}), source="test") for t, args in actions])
+    run = AgentRun(
+        id=runtime.store.next_run_id(), session_id=session.id,
+        user_id=session.user_id, user_request=request,
     )
-
-
-def _plan(*tools: str, **arguments) -> AgentPlan:
-    return AgentPlan(
-        goal="端到端验证",
-        steps=[PlanStep(tool=t, arguments=dict(arguments)) for t in tools],
-    )
-
-
-# ---------------------------------------------------------------------------
-# 场景 1：正常执行
-# ---------------------------------------------------------------------------
-
-
-class TestNormalExecution:
-    def test_plan_tool_execute_answer(self, engine, monkeypatch):
-        """用户请求 → 规划 → 工具执行 → 最终回答。"""
-        # 关掉工具检索，让候选集确定地等于注册表全量（本用例要验的是链路，不是召回）
-        monkeypatch.setattr("app.core.config.settings.AGENT_ENABLE_TOOL_RETRIEVAL", False)
-        echo = EchoTool()
-        llm = MockLLM(
-            structured_responses=[
-                {"goal": "分析数据", "steps": [{"tool": "test.echo", "arguments": {"text": "hello"}}]}
-            ],
-            responses=["已根据工具结果给出结论。"],
-        )
-        runtime = _runtime(engine, tools=[echo], llm=llm, planner=AgentPlanner(llm))
-        session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
-
-        run = runtime.run(session, "分析当前数据集")
-
-        assert run.status == RunStatus.COMPLETED, run.error
-        # 规划器确实被调用（走的是 LLM 规划，不是规则兜底）
-        assert llm.structured_calls, "MockLLM 规划器未被调用"
-        # 参数被正确生成并传到位
-        assert echo.calls == [{"text": "hello"}]
-        assert run.tool_calls[0].status == "ok"
-        assert run.final_answer
-        assert session.history[-1]["role"] == "assistant"
-
-    def test_tool_context_carries_user_request(self, engine):
-        """工具上下文必须带 user_request：工具的语义兜底输入依赖它。"""
-        echo = EchoTool()
-        runtime = _runtime(engine, tools=[echo])
-        session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
-
-        runtime.run(session, "分析当前数据集", plan_override=_plan("test.echo", text="x"))
-
-        assert echo.calls == [{"text": "x"}]
+    runtime.store.add_run(run)
+    if run.id not in session.run_ids:
+        session.run_ids.append(run.id)
+    session.history.append({"role": "user", "content": request})
+    run.started_at = time.time()
+    runtime.loop.turn(run, session, state, run_preflight_check=False)
+    session.task_state = state.to_dict()
+    return run
 
 
 # ---------------------------------------------------------------------------
-# 场景 2：工具第一次失败 → 重规划 → 重试成功
-# ---------------------------------------------------------------------------
-
-
-class TestFailureAndRetry:
-    def test_first_failure_then_success(self, engine):
-        """工具第一次失败：重规划应留在原步骤重试，而不是跳过或终止。"""
-        flaky = FlakyTool(fail_times=1)
-        runtime = _runtime(engine, tools=[flaky])
-        session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
-
-        run = runtime.run(session, "分析", plan_override=_plan("test.flaky"))
-
-        assert run.status == RunStatus.COMPLETED, run.error
-        assert flaky.calls == 2, "失败一次后应重试同一步，共两次调用"
-        assert run.tool_calls[-1].status == "ok"
-        assert [e.type for e in run.events].count("replanning") == 1
-
-    def test_persistent_failure_terminates_after_attempt_limit(self, engine):
-        """持续失败：重试到单步上限后终止，不能无限重试。"""
-        failing = AlwaysFailTool()
-        runtime = _runtime(engine, tools=[failing])
-        session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
-
-        run = runtime.run(session, "分析", plan_override=_plan("test.always_fail"))
-
-        assert run.status == RunStatus.FAILED
-        # MAX_ATTEMPTS_PER_STEP=2：重试一次后跳过，无剩余步骤 ⇒ 终止
-        assert failing.calls == 2, f"应恰好尝试 2 次，实际 {failing.calls}"
-        assert run.error
-
-    def test_parameter_error_is_not_blindly_retried(self, engine):
-        """参数错误：`Replanner` 判定为「不该重复执行」⇒ 跳过该步，不是反复重试。"""
-        tool = MissingParamTool()
-        runtime = _runtime(engine, tools=[tool])
-        session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
-
-        run = runtime.run(session, "分析", plan_override=_plan("test.missing_param"))
-
-        assert run.status == RunStatus.FAILED
-        # 参数缺 => 解析阶段就失败，工具一次都不该被执行
-        assert run.tool_call_count == 0
-        assert "缺少必要参数" in run.error
-
-
-# ---------------------------------------------------------------------------
-# 场景 4：高风险工具 → 待确认 → 确认 → 继续
+# 场景：高风险工具 → 待确认 → 确认 → 继续
 # ---------------------------------------------------------------------------
 
 
 class TestPermissionConfirmation:
     def test_waiting_confirmation_then_resume(self, engine):
-        """高风险工具必须先停在 WAITING_CONFIRMATION，确认后才真正执行。"""
         risky = RiskyTool()
         runtime = _runtime(engine, tools=[risky])
         session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
 
-        run = runtime.run(session, "执行高风险操作", plan_override=_plan("test.risky"))
+        run = _start_run(runtime, session, [("test.risky", {})])
 
         assert run.status == RunStatus.WAITING_CONFIRMATION
         assert run.pending_confirmation is not None
-        assert run.pending_confirmation["step_index"] == 0
-        # 未经确认，工具一次都不能执行
         assert risky.calls == 0
 
         resumed = runtime.resume(session, run.id)
@@ -353,89 +172,60 @@ class TestPermissionConfirmation:
         assert resumed.pending_confirmation is None
 
     def test_each_high_risk_step_requires_its_own_confirmation(self, engine):
-        """★ P0 回归：一次确认最多授权一次高风险调用。
-
-        历史缺陷：`resume()` 把 `confirmed=True` 传进 `_run_plan()` 后，该布尔值随循环
-        传给每一个后续步骤 —— 「Step1 高风险 → 确认」之后 Step2 的高风险工具被静默执行，
-        用户以为自己只批准了弹窗里那一个工具。
-
-        正确语义：授权绑定到当前 pending 的那一步；第二次遇到 HIGH/CRITICAL 必须重新进入
-        WAITING_CONFIRMATION。
-        """
+        """★ P0 回归：一次确认最多授权一次高风险调用。"""
         first = RiskyTool()
         second = SecondRiskyTool()
         runtime = _runtime(engine, tools=[first, second])
         session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
 
-        # 第一次运行：停在 Step1 的确认弹窗
-        run = runtime.run(
-            session, "连续执行两个高风险操作", plan_override=_plan("test.risky", "test.risky2")
-        )
+        run = _start_run(runtime, session, [("test.risky", {}), ("test.risky2", {})])
         assert run.status == RunStatus.WAITING_CONFIRMATION
-        assert run.pending_confirmation["step_index"] == 0
         assert first.calls == 0
         assert second.calls == 0
 
-        # 第一次 resume：只放行 Step1，Step2 必须再次要求确认
         resumed = runtime.resume(session, run.id)
         assert resumed.status == RunStatus.WAITING_CONFIRMATION, resumed.error
-        assert resumed.pending_confirmation["step_index"] == 1
         assert first.calls == 1
-        assert second.calls == 0  # ← 关键断言：不能因为上一步确认过就被静默放行
+        assert second.calls == 0  # 关键断言：不能因为上一步确认过就被静默放行
 
-        # 第二次 resume：放行 Step2，整体完成
         resumed2 = runtime.resume(session, run.id)
         assert resumed2.status == RunStatus.COMPLETED, resumed2.error
         assert second.calls == 1
         assert resumed2.pending_confirmation is None
 
     def test_low_risk_steps_are_not_blocked_after_confirmation(self, engine):
-        """授权收敛到单步后，低风险步骤不应被迫多弹一次窗（避免过度收紧）。"""
         risky = RiskyTool()
         echo = EchoTool()
         runtime = _runtime(engine, tools=[risky, echo])
         session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
 
-        plan = AgentPlan(
-            goal="高风险后接低风险",
-            steps=[
-                PlanStep(tool="test.risky", arguments={}),
-                PlanStep(tool="test.echo", arguments={"text": "hi"}),
-            ],
-        )
-        run = runtime.run(session, "高风险后接低风险", plan_override=plan)
+        run = _start_run(runtime, session, [("test.risky", {}), ("test.echo", {"text": "hi"})])
         assert run.status == RunStatus.WAITING_CONFIRMATION
 
         resumed = runtime.resume(session, run.id)
         assert resumed.status == RunStatus.COMPLETED, resumed.error
         assert risky.calls == 1
-        # 低风险步骤本来就不需要确认，收敛授权范围不该把它一起拦下
         assert [c.get("text") for c in echo.calls] == ["hi"]
 
-    def test_confirmation_cannot_be_bypassed_by_direct_tool_call(self, engine):
+    def test_confirmation_cannot_be_bypassed_by_direct_tool_call(self):
         """权限边界：即使直接走 Registry，未经 confirmed 也必须被拦下。"""
+        from app.tools.base import ToolConfirmationRequired
+
         risky = RiskyTool()
         registry = ToolRegistry()
         registry.register(risky)
         context = ToolExecutionContext(
-            user_id="u1",
-            session_id="s1",
-            dataset_ids=set(),
+            user_id="u1", session_id="s1", dataset_ids=set(),
             permissions=set(ROLE_PERMISSIONS["analyst"]),
         )
-
-        from app.tools.base import ToolConfirmationRequired
-
         with pytest.raises(ToolConfirmationRequired):
             registry.execute("test.risky", {}, context, None, confirmed=False)
-
         assert risky.calls == 0
 
     def test_deny_terminates_run(self, engine):
-        """拒绝授权：运行必须真的终止，否则会话被等待态永久锁死。"""
         runtime = _runtime(engine, tools=[RiskyTool()])
         session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
-        run = runtime.run(session, "执行高风险操作", plan_override=_plan("test.risky"))
+        run = _start_run(runtime, session, [("test.risky", {})])
 
         denied = runtime.deny(run.id)
 
@@ -445,52 +235,37 @@ class TestPermissionConfirmation:
 
 
 # ---------------------------------------------------------------------------
-# 场景 5：反问 → 待澄清 → 回答 → 从原步骤继续
+# 场景：反问 → 待澄清 → 回答 → 从原步骤继续
 # ---------------------------------------------------------------------------
 
 
 class TestClarification:
     def test_clarify_then_answer_resumes_current_step(self, engine):
-        """反问必须落在 pending_clarification，回答后从该步继续且不重跑前面的步骤。"""
         echo = EchoTool()
         clarify = ClarifyTool()
         runtime = _runtime(engine, tools=[echo, clarify])
         session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
 
-        run = runtime.run(
-            session,
-            "分析",
-            plan_override=AgentPlan(
-                goal="e2e",
-                steps=[
-                    PlanStep(tool="test.echo", arguments={"text": "first"}),
-                    PlanStep(tool="test.clarify", arguments={}),
-                ],
-            ),
-        )
+        run = _start_run(runtime, session, [("test.echo", {"text": "first"}), ("test.clarify", {})])
 
         assert run.status == RunStatus.WAITING_CLARIFICATION
-        # ★ 语义必须与「待确认」分开：这两个字段曾经混用，导致反问永远无法被回答
         assert run.pending_clarification is not None
         assert run.pending_confirmation is None
         assert run.pending_clarification["code"] == "test.target"
-        assert run.pending_clarification["step_index"] == 1
         assert echo.calls == [{"text": "first"}]
 
         resumed = runtime.answer_clarification(run.id, "x2")
 
         assert resumed.status == RunStatus.COMPLETED, resumed.error
-        # 前面的步骤不重复执行
-        assert echo.calls == [{"text": "first"}]
+        assert echo.calls == [{"text": "first"}]  # 前面的步骤不重复执行
         assert clarify.calls == 2  # 反问一次 + 回答后重跑该步一次
         assert run.clarification_answers["test.target"] == "x2"
         assert resumed.pending_clarification is None
 
     def test_duplicate_answer_rejected(self, engine):
-        """重复回答：运行已不在等待态，必须报错而不是继续跑一遍。"""
         runtime = _runtime(engine, tools=[ClarifyTool()])
         session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
-        run = runtime.run(session, "分析", plan_override=_plan("test.clarify"))
+        run = _start_run(runtime, session, [("test.clarify", {})])
         assert run.status == RunStatus.WAITING_CLARIFICATION
 
         runtime.answer_clarification(run.id, "x1")
@@ -499,29 +274,25 @@ class TestClarification:
             runtime.answer_clarification(run.id, "x1")
 
     def test_empty_answer_rejected(self, engine):
-        """空回答不是「接受默认值」：直接往下走会用空串填参数，产出答非所问的结果。"""
         runtime = _runtime(engine, tools=[ClarifyTool()])
         session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
-        run = runtime.run(session, "分析", plan_override=_plan("test.clarify"))
+        run = _start_run(runtime, session, [("test.clarify", {})])
 
         with pytest.raises(ValidationException):
             runtime.answer_clarification(run.id, "   ")
 
-        # 被拒绝后仍停在等待态，用户可以重新作答
         assert run.status == RunStatus.WAITING_CLARIFICATION
         assert run.pending_clarification is not None
 
     def test_answer_unknown_run(self, engine):
-        """运行不存在：必须是 NotFound，而不是静默成功。"""
         runtime = _runtime(engine, tools=[ClarifyTool()])
         with pytest.raises(NotFoundException):
             runtime.answer_clarification("r-does-not-exist", "x1")
 
     def test_cancel_while_waiting_clarification(self, engine):
-        """澄清态取消：必须真的终止（早先 deny 只看 pending_confirmation，取消毫无反应）。"""
         runtime = _runtime(engine, tools=[ClarifyTool()])
         session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
-        run = runtime.run(session, "分析", plan_override=_plan("test.clarify"))
+        run = _start_run(runtime, session, [("test.clarify", {})])
         assert run.status == RunStatus.WAITING_CLARIFICATION
 
         canceled = runtime.cancel(run.id)
@@ -531,78 +302,9 @@ class TestClarification:
         assert "澄清" in canceled.error
 
     def test_deny_while_waiting_confirmation_keeps_message(self, engine):
-        """确认态与澄清态共用 deny，但终止文案必须区分（否则界面显示错误原因）。"""
         runtime = _runtime(engine, tools=[RiskyTool()])
         session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
-        run = runtime.run(session, "执行高风险操作", plan_override=_plan("test.risky"))
+        run = _start_run(runtime, session, [("test.risky", {})])
 
         denied = runtime.deny(run.id)
         assert "拒绝授权" in denied.error
-
-
-# ---------------------------------------------------------------------------
-# 场景 6：循环必须被熔断
-# ---------------------------------------------------------------------------
-
-
-class TestLoopProtection:
-    def test_forced_retry_loop_is_cut_off(self, engine, monkeypatch):
-        """强制让 Replanner 每次都说「再试一次」：运行必须停下来，不能无限循环。"""
-        failing = AlwaysFailTool()
-        runtime = _runtime(engine, tools=[failing])
-        replanner = Replanner()
-
-        def always_retry(plan, *, failed_step_index, errors, attempts, base_index=0):
-            return AgentPlan(goal=plan.goal, steps=list(plan.steps), notes="（桩）总是重试", retry=True)
-
-        monkeypatch.setattr(replanner, "replan", always_retry)
-        runtime.replanner = replanner
-        session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
-
-        run = runtime.run(session, "分析", plan_override=_plan("test.always_fail"))
-
-        assert run.status == RunStatus.FAILED
-        assert "上限" in run.error, f"应因某项上限而终止，实际：{run.error!r}"
-        # 工具调用数受 max_tool_calls 约束：不会跑到天荒地老
-        assert failing.calls <= ReplanLimits().max_tool_calls + 1
-
-    def test_tool_call_limit(self, engine):
-        """工具调用数熔断。"""
-        # 上限设为 0：任何一次工具调用都应立刻触发熔断。
-        # （设为 2 不够：单步重试上限 MAX_ATTEMPTS_PER_STEP=2 会先于它终止。）
-        runtime = _runtime(engine, tools=[AlwaysFailTool()], limits=ReplanLimits(max_tool_calls=0))
-        session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
-
-        run = runtime.run(session, "分析", plan_override=_plan("test.always_fail"))
-
-        assert run.status == RunStatus.FAILED
-        assert "超过上限" in run.error
-
-    def test_token_budget_limit(self, engine, monkeypatch):
-        """Token 预算熔断：预算打满时必须停止重试，而不是继续烧 token。
-
-        r-22 的教训是「循环在 LLM 层持续烧钱」，所以这条闸必须真的接进循环里。
-        这里让规划阶段就记下巨额用量（等价于预算已耗尽），验证第一步就被拦下。
-        """
-        # 模拟「规划阶段就把预算烧完了」：这一步在 _run_plan 之前发生，
-        # 因此循环第一次迭代就会撞上 Token 闸。
-        def _build_plan_burning_budget(self, run, context, candidate_tools, all_tools, plan_override):
-            run.token_ledger.record_usage({"total_tokens": 10**9})
-            return plan_override
-
-        monkeypatch.setattr(AgentRuntime, "_build_plan", _build_plan_burning_budget)
-
-        # 工具调用数放开，确保拦住运行的是 Token 闸而不是调用数闸
-        runtime = _runtime(
-            engine,
-            tools=[AlwaysFailTool()],
-            llm=MockLLM(),
-            limits=ReplanLimits(max_tool_calls=10**6),
-        )
-        session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
-
-        run = runtime.run(session, "分析", plan_override=_plan("test.always_fail"))
-
-        assert run.status == RunStatus.FAILED
-        assert "Token" in run.error, f"应由 Token 预算闸拦下，实际：{run.error!r}"
-        assert run.tool_call_count == 0, "预算耗尽后不应再执行任何工具"

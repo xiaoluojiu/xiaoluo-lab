@@ -371,11 +371,11 @@ class TestClarify:
     def test_executor_maps_clarification_to_needs_clarification(self):
         from app.agent.executor.executor import AgentExecutor
         from app.agent.permission.models import ROLE_PERMISSIONS
-        from app.agent.planner.models import PlanStep
+        from app.agent.state import PendingAction
         from app.tools.context import ToolExecutionContext
 
         record = AgentExecutor().execute_step(
-            PlanStep(tool="agent.clarify", arguments={"code": "c1", "question": "q"}),
+            PendingAction(tool="agent.clarify", arguments={"code": "c1", "question": "q"}),
             ToolExecutionContext(user_id="u", session_id="s", dataset_ids=set(),
                                  permissions=set(ROLE_PERMISSIONS["analyst"]), extra={}),
             None,

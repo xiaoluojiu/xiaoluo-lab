@@ -1,4 +1,4 @@
-from app.agent.planner.models import PlanStep
+from app.agent.state import PendingAction
 from app.agent.runtime.models import AgentRun, AgentSession
 from app.agent.runtime.step_resolution import resolve_arguments
 from app.tools.result import ToolResult
@@ -16,7 +16,7 @@ def test_resolve_workflow_id_from_previous_step():
     run.tool_calls.append(record)
     session = AgentSession(id="s-1", user_id="u", dataset_ids=[2])
     context = type("Context", (), {"dataset_ids": lambda self: [2]})()
-    step = PlanStep(tool="workflow.run", arguments={"workflow_id": "{{step1.workflow_id}}"})
+    step = PendingAction(tool="workflow.run", arguments={"workflow_id": "{{step1.workflow_id}}"})
     resolved = resolve_arguments(
         step,
         run,
@@ -31,7 +31,7 @@ def test_missing_dependency_is_explicit():
     run = AgentRun(id="r-1", session_id="s-1", user_id="u", user_request="test")
     session = AgentSession(id="s-1", user_id="u", dataset_ids=[2])
     context = type("Context", (), {"dataset_ids": lambda self: [2]})()
-    step = PlanStep(tool="workflow.run", arguments={"workflow_id": "{{step1.workflow_id}}"})
+    step = PendingAction(tool="workflow.run", arguments={"workflow_id": "{{step1.workflow_id}}"})
     try:
         resolve_arguments(step, run, session, context, {"type": "object", "properties": {"workflow_id": {"type": "integer"}}, "required": ["workflow_id"]})
     except Exception as exc:

@@ -29,10 +29,11 @@ test("route：对话模式与工具模式给出不同起步进度", () => {
   assert.equal(progressOf(eventEffects(ev("route", { mode: "agent", reason: "要分析" })), 5), 8);
 });
 
-test("planning：plan_ready 推进到 25，未知阶段回落到 8", () => {
+test("planning：plan_ready 推进到 25，未知阶段兜底到 20（只前进不回退）", () => {
   assert.equal(progressOf(eventEffects(ev("planning", { stage: "plan_ready" })), 5), 25);
   assert.equal(eventEffects(ev("planning", { stage: "unknown_stage" })).stage, "unknown_stage");
-  assert.equal(progressOf(eventEffects(ev("planning", { stage: "unknown_stage" })), 5), 8);
+  // 未知 stage 兜底 20 而非 8：否则前一步已是 15 时进度条会回退（历史「永久卡住」bug）。
+  assert.equal(progressOf(eventEffects(ev("planning", { stage: "unknown_stage" })), 5), 20);
 });
 
 test("tool_call：切到活动页签并推进进度，且不超过 90", () => {

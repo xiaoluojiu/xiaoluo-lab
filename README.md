@@ -18,7 +18,7 @@
 - **本地优先**：数据与实验产物（数据集版本、模型、报告）存储在本地文件系统与本地数据库，避免数据外流。
 - **可服务器部署**：提供 Docker 化部署方案，支持多用户访问。
 - **面向教学**：覆盖数据处理 / 分析 / 建模 / Agent 编排 / 工作流 / 实验对比的完整链路，支持中文实验报告自动生成（Markdown / HTML / PDF）。
-- **AI 编排**：内置 Agent 系统（Context → Planner → Permission → Executor → Validator → Replanner），通过工具注册表与权限管理编排数据分析任务。
+- **AI 编排**：内置统一 Stateful Agent Loop（Observe → Decide → Execute/CHAT/Ask/Escalate → Update），通过工具注册表与权限管理编排数据分析任务，三层资源调度（确定性工具 / 本地 Router / Remote 按需升级）。
 - **可复现**：所有数据操作产生不可变版本快照，所有实验绑定具体版本快照与随机种子。
 - **安全可控**：Agent 无 shell/eval/exec 通道，所有工具调用经 TOOL_REGISTRY；存储层防路径穿越；按角色与风险等级授权。
 
@@ -31,7 +31,7 @@
 | 智能合并 | Schema 映射建议、Join Key 分析、MergePlan 计划与执行分离、合并前强制校验 |
 | 探索性分析 (EDA) | 描述统计、分布分析、相关性分析、异常值检测、可视化 |
 | 机器学习 | 11 个内置模型（分类 / 回归 / 聚类 / 降维），统一 ModelAdapter 接口，自动任务识别与模型选择，sklearn Pipeline 预处理（防数据泄漏） |
-| Agent 系统 | 上下文感知、计划生成、权限裁决、工具执行、结果校验、失败重规划，带硬限制防无限循环 |
+| Agent 系统 | 统一 Stateful Loop 增量决策、确定性 playbook、权限裁决、工具执行、结果校验、失败三策略、动态复杂度，带硬限制防无限循环 |
 | 工作流 | DAG 工作流引擎，节点拓扑执行、失败传递跳过、可取消 |
 | 实验 | 实验与数据版本绑定，支持训练运行、指标评估、模型对比、实验删除 |
 | 报告 | 中文实验报告生成器（Markdown / HTML / PDF 渲染，PDF 字体路径可配置） |
@@ -53,13 +53,13 @@
 │  ── 统一异常 / 中间件 / 依赖注入 / 10 个 Router                │
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌──────────┐ │
 │  │ DataEngine │  │  ML Engine │  │   Agent    │  │ Workflow │ │
-│  │ Polars     │  │  scikit-   │  │  Context → │  │  DAG     │ │
-│  │ PyArrow    │  │  learn     │  │  Planner → │  │  拓扑执行│ │
-│  │ 9 操作     │  │  11 模型   │  │  Permission│  │          │ │
-│  │ loaders.py │  │  评估/解释 │  │  Executor  │  │          │ │
+│  │ Polars     │  │  scikit-   │  │ AgentLoop │  │  DAG     │ │
+│  │ PyArrow    │  │  learn     │  │ Observe→  │  │  拓扑执行│ │
+│  │ 9 操作     │  │  11 模型   │  │ Decide→   │  │          │ │
+│  │ loaders.py │  │  评估/解释 │  │ Execute   │  │          │ │
 │  └────────────┘  └────────────┘  └────────────┘  └──────────┘ │
 │  ┌────────────┐  ┌──────────────────────────────────────────┐ │
-│  │ analysis  │  │ Tool Registry（22 内置工具） / Permission  │ │
+│  │ analysis  │  │ Tool Registry（36 内置工具） / Permission │ │
 │  │ Profiling │  │   Manager（角色 + 风险等级授权）          │ │
 │  │ Quality / │  └──────────────────────────────────────────┘ │
 │  │ EDA 合并  │                                                   │
@@ -95,15 +95,15 @@ Agent 的第一层意图理解可以跑一个本地小模型（Qwen3-0.6B + LoRA
 
 ```
 用户 → L0 升级规则 → L1 Qwen 神经路由 →（未命中）L1 词法路由 → 反问规则
-     → RouterDecision → Planner → Tool Registry → Permission → Executor
-     → Validator / Replanner → 最终回答
+     → RouterDecision → Agent Loop（Observe→Decide→Execute→Update）
+     → Tool Registry → Permission → Executor → Validator → 最终回答
 ```
 
 - 三档开关 `LOCAL_ROUTER_MODE`：`off`（默认）/ `shadow`（只记录不改行为）/ `active`。
 - 权重不随仓库分发，放在 `models/` 下即可，路径支持相对与绝对两种写法。
 - 依赖是**可选的**：不装 torch 也能完整运行平台，本地路由自动退回词法模型 + 规则。
-- 模型输出只经 `json.loads` 解析成既有 `RouterDecision`，随后走既有的
-  Planner / Tool Registry / Permission 流程，不存在 `eval` / `exec` 执行路径。
+- 模型输出只经 `json.loads` 解析成既有 `RouterDecision`，随后走统一的
+  Agent Loop（决策分层 → Tool Registry → Permission）流程，不存在 `eval` / `exec` 执行路径。
 - 加载失败、JSON 解析失败、推理超时、工具不在注册表、`dataset_id` 幻觉
   都有明确处置，不会出现空白回复或 SSE 挂死。
 
@@ -154,7 +154,7 @@ DATABASE_URL=sqlite:///./data/xiaoluo.db
 DATA_ROOT=./data
 MODEL_ROOT=./models
 LLM_PROVIDER=openai
-LLM_API_KEY=            # 留空则使用规则规划器（无需 LLM 也可运行 Agent）
+LLM_API_KEY=            # 留空则走确定性 playbook + 本地 Router（无需 LLM 也可运行 Agent）
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-4o-mini
 PDF_FONT_PATH=          # 可选：PDF 中文字体 .ttf 路径；也可用环境变量 XIAOLUO_PDF_FONT
@@ -391,26 +391,29 @@ POST /api/v1/agent/runs/{run_id}/resume         # 高风险确认后继续
 ```
 User Request
   ↓
-ContextBuilder.build（绝不发送完整数据集，最多 5 行采样）
+AgentLoop.turn（统一 Stateful Loop，唯一控制流）
+  ↓ Observe
+ContextBuilder.build（元数据 only，绝不加载 DataFrame）+ 按阶段召回候选工具
+  ↓ Decide（单一分层，每跳带 source/confidence/rationale）
+取消/熔断 → Pre-flight/槽位反问 → 待办队首 → 客观信号 → 本地 Router
+→ 确定性 playbook（建模/工作流/合并/变换/综合分析/质量/EDA/intake）
+→ Remote 结构化升级（RemoteDecision，≤4 步，限次）→ CHAT 动作
+  ↓ Execute
+AgentExecutor.execute_step → TOOL_REGISTRY.execute（强制 PermissionManager.check）
   ↓
-AgentPlanner.build_plan（LLM 规划或规则规划，受 max_steps=6 限制）
-  ↓
-AgentExecutor.execute_step → TOOL_REGISTRY.execute
-  ↓ （强制 PermissionManager.check）
-Permission Decision: ALLOW / DENY / REQUIRE_CONFIRMATION
+Permission Decision: ALLOW / DENY / REQUIRE_CONFIRMATION（一次性凭据）
   ↓
 Tool.execute → ToolResult
-  ↓
-AgentResultValidator.validate（NaN/Inf 检查、Schema 必需字段、期望输出关键词）
-  ↓ 失败时
-Replanner.replan（重试一次 → 跳过该步；硬限制防无限循环）
-  ↓
-AgentRun.final_answer（LLM 总结或确定性拼接）
+  ↓ Update
+AgentResultValidator.validate + 失败三策略（依赖断裂即止/参数错误不重试/瞬时≤2 次）
++ 熔断（步数/工具数/时长/Token/重规划/2000 事件）+ uncertainty 动态重算
+  ↓ Finish
+确定性结果渲染优先（必要时一次远程总结）→ AgentRun.final_answer
 ```
 
 #### 工具注册表
 
-22 个内置工具（`app.tools.builtin._BUILTIN_TOOLS`），按类别：
+36 个内置工具（`app.tools.builtin._BUILTIN_TOOLS`），按类别：
 
 | 类别 | 工具 |
 | --- | --- |
@@ -418,12 +421,13 @@ AgentRun.final_answer（LLM 总结或确定性拼接）
 | data | filter / clean / transform / aggregate / merge |
 | eda | describe / distribution / correlation / outlier / visualize |
 | ml | detect_task / prepare / train / evaluate / compare / explain |
+| 其他 | workflow / report / connector / clarify 等 |
 
 工具强制走 `TOOL_REGISTRY.execute`，**没有任何 shell/eval/exec 通道**。
 
 #### 前端 AI Lab
 
-前端 `pages/AI/` + `features/agent/`（ChatPanel / AgentTimeline / ToolCallCard / PermissionRequest / SmartAnalysisButton）提供对话式交互：用户消息触发一次 AgentRun，前端通过 SSE 事件流实时展示计划 → 工具调用 → 校验 → 最终回答；高风险步骤弹出 `PermissionRequest` 待用户确认后 `resume`。AI Lab 生成的报告与报告中心分离，报告中心仅承载文件式报告汇总。
+前端 `pages/AI/` + `features/agent/`（ChatPanel / AgentTimeline / ToolCallCard / PermissionRequest / SmartAnalysisButton）提供对话式交互：用户消息触发一次 AgentRun，前端通过 SSE 事件流实时展示决策 → 工具调用 → 校验 → 最终回答；高风险步骤弹出 `PermissionRequest` 待用户确认后 `resume`。AI Lab 生成的报告与报告中心分离，报告中心仅承载文件式报告汇总。
 
 ### 5.6 工作流指南
 
@@ -658,7 +662,8 @@ xiaoluo-lab/
 ### 7.5 扩展 Agent 能力
 
 - 新增上下文字段：扩展 `AgentContext`（`app.agent.context.models`）与 `ContextBuilder.build`，注意所有字段都要受控大小（用 `clip_obj` / `clip_text` 截断）。
-- 自定义计划：通过 `AgentRuntime.run(plan_override=...)` 传入预定义 `Plan`，复用现有 Executor / Validator / Permission 链路。
+- 新增确定性动作链：在 `app.agent.playbooks` 的 `select_playbook` 登记新分支（信号 → PendingAction 队列），复用既有 Executor / Validator / Permission 链路。
+- 新增决策来源：在 `app.agent.loop.AgentLoop._prime` 的分层序列中插入新层，每跳带 source/confidence/rationale。
 
 ---
 
@@ -677,7 +682,7 @@ xiaoluo-lab/
 
 | 模块 | 状态 | 说明 |
 | --- | --- | --- |
-| `app/local_router/` | **实验性，默认未启用** | `LOCAL_ROUTER_MODE=off`。但该目录**不是死代码**：其中 `contract.py` 的 `Intent` 枚举是 Agent 运行时路由的唯一真源（`app/agent/intent.py`、`app/agent/runtime/runtime.py` 直接 import）。只有 `model.py` / `router.py` / `scoring.py` 在 `shadow`（只记录不改变行为）或 `guard`（预留档，**尚未实现接管逻辑**）时才被加载。开启前需先跑 `scripts/router/analyze_fusion.py` 选阈值。 |
+| `app/local_router/` | **实验性，默认未启用** | `LOCAL_ROUTER_MODE=off`。但该目录**不是死代码**：其中 `contract.py` 的 `Intent` 枚举是 Agent 运行时路由的唯一真源（`app/agent/intent.py`、`app/agent/loop.py` 直接 import）。只有 `model.py` / `router.py` / `scoring.py` 在 `shadow`（只记录不改变行为）或 `guard`（预留档，**尚未实现接管逻辑**）时才被加载。开启前需先跑 `scripts/router/analyze_fusion.py` 选阈值。 |
 | 认证与授权 | **没有** | 单租户本地平台的刻意取舍。所有 API 对能访问端口的人开放，请勿直接暴露到公网；详见 `SECURITY.md`。 |
 | 通知 / WebSocket 兼容性 | 已支持 SSE 降级 | `GET /notifications/stream` 失败时前端退回指数退避轮询（15s→30s→60s→120s）。不支持长连接的代理环境下会自动走这条兜底路径。 |
 | SQLite | 生产可用但有上限 | 已启用 WAL / `synchronous=NORMAL` / `busy_timeout`，单实例可用；多实例或高并发写请切换 PostgreSQL / MySQL。 |

@@ -272,6 +272,13 @@ def get_model(*, refresh: bool = False) -> QwenRouterModel | None:
                 _MODEL_FAILURE,
             )
             return None
+        if model is None:
+            # _load 无异常但返回 None（缺 torch / transformers / peft 后端）：
+            # 同样按失败处理并诚实降级，绝不能访问 model.adapter_path（None 属性）。
+            _MODEL_FAILURE = "本地模型后端不可用（缺 torch / transformers / peft）"
+            _MODEL_FAILURE_AT = time.monotonic()
+            logger.warning("本地 Router Qwen 模型不可用，退回词法模型：%s", _MODEL_FAILURE)
+            return None
         _MODEL, _MODEL_FAILURE = model, None
         logger.info(
             "本地 Router Qwen 模型已加载：adapter=%s base=%s device=%s，耗时 %.2fs",

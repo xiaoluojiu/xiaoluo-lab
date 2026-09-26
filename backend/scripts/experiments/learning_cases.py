@@ -32,7 +32,6 @@ import polars as pl
 from app.agent.executor.executor import AgentExecutor
 from app.agent.llm.mock import MockLLM
 from app.agent.permission.models import ROLE_PERMISSIONS
-from app.agent.planner.planner import AgentPlanner
 from app.agent.runtime.runtime import AgentRuntime
 from app.analysis import CorrelationAnalyzer, DescriptiveAnalyzer
 from app.core.database import Base
@@ -330,40 +329,25 @@ def domain_7_llm_tool_calling(env: dict[str, Any]) -> dict[str, Any]:
     dataset_id = _make_dataset(env, "tool-demo", df)
     _print_block("数据", f"样本数据集 {dataset_id}（{df.height} 行）：\n{df}")
 
-    # 用 MockLLM 让 Planner 产出结构化计划（模拟 LLM 选工具）
-    planner_llm = MockLLM(
-        structured_responses=[
-            {
-                "goal": "检查数据集质量",
-                "steps": [
-                    {"tool": "dataset.quality", "arguments": {"dataset_id": dataset_id}}
-                ],
-            }
-        ]
-    )
-    from app.agent.context.builder import ContextBuilder
-    context = ContextBuilder(env["engine"]).build(
-        "检查数据质量", dataset_ids=[dataset_id]
-    )
-    planner = AgentPlanner(planner_llm)
-    plan = planner.build_plan("检查数据质量", context, TOOL_REGISTRY.list())
-    _print_block("实验", "AgentPlanner(MockLLM).build_plan -> AgentExecutor.execute_step(dataset.quality)")
+    # 用 PendingAction 构造结构化步骤（模拟 LLM 选工具：dataset.quality）
+    from app.agent.state import PendingAction
+    step = PendingAction(tool="dataset.quality", arguments={"dataset_id": dataset_id}, source="llm_tool_calling")
+    _print_block("实验", "PendingAction(dataset.quality) -> AgentExecutor.execute_step(dataset.quality)")
 
-    # 执行计划首步
+    # 执行步骤
     executor = AgentExecutor()
     tool_ctx = ToolExecutionContext(
         user_id="student", dataset_ids={dataset_id},
         permissions=set(ROLE_PERMISSIONS["analyst"]),
     )
     services = ToolServices(dataset_service=env["ds"], data_engine_service=env["engine"])
-    record = executor.execute_step(plan.steps[0], tool_ctx, services)
-    _print_block("结果", f"LLM 生成计划：goal={plan.goal}\n"
-                       f"执行 {record.tool}：status={record.status}, 耗时 {record.elapsed_ms}ms\n"
+    record = executor.execute_step(step, tool_ctx, services)
+    _print_block("结果", f"执行 {record.tool}：status={record.status}, 耗时 {record.elapsed_ms}ms\n"
                        f"摘要：{record.result.summary if record.result else record.error}")
     fact = f"LLM 选择了 dataset.quality 工具，执行{record.status}。"
     _print_block("AI 解释", _ai_explain("LLM 工具调用", fact))
     return {"domain": "LLM 工具调用", "tool": record.tool, "status": record.status,
-            "plan_goal": plan.goal}
+            "plan_goal": "检查数据集质量"}
 
 
 # ============================================================

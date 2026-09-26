@@ -16,11 +16,13 @@
 from __future__ import annotations
 
 import threading
+import time
 
 import polars as pl
 import pytest
 from app.agent.answer_source import PLATFORM_RULES_SUMMARY
 from app.agent.runtime.models import AgentRun, AgentSession, AgentStore, RunStatus
+from app.agent.state import PendingAction, TaskState
 from app.core.exceptions import ValidationException
 from app.data_engine.service import DataEngineService
 from app.services.dataset_service import DatasetService
@@ -32,7 +34,6 @@ from app.tools.result import ToolResult
 # Permission 只用于构造工具对象；风险等级来自 RiskLevel
 from app.agent.permission.models import Permission
 from app.agent.permission.rules import RiskLevel
-from app.agent.planner.models import AgentPlan, PlanStep
 from app.agent.runtime.runtime import AgentRuntime
 
 
@@ -109,8 +110,27 @@ def _runtime(engine, tools, *, store: AgentStore | None = None) -> AgentRuntime:
     return AgentRuntime(engine["engine"], llm=None, registry=registry, store=store or AgentStore())
 
 
-def _plan(*tools: str) -> AgentPlan:
-    return AgentPlan(goal="等待态验证", steps=[PlanStep(tool=t, arguments={}) for t in tools])
+def _plan(*tools: str) -> list[PendingAction]:
+    """重构后不再用 plan_override：直接构造待办动作，驱动 Loop 执行指定工具。"""
+    return [PendingAction(tool=t, arguments={}, source="test") for t in tools]
+
+
+def _start_run(runtime: AgentRuntime, session: AgentSession, tool: str, request: str = "执行操作") -> AgentRun:
+    """用预置待办动作启动一轮运行（等价于旧 plan_override 固定计划）。"""
+    state = TaskState.initial(request)
+    state.queue(_plan(tool))
+    run = AgentRun(
+        id=runtime.store.next_run_id(), session_id=session.id,
+        user_id=session.user_id, user_request=request,
+    )
+    runtime.store.add_run(run)
+    if run.id not in session.run_ids:
+        session.run_ids.append(run.id)
+    session.history.append({"role": "user", "content": request})
+    run.started_at = time.time()
+    runtime.loop.turn(run, session, state, run_preflight_check=False)
+    session.task_state = state.to_dict()
+    return run
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +146,7 @@ def test_concurrent_confirm_only_executes_once(engine):
     runtime = _runtime(engine, [risky])
     session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
 
-    run = runtime.run(session, "执行高风险操作", plan_override=_plan("wait.risky"))
+    run = _start_run(runtime, session, "wait.risky")
     assert run.status == RunStatus.WAITING_CONFIRMATION
 
     barrier = threading.Barrier(2)
@@ -159,7 +179,7 @@ def test_concurrent_clarify_answer_only_accepted_once(engine):
     runtime = _runtime(engine, [clarify])
     session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
 
-    run = runtime.run(session, "处理一下数据", plan_override=_plan("wait.clarify"))
+    run = _start_run(runtime, session, "wait.clarify", request="处理一下数据")
     assert run.status == RunStatus.WAITING_CLARIFICATION
 
     barrier = threading.Barrier(2)
@@ -200,7 +220,7 @@ def test_store_persist_reload_is_symmetric(engine, tmp_path):
     runtime = _runtime(engine, [risky], store=store)
     session = runtime.create_session(dataset_ids=[engine["dataset_id"]])
 
-    run = runtime.run(session, "执行高风险操作", plan_override=_plan("wait.risky"))
+    run = _start_run(runtime, session, "wait.risky")
     assert run.status == RunStatus.WAITING_CONFIRMATION
     run.clarification_answers["q1"] = "a"
     run.cancel_requested = True

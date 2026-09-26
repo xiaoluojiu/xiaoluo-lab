@@ -30,6 +30,11 @@ class AgentTokenLedger:
     # 调用（规划 / 汇总 / 闲聊），而 ``remote_escalations`` 只统计「本地能力不足 → 升级远程
     # 做一次战略指导」这类调用 —— 它是「改造前 vs 改造后远程调用是否下降」的直接口径。
     remote_escalations:int=0
+    # ★ 统一 Loop 新计数（旧键全部保留；新键只增不删，前端/脚本按新键对账）：
+    # qwen_calls=本地 Qwen 决策次数；tool_calls=工具执行次数；task_steps=Loop 迭代步数。
+    qwen_calls:int=0
+    tool_calls:int=0
+    task_steps:int=0
     def check_budget(self):
         if self.llm_calls>=settings.AGENT_LLM_MAX_CALLS: raise RuntimeError(f"Agent LLM 调用次数已达到本次任务上限 {settings.AGENT_LLM_MAX_CALLS}")
         if self.actual_total_tokens>=settings.AGENT_LLM_MAX_TOTAL_TOKENS: raise RuntimeError(f"Agent Token 预算已达到本次任务上限 {settings.AGENT_LLM_MAX_TOTAL_TOKENS}")
@@ -38,11 +43,24 @@ class AgentTokenLedger:
     def record_escalation(self,usage=None):
         """记录一次远程升级调用。usage 已由 ``record_usage`` 计入，这里只累计次数。"""
         self.remote_escalations+=1
+    def record_qwen_call(self,n:int=1):self.qwen_calls+=max(int(n),0)
+    def record_tool_call(self,n:int=1):self.tool_calls+=max(int(n),0)
+    def record_step(self,n:int=1):self.task_steps+=max(int(n),0)
     def record_context_saving(self,tokens:int):self.estimated_context_saved_tokens+=max(int(tokens or 0),0)
     def record_result_saving(self,tokens:int):self.estimated_result_saved_tokens+=max(int(tokens or 0),0)
     def record_cache_hit(self):self.cache_hits+=1;self.avoided_planner_calls+=1
     def to_dict(self):
         return {
+            # ★ 统一 Loop 一等指标（与下方旧键并存；remote_calls 与 llm_calls 同值对账）。
+            "remote_calls": self.llm_calls,
+            "remote_input_tokens": self.actual_input_tokens,
+            "remote_output_tokens": self.actual_output_tokens,
+            "qwen_calls": self.qwen_calls,
+            "tool_calls": self.tool_calls,
+            "task_steps": self.task_steps,
+            "escalation_count": self.remote_escalations,
+            # 无单价信息时成本恒为 0，但字段恒在（成本口径的稳定锚点）。
+            "total_cost": 0.0,
             "llm_calls": self.llm_calls,
             "remote_escalations": self.remote_escalations,
             "actual": {"input_tokens": self.actual_input_tokens, "output_tokens": self.actual_output_tokens, "total_tokens": self.actual_total_tokens},
@@ -53,7 +71,7 @@ class AgentTokenLedger:
                 "remaining_total_tokens": max(int(settings.AGENT_LLM_MAX_TOTAL_TOKENS) - self.actual_total_tokens, 0),
             },
             "optimization": {"estimated_context_saved_tokens": self.estimated_context_saved_tokens, "estimated_result_saved_tokens": self.estimated_result_saved_tokens, "estimated_saved_tokens": self.estimated_context_saved_tokens + self.estimated_result_saved_tokens, "avoided_planner_calls": self.avoided_planner_calls, "plan_cache_hits": self.cache_hits},
-            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage。",
+            "note": "estimated_saved_tokens 是本地优化层估算值，不等同于 Provider 实际 usage；total_cost 暂无单价口径，恒为 0。",
         }
 
 @dataclass
@@ -99,9 +117,12 @@ class AgentRun:
 @dataclass
 class AgentSession:
     id:str;user_id:str;title:str="";dataset_ids:list[int]=field(default_factory=list);history:list[dict[str,str]]=field(default_factory=list);run_ids:list[str]=field(default_factory=list);created_at:float=field(default_factory=time.time);archived:bool=False
+    #: 统一 TaskState 快照（dict 形态；由 app.agent.state.TaskState 负责结构）。
+    #: 跨 Run 持续的任务状态唯一挂载点；旧 store 文件缺字段时为 None。
+    task_state:dict[str,Any]|None=None
     def set_dataset_ids(self, dataset_ids:list[int]) -> list[int]:
         self.dataset_ids=list(dict.fromkeys(int(x) for x in dataset_ids if int(x)>0));return self.dataset_ids
-    def summary(self):return {"id":self.id,"user_id":self.user_id,"title":self.title,"dataset_ids":self.dataset_ids,"history":self.history,"run_ids":self.run_ids,"created_at":self.created_at,"archived":self.archived}
+    def summary(self):return {"id":self.id,"user_id":self.user_id,"title":self.title,"dataset_ids":self.dataset_ids,"history":self.history,"run_ids":self.run_ids,"created_at":self.created_at,"archived":self.archived,"task_state":self.task_state}
 
 class AgentStore:
     """线程安全的轻量 JSON 持久化；一个 Session 同一时间只允许一个活动 Turn。"""
@@ -247,14 +268,14 @@ class AgentStore:
         try:
             if not self._path.exists():return
             data=json.loads(self._path.read_text(encoding="utf-8"));self._session_seq=int(data.get("session_seq",0));self._run_seq=int(data.get("run_seq",0))
-            for x in data.get("sessions",[]):self._sessions[x["id"]]=AgentSession(id=x["id"],user_id=x.get("user_id","anonymous"),title=x.get("title",""),dataset_ids=list(x.get("dataset_ids",[])),history=list(x.get("history",[])),run_ids=list(x.get("run_ids",[])),created_at=float(x.get("created_at",time.time())),archived=bool(x.get("archived",False)))
+            for x in data.get("sessions",[]):self._sessions[x["id"]]=AgentSession(id=x["id"],user_id=x.get("user_id","anonymous"),title=x.get("title",""),dataset_ids=list(x.get("dataset_ids",[])),history=list(x.get("history",[])),run_ids=list(x.get("run_ids",[])),created_at=float(x.get("created_at",time.time())),archived=bool(x.get("archived",False)),task_state=(dict(x["task_state"]) if x.get("task_state") else None))
             for x in data.get("runs",[]):
                 status=RunStatus(x.get("status","pending"))
                 # WAITING_CONFIRMATION 同样标记为中断：重启后 pending_confirmation
                 # 未完整序列化、无法恢复授权流程，保留该状态只会让会话永久 409。
                 interrupted=status in {RunStatus.PENDING,RunStatus.PLANNING,RunStatus.RUNNING,RunStatus.WAITING_CONFIRMATION,RunStatus.WAITING_CLARIFICATION}
                 if interrupted: status=RunStatus.FAILED
-                r=AgentRun(id=x["id"],session_id=x.get("session_id",""),user_id=x.get("user_id","anonymous"),user_request=x.get("user_request",""),status=status,plan=x.get("plan"),final_answer=x.get("final_answer",""),error=(x.get("error","") or "") if not interrupted else "后端进程重启，上一轮 Agent Turn 被中断；原执行过程已保留，可重新发起任务。",created_at=float(x.get("created_at",time.time())),started_at=x.get("started_at"),finished_at=x.get("finished_at") or (time.time() if interrupted else None),pending_clarification=(x.get("pending_clarification") or None));u=x.get("token_usage",{});a=u.get("actual",{});o=u.get("optimization",{});r.token_ledger=AgentTokenLedger(llm_calls=int(u.get("llm_calls",0)),actual_input_tokens=int(a.get("input_tokens",0)),actual_output_tokens=int(a.get("output_tokens",0)),actual_total_tokens=int(a.get("total_tokens",0)),estimated_context_saved_tokens=int(o.get("estimated_context_saved_tokens",0)),estimated_result_saved_tokens=int(o.get("estimated_result_saved_tokens",0)),avoided_planner_calls=int(o.get("avoided_planner_calls",0)),cache_hits=int(o.get("plan_cache_hits",0)),remote_escalations=int(u.get("remote_escalations",0)))
+                r=AgentRun(id=x["id"],session_id=x.get("session_id",""),user_id=x.get("user_id","anonymous"),user_request=x.get("user_request",""),status=status,plan=x.get("plan"),final_answer=x.get("final_answer",""),error=(x.get("error","") or "") if not interrupted else "后端进程重启，上一轮 Agent Turn 被中断；原执行过程已保留，可重新发起任务。",created_at=float(x.get("created_at",time.time())),started_at=x.get("started_at"),finished_at=x.get("finished_at") or (time.time() if interrupted else None),pending_clarification=(x.get("pending_clarification") or None));u=x.get("token_usage",{});a=u.get("actual",{});o=u.get("optimization",{});r.token_ledger=AgentTokenLedger(llm_calls=int(u.get("llm_calls",0)),actual_input_tokens=int(a.get("input_tokens",0)),actual_output_tokens=int(a.get("output_tokens",0)),actual_total_tokens=int(a.get("total_tokens",0)),estimated_context_saved_tokens=int(o.get("estimated_context_saved_tokens",0)),estimated_result_saved_tokens=int(o.get("estimated_result_saved_tokens",0)),avoided_planner_calls=int(o.get("avoided_planner_calls",0)),cache_hits=int(o.get("plan_cache_hits",0)),remote_escalations=int(u.get("remote_escalations",u.get("escalation_count",0))),qwen_calls=int(u.get("qwen_calls",0)),tool_calls=int(u.get("tool_calls",0)),task_steps=int(u.get("task_steps",0)))
                 for e in x.get("events",[]):r.events.append(AgentEvent(seq=int(e.get("seq",len(r.events)+1)),run_id=r.id,type=e.get("type","planning"),payload=dict(e.get("payload") or {}),created_at=float(e.get("created_at",time.time()))))
                 for c in x.get("tool_calls",[]):
                     q=ToolCallRecord(step_index=int(c.get("step_index",0)),tool=str(c.get("tool","")),arguments=dict(c.get("arguments") or {}),attempt=int(c.get("attempt",1)));q.status=str(c.get("status","ok"));q.error=str(c.get("error",""));z=c.get("result")

@@ -1,13 +1,10 @@
 """FastAPI 依赖注入。"""
 from __future__ import annotations
-import threading
 from fastapi import Depends
 from sqlalchemy.orm import Session
 from app.agent.llm.base import LLMProvider
 from app.agent.llm.capabilities import LLMCapabilities
 from app.agent.llm.openai_compatible import OpenAICompatibleProvider
-from app.agent.planner.planner import AgentPlanner
-from app.agent.planner.replanner import ReplanLimits
 from app.agent.runtime.models import AgentStore
 from app.agent.runtime.agent_runtime import AgentRuntime
 from app.core.config import settings
@@ -28,24 +25,6 @@ WORKFLOW_SERVICE = WorkflowService(
     # 必需的节点参数规格：只在 run() 前预检生效，create/update 仍允许保存未配置的草稿。
     required_config_keys=NODE_REQUIRED_CONFIG,
 )
-
-# Planner（含 plan cache）必须进程级共享：AgentRuntime 每请求重建，
-# 若 Planner 也随之重建，plan cache 跨请求永远 miss（S-4）。
-_PLANNER_LOCK = threading.Lock()
-_PLANNERS: dict[tuple, AgentPlanner] = {}
-_PLANNER_CACHE_MAX = 8
-
-
-def _shared_planner(llm: LLMProvider | None) -> AgentPlanner:
-    key = (getattr(llm, "name", "rule"), getattr(llm, "model", "") or "") if llm is not None else ("rule", "")
-    with _PLANNER_LOCK:
-        planner = _PLANNERS.get(key)
-        if planner is None:
-            planner = AgentPlanner(llm, max_steps=settings.AGENT_MAX_STEPS)
-            if len(_PLANNERS) >= _PLANNER_CACHE_MAX:
-                _PLANNERS.clear()
-            _PLANNERS[key] = planner
-        return planner
 
 def get_storage_service() -> StorageService:
     return get_storage()
@@ -94,11 +73,8 @@ def get_agent_runtime(
     db: Session = Depends(get_db),
     llm: LLMProvider | None = Depends(get_llm_provider),
 ) -> AgentRuntime:
-    limits = ReplanLimits(
-        max_steps=settings.AGENT_MAX_STEPS,
-        timeout_seconds=180.0,
-    )
-    return AgentRuntime(data_engine, experiment_service=experiment_service, db=db, llm=llm, store=AGENT_STORE, planner=_shared_planner(llm), limits=limits)
+    # 统一 Loop：决策/执行/收尾全部在 AgentLoop 内，这里只注入基础设施与共享 store。
+    return AgentRuntime(data_engine, experiment_service=experiment_service, db=db, llm=llm, store=AGENT_STORE)
 
 def get_file_service(db: Session = Depends(get_db), storage: StorageService = Depends(get_storage_service)) -> FileService:
     return FileService(db, storage)

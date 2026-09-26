@@ -18,7 +18,7 @@ import math
 import re
 from typing import Any
 
-from app.agent.planner.models import PlanStep
+from app.agent.state import PendingAction
 from app.agent.validator.models import ValidationResult
 from app.tools.result import ToolResult
 
@@ -51,7 +51,7 @@ class AgentResultValidator:
 
     def validate(
         self,
-        step: PlanStep,
+        step: PendingAction,
         result: ToolResult,
         output_schema: dict[str, Any] | None = None,
     ) -> ValidationResult:

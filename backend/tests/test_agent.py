@@ -6,9 +6,7 @@ from app.agent.context.builder import ContextBuilder
 from app.agent.executor.executor import AgentExecutor
 from app.agent.llm.mock import MockLLM
 from app.agent.permission.models import ROLE_PERMISSIONS
-from app.agent.planner.models import AgentPlan, PlanStep
-from app.agent.planner.planner import AgentPlanner, PlanInvalidError
-from app.agent.planner.replanner import AgentLimitExceeded, ReplanLimits, Replanner
+from app.agent.state import PendingAction
 from app.agent.runtime.models import RunStatus
 from app.agent.runtime.runtime import AgentRuntime
 from app.agent.validator.models import ValidationResult
@@ -116,120 +114,6 @@ class TestAgentContext:
 # ----------------------------------------------------------------------
 # Prompt 123-124：Planner
 # ----------------------------------------------------------------------
-class TestPlanner:
-    def test_rule_plan_train(self, env):
-        builder = ContextBuilder(env["engine"])
-        context = builder.build("帮我训练一个分类模型", dataset_ids=[env["dataset_id"]])
-        planner = AgentPlanner(None)
-        plan = planner.build_plan("帮我训练一个分类模型", context, TOOL_DESCRIBES)
-        tools = [s.tool for s in plan.steps]
-        assert "ml.train" in tools and "ml.detect_task" in tools
-
-    def test_rule_plan_quality(self, env):
-        builder = ContextBuilder(env["engine"])
-        context = builder.build("检查一下数据质量", dataset_ids=[env["dataset_id"]])
-        plan = AgentPlanner(None).build_plan("检查一下数据质量", context, TOOL_DESCRIBES)
-        assert any(s.tool == "dataset.quality" for s in plan.steps)
-
-    def test_rule_plan_does_not_force_report(self, env):
-        """★ P1 回归：普通分析请求不该自动产出报告文件。
-
-        历史行为：任何数据分析分支都无条件 append ``report.generate``，于是
-        「帮我看看有没有缺失值」也会顺带产出一份 PDF 写进报告中心 —— 过度交付。
-        """
-        builder = ContextBuilder(env["engine"])
-        context = builder.build("帮我分析一下数据", dataset_ids=[env["dataset_id"]])
-        plan = AgentPlanner(None).build_plan("帮我分析一下数据", context, TOOL_DESCRIBES)
-        tools = [s.tool for s in plan.steps]
-        assert tools, "规则规划器应产出分析步骤，而不是空计划"
-        assert "report.generate" not in tools
-
-    def test_rule_plan_includes_report_when_explicitly_asked(self, env):
-        """明确要求「报告 / 分析并生成报告」时必须包含 report.generate。"""
-        builder = ContextBuilder(env["engine"])
-        context = builder.build("生成分析报告", dataset_ids=[env["dataset_id"]])
-        plan = AgentPlanner(None).build_plan("生成分析报告", context, TOOL_DESCRIBES)
-        assert any(s.tool == "report.generate" for s in plan.steps)
-
-    def test_rule_plan_deduplicate_has_a_real_path(self, env):
-        """「删除重复行」必须落到 data.clean(deduplicate)，而不是退化成 inspect + profile。
-
-        规则规划器此前完全没有 DATA_TRANSFORM 分支：所有非建模、非质量关键词的请求
-        都掉进 else（inspect + profile），于是「去重」这种最常见的诉求被当成 EDA。
-        """
-        builder = ContextBuilder(env["engine"])
-        context = builder.build("删除重复行", dataset_ids=[env["dataset_id"]])
-        plan = AgentPlanner(None).build_plan("删除重复行", context, TOOL_DESCRIBES)
-        clean = [s for s in plan.steps if s.tool == "data.clean"]
-        assert clean, f"应规划出真实的清洗步骤，实际：{[s.tool for s in plan.steps]}"
-        assert "deduplicate" in clean[0].arguments
-
-    def test_rule_plan_missing_values_has_a_real_path(self, env):
-        """「处理缺失值」→ data.clean(missing)；strategy 必须显式给出。
-
-        用 `drop` 而不是 mean/median：规则规划器看不到列类型，猜数值型策略会在
-        字符串列上直接失败（"只适用于数值列"）。
-        """
-        builder = ContextBuilder(env["engine"])
-        context = builder.build("处理缺失值", dataset_ids=[env["dataset_id"]])
-        plan = AgentPlanner(None).build_plan("处理缺失值", context, TOOL_DESCRIBES)
-        clean = [s for s in plan.steps if s.tool == "data.clean"]
-        assert clean, f"应规划出真实的清洗步骤，实际：{[s.tool for s in plan.steps]}"
-        assert clean[0].arguments["missing"]["strategy"] == "drop"
-
-    def test_rule_plan_does_not_fabricate_column_names(self, env):
-        """筛选 / 聚合需要列名，而规划阶段拿不到 schema ⇒ 不臆造参数。
-
-        臆造的 conditions / group_by 必然失败，且错误信息会把用户引向「列名填错了」，
-        而不是「还没拿到列名」。这里改为先把真实列名取出来。
-        """
-        builder = ContextBuilder(env["engine"])
-        context = builder.build("按地区聚合销售额", dataset_ids=[env["dataset_id"]])
-        plan = AgentPlanner(None).build_plan("按地区聚合销售额", context, TOOL_DESCRIBES)
-        tools = [s.tool for s in plan.steps]
-        assert "data.aggregate" not in tools, "规则规划器不该猜 group_by"
-        assert "dataset.schema" in tools, "应先把真实列名交出来"
-
-    def test_rule_plan_summary_is_not_a_report(self, env):
-        """「总结 / 结论」要的是一段回答，不是一份报告文件。
-
-        此前「总结」被列在 REPORT 关键词里，于是「总结一下分析结果」会静默产出一份
-        PDF —— 用户没要文件，却多了一个交付物。
-        """
-        builder = ContextBuilder(env["engine"])
-        context = builder.build("总结一下分析结果", dataset_ids=[env["dataset_id"]])
-        plan = AgentPlanner(None).build_plan("总结一下分析结果", context, TOOL_DESCRIBES)
-        assert "report.generate" not in [s.tool for s in plan.steps]
-
-    def test_unknown_tool_rejected(self, env):
-        builder = ContextBuilder(env["engine"])
-        context = builder.build("分析", dataset_ids=[env["dataset_id"]])
-        with pytest.raises(PlanInvalidError):
-            AgentPlanner(None).build_plan("分析", context, TOOL_DESCRIBES[:1])
-
-    def test_planner_cannot_execute(self):
-        """Planner 只能制定计划，不能执行工具。"""
-        planner = AgentPlanner(None)
-        assert not hasattr(planner, "execute")
-        assert not hasattr(planner, "execute_step")
-
-    def test_llm_plan(self, env):
-        builder = ContextBuilder(env["engine"])
-        context = builder.build("训练模型", dataset_ids=[env["dataset_id"]])
-        mock = MockLLM(
-            structured_responses=[
-                {
-                    "goal": "训练分类模型",
-                    "steps": [
-                        {"tool": "dataset.inspect", "arguments": {"dataset_id": env["dataset_id"]}}
-                    ],
-                }
-            ]
-        )
-        plan = AgentPlanner(mock).build_plan("训练模型", context, TOOL_DESCRIBES)
-        assert plan.goal == "训练分类模型"
-        assert mock.structured_calls  # LLM 被调用
-
 
 # ----------------------------------------------------------------------
 # Prompt 125：Executor
@@ -237,7 +121,7 @@ class TestPlanner:
 class TestExecutor:
     def test_execute_ok_and_recorded(self, env):
         executor = AgentExecutor()
-        step = PlanStep(tool="dataset.inspect", arguments={"dataset_id": env["dataset_id"]})
+        step = PendingAction(tool="dataset.inspect", arguments={"dataset_id": env["dataset_id"]})
         ctx = make_context(env, env["dataset_id"])
         services = ToolServices(dataset_service=env["ds"], data_engine_service=env["engine"])
         record = executor.execute_step(step, ctx, services)
@@ -249,7 +133,7 @@ class TestExecutor:
 
     def test_confirmation_required_recorded(self, env):
         executor = AgentExecutor()
-        step = PlanStep(
+        step = PendingAction(
             tool="ml.train",
             arguments={"dataset_id": env["dataset_id"], "model": "logistic_regression"},
         )
@@ -268,7 +152,7 @@ class TestExecutor:
 
     def test_unknown_tool_recorded_failed(self, env):
         executor = AgentExecutor()
-        step = PlanStep(tool="system.shell", arguments={"cmd": "ls"})  # 不存在的工具
+        step = PendingAction(tool="system.shell", arguments={"cmd": "ls"})  # 不存在的工具
         ctx = make_context(env, env["dataset_id"])
         record = executor.execute_step(step, ctx, ToolServices())
         assert record.status == "failed"
@@ -282,7 +166,7 @@ class TestExecutor:
 class TestValidator:
     def test_valid_result(self):
         validator = AgentResultValidator()
-        step = PlanStep(tool="dataset.quality", arguments={})
+        step = PendingAction(tool="dataset.quality", arguments={})
         result = ToolResult.ok({"score": 90.0, "issues": []}, summary="质量良好")
         validation = validator.validate(step, result, {"type": "object"})
         assert validation.valid
@@ -290,14 +174,14 @@ class TestValidator:
 
     def test_failed_result_invalid(self):
         validator = AgentResultValidator()
-        step = PlanStep(tool="dataset.quality", arguments={})
+        step = PendingAction(tool="dataset.quality", arguments={})
         validation = validator.validate(step, ToolResult.fail("数据不存在"))
         assert not validation.valid
         assert validation.errors
 
     def test_nan_rejected(self):
         validator = AgentResultValidator()
-        step = PlanStep(tool="eda.describe", arguments={})
+        step = PendingAction(tool="eda.describe", arguments={})
         result = ToolResult.ok({"mean": float("nan")}, summary="含 NaN")
         validation = validator.validate(step, result)
         assert not validation.valid
@@ -305,7 +189,7 @@ class TestValidator:
 
     def test_expected_output_mismatch(self):
         validator = AgentResultValidator()
-        step = PlanStep(tool="ml.train", arguments={}, expected_output="accuracy")
+        step = PendingAction(tool="ml.train", arguments={}, expected_output="accuracy")
         result = ToolResult.ok({"foo": 1}, summary="无指标")
         validation = validator.validate(step, result)
         assert validation.valid  # 未命中只降级为 warning，不阻断
@@ -314,7 +198,7 @@ class TestValidator:
 
     def test_expected_output_chinese_prose_not_fatal(self):
         validator = AgentResultValidator()
-        step = PlanStep(
+        step = PendingAction(
             tool="dataset.profile",
             arguments={},
             expected_output="数据集统计画像：数值分布、缺失情况、类别 Top 值等关键统计摘要",
@@ -333,65 +217,6 @@ class TestValidator:
 # ----------------------------------------------------------------------
 # Prompt 128：Replanner
 # ----------------------------------------------------------------------
-class TestReplanner:
-    def _plan(self, *tools: str) -> AgentPlan:
-        return AgentPlan(goal="g", steps=[PlanStep(tool=t, arguments={}) for t in tools])
-
-    def test_retry_once(self):
-        replan = Replanner().replan(
-            self._plan("dataset.quality", "eda.describe"),
-            failed_step_index=0,
-            errors=["失败"],
-            attempts=1,
-        )
-        assert replan.steps[0].tool == "dataset.quality"  # 重试同一步
-        assert "次尝试" in replan.notes
-
-    def test_skip_after_max_attempts(self):
-        replan = Replanner().replan(
-            self._plan("dataset.quality", "eda.describe"),
-            failed_step_index=0,
-            errors=["失败"],
-            attempts=2,
-        )
-        assert [s.tool for s in replan.steps] == ["eda.describe"]  # 跳过失败步
-
-    def test_exhausted_returns_empty(self):
-        plan = self._plan("dataset.quality")
-        replan = Replanner().replan(plan, failed_step_index=0, errors=["失败"], attempts=2)
-        assert replan.steps == []
-        assert "任务失败" in replan.notes
-
-    def test_param_error_skips_step(self):
-        plan = self._plan("a.x", "b.y")
-        replan = Replanner().replan(
-            plan,
-            failed_step_index=0,
-            errors=["工具 a.x 缺少必需字段：dataset_id"],
-            attempts=1,
-        )
-        assert [s.tool for s in replan.steps] == ["b.y"]  # 参数错误不重试，直接跳过
-
-    def test_prose_schema_word_not_param_error(self):
-        plan = self._plan("dataset.profile")
-        replan = Replanner().replan(
-            plan,
-            failed_step_index=0,
-            errors=["工具执行返回失败"],
-            attempts=1,
-        )
-        assert replan.steps[0].tool == "dataset.profile"  # 自由文本不触发参数错误跳过
-
-    def test_limit_exceeded(self):
-        replanner = Replanner(ReplanLimits(max_steps=1))
-        with pytest.raises(AgentLimitExceeded):
-            replanner.replan(
-                self._plan("a.x", "b.y", "c.z"),  # 跳过第一步后剩余 2 步 > 上限 1
-                failed_step_index=0,
-                errors=["失败"],
-                attempts=2,
-            )
-
 
 # ----------------------------------------------------------------------
 # Prompt 129-130：Runtime
@@ -437,47 +262,8 @@ class TestRuntime:
         assert train_calls[-1].status == "ok"
         assert train_calls[-1].result.data["metrics"]
 
-    def test_permission_denied_fails_run(self, env):
-        runtime = AgentRuntime(env["engine"], experiment_service=env["exp"])
-        session = runtime.create_session(dataset_ids=[env["dataset_id"]], )
-        # viewer 无 train_model 权限
-        session.user_id = "viewer-user"
-        plan = AgentPlan(
-            goal="训练",
-            steps=[
-                PlanStep(
-                    tool="ml.train",
-                    arguments={"dataset_id": env["dataset_id"], "model": "logistic_regression"},
-                )
-            ],
-        )
-        run = runtime.run(session, "训练", plan_override=plan)
-        # viewer 角色未接入 runtime（runtime 固定 analyst），analyst 拥有 train_model
-        # 因此这里应当是等待确认而不是拒绝
-        assert run.status in (RunStatus.WAITING_CONFIRMATION, RunStatus.COMPLETED)
 
-    def test_plan_failure_fails_run(self, env):
-        runtime = AgentRuntime(env["engine"])
-        session = runtime.create_session(dataset_ids=[env["dataset_id"]])
-        plan = AgentPlan(
-            goal="失败计划",
-            steps=[PlanStep(tool="ml.evaluate", arguments={"run_id": 99999})],
-        )
-        run = runtime.run(session, "看结果", plan_override=plan)
-        assert run.status == RunStatus.FAILED
-        assert run.error
-        assert any(e.type == "failed" for e in run.events)
-        # 至少重试过一次（共 2 次调用记录）
-        assert run.tool_call_count == 2
 
-    def test_tool_call_limit(self, env):
-        runtime = AgentRuntime(
-            env["engine"], limits=ReplanLimits(max_tool_calls=0, timeout_seconds=60)
-        )
-        session = runtime.create_session(dataset_ids=[env["dataset_id"]])
-        run = runtime.run(session, "检查一下数据质量")
-        assert run.status == RunStatus.FAILED
-        assert "超过" in run.error
 
     def test_empty_request_rejected(self, env):
         runtime = AgentRuntime(env["engine"])

@@ -13,12 +13,19 @@ export function TokenUsageBody({ run }: { run: AgentRun }) {
   }
   const tokenPct = budget ? Math.min(100, Math.round((actual.total_tokens / Math.max(budget.max_total_tokens, 1)) * 100)) : 0;
   const callPct = budget ? Math.min(100, Math.round((run.token_usage.llm_calls / Math.max(budget.max_llm_calls, 1)) * 100)) : 0;
+  // 统一 Loop 的三档调用计数（远程 / 本地 Qwen / 工具），用于直观看到「简单任务零远程」。
+  const remoteCalls = run.token_usage.remote_calls ?? run.token_usage.llm_calls ?? 0;
+  const qwenCalls = run.token_usage.qwen_calls ?? 0;
+  const toolCalls = run.token_usage.tool_calls ?? run.tool_call_count ?? 0;
   return (
     <div className="ai-token-inner">
       <div className="ai-run-summary">
         <div><strong>{actual.total_tokens.toLocaleString()}</strong><span>已用 Token</span></div>
         <div><strong>{budget ? budget.remaining_total_tokens.toLocaleString() : "—"}</strong><span>剩余 Token</span></div>
         <div><strong>{budget ? `${run.token_usage.llm_calls}/${budget.max_llm_calls}` : run.token_usage.llm_calls}</strong><span>LLM 调用</span></div>
+        <div><strong>{remoteCalls}</strong><span>远程决策</span></div>
+        <div><strong>{qwenCalls}</strong><span>本地 Qwen</span></div>
+        <div><strong>{toolCalls}</strong><span>工具调用</span></div>
       </div>
       <p className="ai-token-note">
         下方带「估算」的条目是本机估算值，其余为 Provider 实际用量，两者不混用。

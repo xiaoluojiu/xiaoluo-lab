@@ -11,12 +11,13 @@ import io
 
 import polars as pl
 import pytest
+import time
+
 from app.agent.context.builder import ContextBuilder
 from app.agent.permission.models import ROLE_PERMISSIONS
-from app.agent.planner.models import AgentPlan, PlanStep
-from app.agent.planner.planner import AgentPlanner
-from app.agent.runtime.models import RunStatus
+from app.agent.runtime.models import AgentRun, RunStatus
 from app.agent.runtime.runtime import AgentRuntime
+from app.agent.state import PendingAction, TaskState
 from app.data_engine.merge.plan import JoinKey, MergePlan
 from app.data_engine.service import DataEngineService
 from app.experiments.service import ExperimentService
@@ -321,6 +322,33 @@ class TestFullUserFlow:
 # ===========================================================================
 # Prompt 241：完整 Agent 流程（全程通过 Tool Registry）
 # ===========================================================================
+
+
+def _start_run(runtime, session, actions, request="集成流程"):
+    """用预置待办动作启动一轮运行（等价于旧 plan_override 固定计划）。"""
+    state = TaskState.initial(request)
+    state.queue([PendingAction(tool=t, arguments=dict(args or {}), source="test") for t, args in actions])
+    run = AgentRun(id=runtime.store.next_run_id(), session_id=session.id, user_id=session.user_id, user_request=request)
+    runtime.store.add_run(run)
+    if run.id not in session.run_ids:
+        session.run_ids.append(run.id)
+    session.history.append({"role": "user", "content": request})
+    run.started_at = time.time()
+    runtime.loop.turn(run, session, state, run_preflight_check=False)
+    session.task_state = state.to_dict()
+    return run
+
+
+def _run_flow(runtime, session, actions, request="集成流程"):
+    """完整跑一遍（高风险工具自动 resume 确认）。"""
+    run = _start_run(runtime, session, actions, request)
+    for _ in range(len(actions) + 1):
+        if run.status != RunStatus.WAITING_CONFIRMATION:
+            break
+        run = runtime.resume(session, run.id)
+    return run
+
+
 class TestFullAgentFlow:
     """Agent 全链路：理解需求→查看数据→Schema→Profile→Mapping→MergePlan→
     请求权限→执行Merge→Quality→EDA→判断ML任务→生成结果→解释结果。"""
@@ -330,11 +358,7 @@ class TestFullAgentFlow:
         sales_id = two_datasets["sales_id"]
         runtime = AgentRuntime(env["engine"], db=env["db"])
         session = runtime.create_session(user_id="agent-user", dataset_ids=[sales_id])
-        plan = AgentPlan(
-            goal="查看销售数据",
-            steps=[PlanStep(tool="dataset.inspect", arguments={"dataset_id": sales_id})],
-        )
-        run = runtime.run(session, "查看销售数据", plan_override=plan, role="admin")
+        run = _run_flow(runtime, session, [("dataset.inspect", {"dataset_id": sales_id})], request="查看销售数据")
         assert run.status == RunStatus.COMPLETED
         ok_calls = [c for c in run.tool_calls if c.status == "ok"]
         assert len(ok_calls) >= 1
@@ -346,14 +370,7 @@ class TestFullAgentFlow:
         sales_id = two_datasets["sales_id"]
         runtime = AgentRuntime(env["engine"], db=env["db"])
         session = runtime.create_session(user_id="u", dataset_ids=[sales_id])
-        plan = AgentPlan(
-            goal="了解销售数据结构",
-            steps=[
-                PlanStep(tool="dataset.schema", arguments={"dataset_id": sales_id}),
-                PlanStep(tool="dataset.profile", arguments={"dataset_id": sales_id}),
-            ],
-        )
-        run = runtime.run(session, "了解数据结构", plan_override=plan, role="admin")
+        run = _run_flow(runtime, session, [("dataset.schema", {"dataset_id": sales_id}), ("dataset.profile", {"dataset_id": sales_id})], request="了解数据结构")
         assert run.status == RunStatus.COMPLETED
         schema_call = next(c for c in run.tool_calls if c.tool == "dataset.schema")
         profile_call = next(c for c in run.tool_calls if c.tool == "dataset.profile")
@@ -366,25 +383,14 @@ class TestFullAgentFlow:
         cust_id = two_datasets["customers_id"]
         runtime = AgentRuntime(env["engine"], experiment_service=env["exp"], db=env["db"])
         session = runtime.create_session(user_id="u", dataset_ids=[sales_id, cust_id])
-        plan = AgentPlan(
-            goal="合并销售与客户数据",
-            steps=[
-                PlanStep(
-                    tool="data.merge",
-                    arguments={
-                        "left_dataset_id": sales_id,
-                        "right_dataset_id": cust_id,
-                        "keys": [{"left": "customer_id", "right": "customer_id"}],
-                        "join_type": "left",
-                    },
-                ),
-            ],
-        )
-        run = runtime.run(
-            session, "合并销售与客户数据", plan_override=plan, role="admin", confirmed=True
-        )
+        run = _run_flow(runtime, session, [("data.merge", {
+            "left_dataset_id": sales_id,
+            "right_dataset_id": cust_id,
+            "keys": [{"left": "customer_id", "right": "customer_id"}],
+            "join_type": "left",
+        })], request="合并销售与客户数据")
         assert run.status == RunStatus.COMPLETED
-        merge_call = next(c for c in run.tool_calls if c.tool == "data.merge")
+        merge_call = next(c for c in reversed(run.tool_calls) if c.tool == "data.merge")
         assert merge_call.status == "ok"
         assert merge_call.result.data is not None
 
@@ -394,23 +400,12 @@ class TestFullAgentFlow:
         cust_id = two_datasets["customers_id"]
         runtime = AgentRuntime(env["engine"], experiment_service=env["exp"], db=env["db"])
         session = runtime.create_session(user_id="u", dataset_ids=[sales_id, cust_id])
-        plan = AgentPlan(
-            goal="合并销售与客户数据",
-            steps=[
-                PlanStep(
-                    tool="data.merge",
-                    arguments={
-                        "left_dataset_id": sales_id,
-                        "right_dataset_id": cust_id,
-                        "keys": [{"left": "customer_id", "right": "customer_id"}],
-                        "join_type": "left",
-                    },
-                ),
-            ],
-        )
-        run = runtime.run(
-            session, "合并销售与客户数据", plan_override=plan, role="analyst", confirmed=False
-        )
+        run = _run_flow(runtime, session, [("data.merge", {
+            "left_dataset_id": sales_id,
+            "right_dataset_id": cust_id,
+            "keys": [{"left": "customer_id", "right": "customer_id"}],
+            "join_type": "left",
+        })], request="合并销售与客户数据")
         # analyst 有 modify_data 权限，但 data.merge 可能需要 confirmation
         # 两种情况都接受：要么等待确认，要么直接完成
         assert run.status in {RunStatus.WAITING_CONFIRMATION, RunStatus.COMPLETED}
@@ -421,24 +416,13 @@ class TestFullAgentFlow:
         cust_id = two_datasets["customers_id"]
         runtime = AgentRuntime(env["engine"], db=env["db"])
         session = runtime.create_session(user_id="u", dataset_ids=[sales_id, cust_id])
-        plan = AgentPlan(
-            goal="合并后质检",
-            steps=[
-                PlanStep(
-                    tool="data.merge",
-                    arguments={
+        run = _run_flow(runtime, session, [("data.merge", {
                         "left_dataset_id": sales_id,
                         "right_dataset_id": cust_id,
                         "keys": [{"left": "customer_id", "right": "customer_id"}],
                         "join_type": "left",
-                    },
-                ),
-                PlanStep(tool="dataset.quality", arguments={"dataset_id": sales_id}),
-            ],
-        )
-        run = runtime.run(
-            session, "合并后质检", plan_override=plan, role="admin", confirmed=True
-        )
+                    }),
+                    ("dataset.quality", {"dataset_id": sales_id})], request="合并后质检")
         assert run.status == RunStatus.COMPLETED
         quality_call = next(c for c in run.tool_calls if c.tool == "dataset.quality")
         assert quality_call.status == "ok"
@@ -451,25 +435,14 @@ class TestFullAgentFlow:
         cust_id = two_datasets["customers_id"]
         runtime = AgentRuntime(env["engine"], db=env["db"])
         session = runtime.create_session(user_id="u", dataset_ids=[sales_id, cust_id])
-        plan = AgentPlan(
-            goal="合并后探索性分析",
-            steps=[
-                PlanStep(
-                    tool="data.merge",
-                    arguments={
+        run = _run_flow(runtime, session, [("data.merge", {
                         "left_dataset_id": sales_id,
                         "right_dataset_id": cust_id,
                         "keys": [{"left": "customer_id", "right": "customer_id"}],
                         "join_type": "left",
-                    },
-                ),
-                PlanStep(tool="eda.describe", arguments={"dataset_id": sales_id}),
-                PlanStep(tool="eda.correlation", arguments={"dataset_id": sales_id}),
-            ],
-        )
-        run = runtime.run(
-            session, "合并后探索性分析", plan_override=plan, role="admin", confirmed=True
-        )
+                    }),
+                    ("eda.describe", {"dataset_id": sales_id}),
+                    ("eda.correlation", {"dataset_id": sales_id})], request="合并后探索性分析")
         assert run.status == RunStatus.COMPLETED
         eda_calls = [c for c in run.tool_calls if c.tool.startswith("eda.")]
         assert all(c.status == "ok" for c in eda_calls)
@@ -480,39 +453,24 @@ class TestFullAgentFlow:
         cust_id = two_datasets["customers_id"]
         runtime = AgentRuntime(env["engine"], experiment_service=env["exp"], db=env["db"])
         session = runtime.create_session(user_id="u", dataset_ids=[sales_id, cust_id])
-        plan = AgentPlan(
-            goal="合并并训练分类模型",
-            steps=[
-                PlanStep(
-                    tool="data.merge",
-                    arguments={
-                        "left_dataset_id": sales_id,
-                        "right_dataset_id": cust_id,
-                        "keys": [{"left": "customer_id", "right": "customer_id"}],
-                        "join_type": "left",
-                    },
-                ),
-                PlanStep(
-                    tool="ml.detect_task",
-                    arguments={"dataset_id": sales_id, "target": "label"},
-                ),
-                PlanStep(
-                    tool="ml.train",
-                    arguments={
-                        "dataset_id": sales_id,
-                        "model": "logistic_regression",
-                        "task": "classification",
-                        "target": "label",
-                    },
-                ),
-            ],
-        )
-        run = runtime.run(
-            session, "合并并训练分类模型", plan_override=plan, role="admin", confirmed=True
-        )
+        run = _run_flow(runtime, session, [
+            ("data.merge", {
+                "left_dataset_id": sales_id,
+                "right_dataset_id": cust_id,
+                "keys": [{"left": "customer_id", "right": "customer_id"}],
+                "join_type": "left",
+            }),
+            ("ml.detect_task", {"dataset_id": sales_id, "target": "label"}),
+            ("ml.train", {
+                "dataset_id": sales_id,
+                "model": "logistic_regression",
+                "task": "classification",
+                "target": "label",
+            }),
+        ], request="合并并训练分类模型")
         assert run.status == RunStatus.COMPLETED
         detect_call = next(c for c in run.tool_calls if c.tool == "ml.detect_task")
-        train_call = next(c for c in run.tool_calls if c.tool == "ml.train")
+        train_call = next(c for c in reversed(run.tool_calls) if c.tool == "ml.train")
         assert detect_call.status == "ok"
         assert train_call.status == "ok"
         train_data = train_call.result.data or {}
@@ -523,14 +481,7 @@ class TestFullAgentFlow:
         sales_id = two_datasets["sales_id"]
         runtime = AgentRuntime(env["engine"], db=env["db"])
         session = runtime.create_session(user_id="u", dataset_ids=[sales_id])
-        plan = AgentPlan(
-            goal="查看数据并分析",
-            steps=[
-                PlanStep(tool="dataset.inspect", arguments={"dataset_id": sales_id}),
-                PlanStep(tool="dataset.profile", arguments={"dataset_id": sales_id}),
-            ],
-        )
-        run = runtime.run(session, "分析销售数据", plan_override=plan, role="admin")
+        run = _run_flow(runtime, session, [("dataset.inspect", {"dataset_id": sales_id}), ("dataset.profile", {"dataset_id": sales_id})], request="分析销售数据")
         assert run.status == RunStatus.COMPLETED
         assert run.final_answer
         assert len(run.final_answer) > 0
@@ -541,17 +492,7 @@ class TestFullAgentFlow:
         sales_id = two_datasets["sales_id"]
         runtime = AgentRuntime(env["engine"], db=env["db"])
         session = runtime.create_session(user_id="u", dataset_ids=[sales_id])
-        plan = AgentPlan(
-            goal="完整流程",
-            steps=[
-                PlanStep(tool="dataset.inspect", arguments={"dataset_id": sales_id}),
-                PlanStep(tool="dataset.schema", arguments={"dataset_id": sales_id}),
-                PlanStep(tool="dataset.profile", arguments={"dataset_id": sales_id}),
-                PlanStep(tool="dataset.quality", arguments={"dataset_id": sales_id}),
-                PlanStep(tool="eda.describe", arguments={"dataset_id": sales_id}),
-            ],
-        )
-        run = runtime.run(session, "完整流程", plan_override=plan, role="admin")
+        run = _run_flow(runtime, session, [("dataset.inspect", {"dataset_id": sales_id}), ("dataset.schema", {"dataset_id": sales_id}), ("dataset.profile", {"dataset_id": sales_id}), ("dataset.quality", {"dataset_id": sales_id}), ("eda.describe", {"dataset_id": sales_id})], request="完整流程")
         registry_names = set(TOOL_REGISTRY.names())
         for call in run.tool_calls:
             assert call.tool in registry_names, f"工具 {call.tool} 不在 Registry 中"
@@ -562,13 +503,7 @@ class TestFullAgentFlow:
         sales_id = two_datasets["sales_id"]
         runtime = AgentRuntime(env["engine"], db=env["db"])
         session = runtime.create_session(user_id="u", dataset_ids=[sales_id])
-        plan = AgentPlan(
-            goal="尝试越权",
-            steps=[
-                PlanStep(tool="system.shell", arguments={"cmd": "rm -rf /"}),
-            ],
-        )
-        run = runtime.run(session, "尝试越权", plan_override=plan, role="admin")
+        run = _run_flow(runtime, session, [("system.shell", {"cmd": "rm -rf /"})], request="尝试越权")
         # 运行应失败或工具调用失败
         assert run.status in {RunStatus.FAILED, RunStatus.COMPLETED}
         # 无论如何，shell 调用必须失败
@@ -576,15 +511,11 @@ class TestFullAgentFlow:
             assert call.status == "failed", f"未注册工具 {call.tool} 不应成功"
 
     def test_agent_planner_rule_based_for_full_flow(self, env, two_datasets):
-        """规则 Planner 也能为"合并 + 训练"类请求生成合法计划。"""
+        """确定性 playbook 也能为「合并 + 训练」类请求生成合法计划（零 LLM）。"""
         sales_id = two_datasets["sales_id"]
-        builder = ContextBuilder(env["engine"])
-        context = builder.build(
-            "训练一个分类模型预测客户等级", dataset_ids=[sales_id]
-        )
-        planner = AgentPlanner(None)  # 无 LLM
-        plan = planner.build_plan("训练一个分类模型", context, TOOL_REGISTRY.list())
-        tools = [s.tool for s in plan.steps]
+        from app.agent import playbooks
+        plan = playbooks.select_playbook("训练一个分类模型", None, [sales_id]).actions
+        tools = [a.tool for a in plan]
         assert "dataset.inspect" in tools
         assert "ml.detect_task" in tools or "ml.train" in tools
         registry_names = set(TOOL_REGISTRY.names())
@@ -596,23 +527,7 @@ class TestFullAgentFlow:
         sales_id = two_datasets["sales_id"]
         runtime = AgentRuntime(env["engine"], db=env["db"])
         session = runtime.create_session(user_id="u", dataset_ids=[sales_id])
-        runtime.run(
-            session,
-            "查看数据",
-            plan_override=AgentPlan(
-                goal="查看",
-                steps=[PlanStep(tool="dataset.inspect", arguments={"dataset_id": sales_id})],
-            ),
-            role="admin",
-        )
-        runtime.run(
-            session,
-            "分析统计",
-            plan_override=AgentPlan(
-                goal="分析",
-                steps=[PlanStep(tool="dataset.profile", arguments={"dataset_id": sales_id})],
-            ),
-            role="admin",
-        )
+        _run_flow(runtime, session, [("dataset.inspect", {"dataset_id": sales_id})], request="查看数据")
+        _run_flow(runtime, session, [("dataset.profile", {"dataset_id": sales_id})], request="分析统计")
         user_msgs = [h for h in session.history if h["role"] == "user"]
         assert len(user_msgs) >= 2

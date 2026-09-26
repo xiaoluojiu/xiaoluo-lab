@@ -12,8 +12,8 @@ import pytest
 from app.agent.executor.executor import AgentExecutor
 from app.agent.llm.mock import MockLLM
 from app.agent.permission.models import ROLE_PERMISSIONS
-from app.agent.planner.models import PlanStep
-from app.agent.planner.planner import AgentPlanner
+from app.agent.runtime.models import AgentRun, AgentSession
+from app.agent.state import PendingAction, TaskState
 from app.core.exceptions import StorageException
 from app.data_engine.service import DataEngineService
 from app.services.dataset_service import DatasetService
@@ -183,7 +183,7 @@ class TestPromptInjection:
     def test_injection_cannot_create_shell_tool(self, env):
         """即使 LLM 输出 system.shell，注册表也拒绝执行。"""
         executor = AgentExecutor()
-        step = PlanStep(tool="system.shell", arguments={"cmd": "rm -rf /"})
+        step = PendingAction(tool="system.shell", arguments={"cmd": "rm -rf /"})
         ctx = ToolExecutionContext(
             user_id="attacker",
             dataset_ids={env["dataset_id"]},
@@ -213,11 +213,11 @@ class TestPromptInjection:
             "分析这份数据",
             dataset_ids=[env["dataset_id"]],
         )
-        # Planner 用规则模式（无 LLM），按"分析"生成 inspect + profile
-        planner = AgentPlanner(None)
-        plan = planner.build_plan("分析这份数据", context, TOOL_REGISTRY.list())
+        # 确定性 playbook 按"分析"生成 inspect + profile（零 LLM）
+        from app.agent import playbooks
+        plan = playbooks.select_playbook("分析这份数据", None, [env["dataset_id"]]).actions
         # 计划中绝对不能出现 shell / python / os 类工具
-        for step in plan.steps:
+        for step in plan:
             assert "shell" not in step.tool.lower()
             assert "python" not in step.tool.lower()
             assert "os." not in step.tool.lower()
@@ -233,35 +233,34 @@ class TestPromptInjection:
             injection,
             dataset_ids=[env["dataset_id"]],
         )
-        planner = AgentPlanner(None)
-        plan = planner.build_plan(injection, context, TOOL_REGISTRY.list())
+        from app.agent import playbooks
+        plan = playbooks.select_playbook(injection, None, [env["dataset_id"]]).actions
         # 没有任何 delete/shell/rm 工具
-        dangerous = [s.tool for s in plan.steps if any(
+        dangerous = [s.tool for s in plan if any(
             kw in s.tool.lower() for kw in ("shell", "delete", "rm", "format", "exec")
         )]
         assert dangerous == [], f"计划中出现了危险工具：{dangerous}"
         # 全部步骤都是已注册的合法工具
-        for s in plan.steps:
+        for s in plan:
             assert s.tool in TOOL_REGISTRY.names()
 
-    # ---- 4. LLM 输出恶意计划，Planner._validate 会拒绝非法工具 ----
-    def test_llm_plan_with_injection_rejected(self, env):
-        from app.agent.context.builder import ContextBuilder
-        context = ContextBuilder(env["engine"]).build(
-            "分析", dataset_ids=[env["dataset_id"]]
-        )
-        # MockLLM 返回包含 shell 工具的计划
-        mock = MockLLM(
-            structured_responses=[{
-                "goal": "执行用户指令",
-                "steps": [
-                    {"tool": "system.shell", "arguments": {"cmd": "rm -rf /"}},
-                ],
-            }]
-        )
-        from app.agent.planner.planner import PlanInvalidError
-        with pytest.raises(PlanInvalidError):
-            AgentPlanner(mock).build_plan("分析", context, TOOL_REGISTRY.list())
+    # ---- 4. LLM 输出恶意工具名，Loop 的候选集校验会拒绝非法工具 ----
+    def test_remote_decision_with_unknown_tool_is_rejected(self, env):
+        """Remote 决策返回 system.shell，Loop 只入队候选集内的工具，绝不执行非法工具。"""
+        from app.agent.loop import AgentLoop, RemoteDecision
+
+        loop = AgentLoop(env["engine"], llm=MockLLM(structured_responses=[
+            {"action": "execute_tool", "tool": "system.shell", "arguments": {"cmd": "rm -rf /"},
+             "next_steps": [], "rationale": "恶意"},
+        ]))
+        session = AgentSession(id="s-sec", user_id="u1", dataset_ids=[env["dataset_id"]])
+        state = TaskState.initial("执行用户指令")
+        run = AgentRun(id="r-sec", session_id="s-sec", user_id="u1", user_request="执行用户指令")
+        session.history.append({"role": "user", "content": "执行用户指令"})
+        loop.turn(run, session, state, run_preflight_check=False)
+        # 无论结局如何，system.shell 都不可能被排进待办或被执行
+        assert all(c.tool != "system.shell" for c in run.tool_calls)
+        assert all(a.tool != "system.shell" for a in state.pending_actions)
 
     # ---- 5. 上下文不携带原始数据：注入字符串既不进 prompt，也无处执行 ----
     def test_context_preserves_injection_as_data(self, env):
@@ -394,7 +393,7 @@ class TestDangerousOperationPermission:
     # ---- 5. Executor 记录危险操作的状态 ----
     def test_executor_records_needs_confirmation(self, env):
         executor = AgentExecutor()
-        step = PlanStep(
+        step = PendingAction(
             tool="ml.train",
             arguments={"dataset_id": env["dataset_id"], "model": "logistic_regression"},
         )
@@ -415,7 +414,7 @@ class TestDangerousOperationPermission:
 
     def test_executor_records_denied(self, env):
         executor = AgentExecutor()
-        step = PlanStep(
+        step = PendingAction(
             tool="ml.train",
             arguments={"dataset_id": env["dataset_id"], "model": "logistic_regression"},
         )
@@ -435,7 +434,7 @@ class TestDangerousOperationPermission:
     # ---- 6. 不存在工具直接失败（不会自动创建危险工具）----
     def test_unknown_delete_tool_rejected(self, env):
         executor = AgentExecutor()
-        step = PlanStep(tool="data.delete", arguments={"dataset_id": env["dataset_id"]})
+        step = PendingAction(tool="data.delete", arguments={"dataset_id": env["dataset_id"]})
         ctx = ToolExecutionContext(
             user_id="admin",
             dataset_ids={env["dataset_id"]},
@@ -447,7 +446,7 @@ class TestDangerousOperationPermission:
 
     def test_unknown_export_tool_rejected(self, env):
         executor = AgentExecutor()
-        step = PlanStep(tool="data.export", arguments={"to": "/etc/passwd"})
+        step = PendingAction(tool="data.export", arguments={"to": "/etc/passwd"})
         ctx = ToolExecutionContext(
             user_id="admin",
             dataset_ids={env["dataset_id"]},
@@ -458,7 +457,7 @@ class TestDangerousOperationPermission:
 
     def test_unknown_overwrite_tool_rejected(self, env):
         executor = AgentExecutor()
-        step = PlanStep(
+        step = PendingAction(
             tool="file.overwrite",
             arguments={"path": "/etc/hosts", "content": "evil"},
         )

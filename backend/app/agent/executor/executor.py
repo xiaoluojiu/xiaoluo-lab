@@ -7,7 +7,7 @@ import time
 from typing import Any
 
 from app.agent.clarify import ClarificationRequired
-from app.agent.planner.models import PlanStep
+from app.agent.state import PendingAction
 from app.tools.base import ToolConfirmationRequired, ToolPermissionError, ToolServices
 from app.tools.context import ToolExecutionContext
 from app.tools.registry import TOOL_REGISTRY, ToolRegistry
@@ -103,7 +103,7 @@ class AgentExecutor:
     def __init__(self, registry: ToolRegistry | None = None) -> None:
         self.registry = registry or TOOL_REGISTRY
 
-    def execute_step(self, step: PlanStep, context: ToolExecutionContext, services: ToolServices, *, confirmed: bool = False, attempt: int = 1, step_index: int = 0) -> ToolCallRecord:
+    def execute_step(self, step: PendingAction, context: ToolExecutionContext, services: ToolServices, *, confirmed: bool = False, attempt: int = 1, step_index: int = 0) -> ToolCallRecord:
         record = ToolCallRecord(step_index=step_index, tool=step.tool, arguments=dict(step.arguments), attempt=attempt)
         try:
             tool = self.registry.get(step.tool)

@@ -466,6 +466,11 @@ def handle_missing(
             },
         )
 
+    # ★ 区分「显式指定列」与「隐式全列」：均值/中位数只对数值列有意义。
+    #   - 显式指定字符串列用 mean/median → 报错（调用方选错了策略）；
+    #   - 未指定 columns（对所有列应用）→ 跳过字符串列（字符串缺失本该用 mode/constant）。
+    explicit_columns = columns is not None
+
     columns = _resolve_columns(
         df,
         columns,
@@ -495,13 +500,15 @@ def handle_missing(
 
         if strategy in ("mean", "median"):
             if not dtype.is_numeric():
-                raise TransformError(
-                    f"strategy {strategy!r} only applies to numeric columns",
-                    details={
-                        "column": column,
-                        "dtype": str(dtype),
-                    },
-                )
+                if explicit_columns:
+                    raise TransformError(
+                        f"strategy {strategy!r} only applies to numeric columns",
+                        details={
+                            "column": column,
+                            "dtype": str(dtype),
+                        },
+                    )
+                continue  # 隐式全列：跳过字符串列
 
             fill_value = (
                 col.mean()

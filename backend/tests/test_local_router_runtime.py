@@ -418,7 +418,7 @@ def test_trace_survives_router_failure(shadow_env, monkeypatch):
     def _boom(*_args, **_kwargs):
         raise RuntimeError("模拟模型加载失败")
 
-    monkeypatch.setattr(R, "route_request", _boom)
+    monkeypatch.setattr(R, "route_request_detailed", _boom)
     T.shadow_route(run_id="r-9", session_id="s-9", request=_req(),
                    rules_mode="chat", rules_reason="未命中数据任务关键词")
     records = list(T.iter_records())
@@ -440,7 +440,7 @@ def test_runtime_hooks_swallow_everything():
     """
     from app.agent.runtime.runtime import AgentRuntime
 
-    AgentRuntime._trace_route(None, None, None, "agent", "reason")  # type: ignore[arg-type]
+    AgentRuntime._trace_route(None, None, None)  # type: ignore[arg-type]
     AgentRuntime._trace_outcome(None, None, None)  # type: ignore[arg-type]
 
 

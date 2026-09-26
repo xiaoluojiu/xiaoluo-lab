@@ -161,6 +161,8 @@ class Settings(BaseSettings):
     AGENT_TOOL_RETRIEVAL_TOP_K: int = 16
     AGENT_TOOL_RETRIEVAL_MIN_SCORE: float = 0.08
     AGENT_ENABLE_RESULT_COMPRESSION: bool = True
+    # 已废弃（统一 Agent Loop 无 plan cache）：保留字段仅为兼容前端设置页与场景脚本，
+    # 不再被任何运行期代码消费。
     AGENT_ENABLE_PLAN_CACHE: bool = True
     AGENT_PLAN_CACHE_MAX_ITEMS: int = 64
     # 第一层改造：规划前的 Pre-flight 检查。关闭后行为与改造前一致（直接规划）。
