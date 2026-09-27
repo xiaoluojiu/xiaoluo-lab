@@ -37,6 +37,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import tempfile
 from collections.abc import Iterator
@@ -45,7 +46,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import polars as pl
-from sqlalchemy import func, select
+from sqlalchemy import delete as sql_delete
+from sqlalchemy import func, or_, select
+from sqlalchemy import update as sql_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -62,7 +65,11 @@ from app.data_engine.cache import (
 )
 from app.models.dataset import Dataset
 from app.models.dataset_version import DatasetVersion
+from app.models.experiment import Experiment
+from app.models.operation import Operation
 from app.storage.service import StorageService
+
+logger = logging.getLogger(__name__)
 
 # 是否启用版本快照缓存。DatasetVersion 不可变，因此缓存不会失效，只需淘汰。
 _VERSION_CACHE_ENABLED = True
@@ -906,30 +913,143 @@ class DatasetService:
     def delete(
         self,
         dataset_id: int,
-    ) -> None:
-        """删除 Dataset 及其版本快照。"""
+    ) -> dict[str, int]:
+        """删除 Dataset 及其全部依赖数据，返回被清理的行数。
 
-        self.get(dataset_id)
+        为什么不能只 ``self.db.delete(dataset)`` 了事：``delete-orphan`` 级联只覆盖
+        ``DatasetVersion``，而版本行**还被另外三处引用**，其中两处从未被清理：
 
-        prefix = (
-            f"datasets/{dataset_id}/"
-        )
+        ``operations.input_version_id`` / ``operations.output_version_id``、
+        ``experiments.dataset_version_id``、以及 ``dataset_versions.parent_version_id``
+        这个**自引用**（v2.parent = v1）。SQLite 的外键是即时约束，删父版本时子版本
+        还在，或删版本时实验/操作还在，都会抛 ``FOREIGN KEY constraint failed``。
 
-        metadata = list(
-            self.storage.list(
-                prefix
+        依赖顺序（缺一即复现线上 500）：
+
+        1. ``experiments``：实验（其 ``experiment_runs`` 由 ORM 级联删除，顺带清理产物文件）
+        2. ``operations``：操作审计行（输入/输出任一版本属于本数据集）
+        3. ``dataset_versions``：**先置空** ``parent_version_id`` 断开自引用，再整体删除
+        4. ``datasets`` 本体（``db_connectors.dataset_id`` 由 DDL 的
+           ``ON DELETE SET NULL`` 自动置空）
+
+        另：快照文件的删除放在**提交之后**。旧实现先删文件再提交，一旦提交失败就留下
+        「数据集仍在列表里、Parquet 已被删掉」的幽灵数据集——且每次重试都仍然 500，
+        用户看到的就是本数据集反复删除失败。
+        """
+
+        dataset = self.get(dataset_id)
+
+        version_ids = list(
+            self.db.scalars(
+                select(DatasetVersion.id).where(
+                    DatasetVersion.dataset_id == dataset_id
+                )
             )
         )
 
-        for item in metadata:
-            self.storage.delete(
-                item.key
-            )
+        # ---- 1) 关联实验（含 run 与产物文件）----
+        exp_conditions = [Experiment.dataset_id == dataset_id]
+        if version_ids:
+            exp_conditions.append(Experiment.dataset_version_id.in_(version_ids))
 
-        self.db.delete(
-            self.get(dataset_id)
+        experiments = list(
+            self.db.scalars(select(Experiment).where(or_(*exp_conditions)))
         )
+
+        deleted_runs = 0
+
+        for experiment in experiments:
+            for run in experiment.runs:
+                deleted_runs += 1
+                artifacts = run.artifacts or {}
+                for key_name in ("model_key", "pipeline_key"):
+                    key = artifacts.get(key_name)
+                    if isinstance(key, str) and key:
+                        try:
+                            self.storage.delete(key)
+                        except Exception:  # noqa: BLE001 - 产物清理失败不阻断删除
+                            logger.warning(
+                                "experiment artifact cleanup failed dataset_id=%s "
+                                "experiment_id=%s key=%s",
+                                dataset_id,
+                                experiment.id,
+                                key,
+                            )
+            # ORM 级联会一并删除 experiment_runs
+            self.db.delete(experiment)
+
+        # ⚠️ 必须显式 flush：本项目的 Session 是 ``autoflush=False``，
+        # 只 mark delete 不会真正把 DELETE 发给数据库。若不 flush，下一步删
+        # dataset_versions 时实验行还在库里，外键照样拦。
+        if experiments:
+            self.db.flush()
+
+        # ---- 2) 操作审计行 ----
+        op_conditions = [Operation.dataset_id == dataset_id]
+        if version_ids:
+            op_conditions.append(Operation.input_version_id.in_(version_ids))
+            op_conditions.append(Operation.output_version_id.in_(version_ids))
+
+        deleted_operations = int(
+            self.db.scalar(
+                select(func.count())
+                .select_from(Operation)
+                .where(or_(*op_conditions))
+            )
+            or 0
+        )
+        self.db.execute(sql_delete(Operation).where(or_(*op_conditions)))
+
+        # ---- 3) 版本行：先断开自引用（v2.parent -> v1），否则删 v1 时 v2 仍指着它 ----
+        if version_ids:
+            self.db.execute(
+                sql_update(DatasetVersion)
+                .where(DatasetVersion.dataset_id == dataset_id)
+                .values(parent_version_id=None)
+            )
+        self.db.execute(
+            sql_delete(DatasetVersion).where(
+                DatasetVersion.dataset_id == dataset_id
+            )
+        )
+
+        # ---- 4) 数据集本体 ----
+        self.db.delete(dataset)
         self.db.commit()
+
+        # ---- 5) 提交成功后再清理快照文件（失败也只留孤儿文件，不会留幽灵数据集）----
+        deleted_objects = 0
+        prefix = f"datasets/{dataset_id}/"
+        try:
+            for item in list(self.storage.list(prefix)):
+                self.storage.delete(item.key)
+                deleted_objects += 1
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "dataset snapshot cleanup failed dataset_id=%s; "
+                "database rows are already removed",
+                dataset_id,
+                exc_info=True,
+            )
 
         # 数据集已删除：清理其全部版本缓存，避免内存残留与 id 复用时的脏读。
         self.cache.invalidate_dataset(dataset_id)
+
+        logger.info(
+            "dataset deleted dataset_id=%s versions=%s operations=%s "
+            "experiments=%s runs=%s objects=%s",
+            dataset_id,
+            len(version_ids),
+            deleted_operations,
+            len(experiments),
+            deleted_runs,
+            deleted_objects,
+        )
+
+        return {
+            "deleted_versions": len(version_ids),
+            "deleted_operations": deleted_operations,
+            "deleted_experiments": len(experiments),
+            "deleted_runs": deleted_runs,
+            "deleted_storage_objects": deleted_objects,
+        }

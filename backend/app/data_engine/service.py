@@ -580,8 +580,11 @@ class DataEngineService:
         except TransformError:
             raise
         except Exception as exc:
+            # 只写「operation 'filter' failed」等于什么都没说：用户和模型都拿不到
+            # 真正的原因（实测：conditions 传成了字符串，报错却只有这一句，
+            # 答案只能回「换个说法重试」）。把底层原因带上。
             raise TransformError(
-                f"operation {op_type!r} failed",
+                f"operation {op_type!r} failed: {exc}",
                 details={
                     "op_type": op_type,
                     "error": str(exc),

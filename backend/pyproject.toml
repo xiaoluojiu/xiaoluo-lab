@@ -34,15 +34,10 @@ db = [
     "psycopg[binary]>=3.1",  # PostgreSQL
     "pymysql>=1.1",          # MySQL / MariaDB
 ]
-# 本地意图路由模型（Qwen3-0.6B + LoRA）。**严格可选**：
-# 不安装时 app/local_router 自动降级到词法 L1 + L0 规则，主链路功能完全不受影响。
-# 这也是有意为之——默认部署不该被迫背 2GB 的 torch。
-#   pip install -e ".[router]"
-router = [
-    "torch>=2.4",
-    "transformers>=4.45",
-    "peft>=0.13",
-]
+# 旧的本地意图路由模型（Qwen3-0.6B + LoRA）随 Agent 后端重构删除，
+# 其可选依赖组一并移除：app/local_router 已不存在，装了也没人用。
+# 默认部署不再需要背 2GB 的 torch —— 新架构的路由是关键词表，零依赖零 Token。
+# （backend/scripts/router/ 下的训练脚本如仍需运行，请手动装 torch/transformers/peft。）
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

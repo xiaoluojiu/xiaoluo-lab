@@ -22,7 +22,7 @@ import logging
 import re
 from typing import Any
 
-from app.agent.llm.base import LLMMessage, LLMProvider
+from app.agent.llm import LLMMessage, LLMProvider
 from app.core.config import settings
 from app.reports.numbering import (
     CHAPTERS,

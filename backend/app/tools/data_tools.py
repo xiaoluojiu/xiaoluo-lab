@@ -1,7 +1,11 @@
 """Prompt 098-102：Data 修改类工具。
 
-data.filter / data.clean / data.transform / data.aggregate / data.merge。
-全部通过 DataEngineService 执行（产生新版本），工具自身不触碰 DataFrame。
+data.filter / data.clean / data.transform / data.merge 通过 DataEngineService
+执行（产生新版本），工具自身不触碰 DataFrame。
+
+例外是 data.aggregate：它是**只读统计**，就地算完直接回结果，不产生新版本
+（详见该类文档串里记的事故）。
+
 data.merge 强制走 Plan -> Validate -> Permission -> Execute 流程。
 """
 
@@ -9,9 +13,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.data_engine.operations import aggregate
 from app.tools.base import Tool, ToolServices
 from app.tools.context import ToolExecutionContext
 from app.tools.result import ToolResult
+
+#: 聚合结果最多回传多少行。分组基数很高时（按用户 id 分组）不必把几万行塞进答案，
+#: 总数由 ``rows`` 字段如实给出。
+_AGG_RESULT_ROWS = 50
 
 
 class _DataOpTool(Tool):
@@ -40,14 +49,29 @@ class _DataOpTool(Tool):
             op_params,
             input_version=int(input_version) if input_version else None,
         )
+        data: dict[str, Any] = {
+            "dataset_id": dataset_id,
+            "new_version": version.version,
+            "rows": version.row_count,
+            "columns": version.column_count,
+            # 回执实际应用的操作参数：否则 AI 只能回「本次未获取筛选条件/聚合配置」，
+            # 无法向用户确认「确实按你说的执行了」。
+            "params": op_params,
+        }
+        # 聚合/转换/筛选这类「产出新数据」的操作，回执结果前几行，
+        # 否则聚合出的各分组数值永远到不了用户眼前（只能看到「生成了 30 行 × 2 列」）。
+        try:
+            ds = services.require("dataset_service")
+            out_df = ds.load_version(dataset_id, version.version)
+            data["preview"] = out_df.head(10).to_dicts()
+        except Exception:  # noqa: BLE001 - 预览是锦上添花，失败不阻断
+            pass
         return ToolResult.ok(
-            {
-                "dataset_id": dataset_id,
-                "new_version": version.version,
-                "rows": version.row_count,
-                "columns": version.column_count,
-            },
-            summary=f"操作 {self.op_type} 完成，生成版本 v{version.version}",
+            data,
+            summary=(
+                f"操作 {self.op_type} 完成，生成版本 v{version.version}"
+                f"（{version.row_count} 行 × {version.column_count} 列）"
+            ),
         )
 
 
@@ -61,12 +85,17 @@ class DataFilterTool(_DataOpTool):
             "version": {"type": "integer"},
             "conditions": {
                 "type": "array",
+                "description": "筛选条件列表，每个条件用 column/op/value 三个键表达",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "column": {"type": "string"},
-                        "op": {"type": "string"},
-                        "value": {},
+                        "column": {"type": "string", "description": "要筛选的列名，必须是数据集的真实列名"},
+                        "op": {
+                            "type": "string",
+                            "enum": ["eq", "neq", "gt", "gte", "lt", "lte", "contains", "in", "is_null"],
+                            "description": "比较运算符：eq=等于、neq=不等于、gt=大于、gte=大于等于、lt=小于、lte=小于等于、contains=包含子串、in=在集合中、is_null=为空",
+                        },
+                        "value": {"description": "比较值，数字直接写数字，字符串写字符串；is_null 不需要 value"},
                     },
                     "required": ["column", "op"],
                 },
@@ -134,9 +163,19 @@ class DataCleanTool(Tool):
             steps.append(f"deduplicate->v{v.version}")
         if not versions:
             return ToolResult.fail("未提供任何清洗步骤（missing/deduplicate）")
+        # 回执最终版本的行数：用户问「清洗后还剩多少行」时 AI 才有据可答，
+        # 否则只能回「本次未获取行数」。
+        rows = None
+        try:
+            ds = services.require("dataset_service")
+            row = ds.get_version_row(dataset_id, versions[-1])
+            if row is not None:
+                rows = int(row.row_count)
+        except Exception:  # noqa: BLE001 - 行数是回执，读不到不阻断
+            pass
         return ToolResult.ok(
-            {"dataset_id": dataset_id, "versions": versions},
-            summary=f"清洗完成：{', '.join(steps)}",
+            {"dataset_id": dataset_id, "versions": versions, "rows": rows},
+            summary=f"清洗完成：{', '.join(steps)}" + (f"（{rows} 行）" if rows is not None else ""),
         )
 
 
@@ -148,11 +187,15 @@ class DataTransformTool(_DataOpTool):
         "properties": {
             "dataset_id": {"type": "integer"},
             "version": {"type": "integer"},
-            "name": {"type": "string", "description": "新增/覆盖的列名"},
+            "name": {"type": "string", "description": "新增/覆盖的列名，不能与已有列重名"},
             "expression": {
                 "type": "object",
                 "description": (
-                    "结构化表达式：{'type': 'column'|'value'|'math'|'date_part', ...}"
+                    "结构化表达式。常见形态："
+                    "①直接引用列 {'type':'column','column':'真实列名'}；"
+                    "②常量 {'type':'value','value':123}；"
+                    "③二元运算 {'type':'math','op':'add|sub|mul|div','left':{操作数},'right':{操作数}}；"
+                    "④一元运算 {'type':'math','op':'abs|neg','args':[{操作数}]}（abs=绝对值）。"
                 ),
             },
             "overwrite": {"type": "boolean", "default": False},
@@ -162,20 +205,155 @@ class DataTransformTool(_DataOpTool):
     op_type = "transform"
 
 
-class DataAggregateTool(_DataOpTool):
+class DataAggregateTool(Tool):
+    """分组聚合统计（**只读**）。
+
+    ★ 这里曾经继承 ``_DataOpTool``，于是把 7 行 × 2 列的聚合结果**写成了数据集
+      的新版本**——而新版本即 latest。用户问完「按 purpose 分组求 credit_amount
+      的平均值」，他 1220 行 × 14 列的数据集就变成了一张分组小表，接着问的每一
+      句（相关性/质量检查/age 的分布）都跑在这张废表上：
+         · eda.correlation 报「至少需要 2 个数值字段」（明明有 7 个数值列）
+         · dataset.quality 回答「共 7 行、2 列」
+         · 点名 age，槽位抽取器从 latest 的列名里只能挑到 purpose
+      聚合是**看数字**，不是**改数据**：就地算完直接把结果回给用户，数据集不动。
+    """
+
     name = "data.aggregate"
-    description = "分组聚合统计（count/sum/mean/median/min/max/std）。"
+    description = "分组聚合统计（count/sum/mean/median/min/max/std），只返回统计结果，不改动数据集。"
+    category = "data"
+    permission = "analyze_data"
+    risk_level = "low"
     input_schema = {
         "type": "object",
         "properties": {
             "dataset_id": {"type": "integer"},
             "version": {"type": "integer"},
-            "group_by": {"type": "array", "items": {"type": "string"}},
-            "aggregations": {"type": "array", "items": {"type": "object"}},
+            "group_by": {"type": "array", "items": {"type": "string"}, "description": "分组列名列表"},
+            "aggregations": {
+                "type": "array",
+                "description": "聚合配置列表，每个用 column+func 两个键表达（func 是聚合函数）",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "column": {"type": "string", "description": "要聚合的列名"},
+                        "func": {
+                            "type": "string",
+                            "enum": ["count", "sum", "mean", "median", "min", "max", "std"],
+                            "description": "聚合函数：mean=平均值、sum=求和、count=计数、median=中位数、min/max=最小/最大、std=标准差",
+                        },
+                    },
+                    "required": ["column", "func"],
+                },
+            },
         },
         "required": ["dataset_id", "group_by", "aggregations"],
     }
-    op_type = "aggregate"
+    def execute(self, params: dict[str, Any], context: ToolExecutionContext, services: ToolServices) -> ToolResult:
+        # 聚合配置的形状很松（槽位抽取既可能给 {"column","func"}，也可能给
+        # {"credit_amount": "mean"}），缺 func 时直接往下传只会得到
+        # 「unsupported aggregation func: None」—— 用户看到的是一次毫无意义的失败。
+        params = _normalize_aggregations(params)
+        ds = services.require("dataset_service")
+        dataset_id = int(params["dataset_id"])
+        self.assert_dataset_access(context, dataset_id)
+        version = params.get("version")
+        df = ds.load_version(dataset_id, int(version) if version else None)
+        group_by = [str(c) for c in (params.get("group_by") or []) if c]
+        aggregations = params.get("aggregations") or []
+        if not aggregations:
+            # ★「按 Contract 分组统计」没说聚合什么。此前链路挂起反问
+            #   「要对哪些列做什么聚合？」且一个候选都不给，用户改口后再问一遍
+            #   （Telco 压测实测）。分组计数是「统计」最自然的默认。
+            aggregations = [{"column": group_by[0], "func": "count"}]
+            defaulted = True
+        else:
+            defaulted = False
+        # ★ 非数值列配 mean 会直接抛
+        #   「aggregation func 'mean' only applies to numeric columns」
+        #   （「按 Contract 分组统计流失率」里 Churn 是 Yes/No，实测踩到）。
+        #   这里按列类型纠偏成计数，并把这次改动留痕。
+        retuned: list[str] = []
+        fixed_aggs: list[dict[str, Any]] = []
+        for item in aggregations:
+            if not isinstance(item, dict):
+                fixed_aggs.append(item)
+                continue
+            column = str(item.get("column") or "")
+            func = str(item.get("func") or "")
+            if column in df.columns and not df.schema[column].is_numeric() and func != "count":
+                retuned.append(f"{column} 是非数值列，{func} 改为 count")
+                item = {**item, "func": "count"}
+            fixed_aggs.append(item)
+        aggregations = fixed_aggs
+        out = aggregate(df, group_by=group_by, aggregations=aggregations)
+        preview = out.head(_AGG_RESULT_ROWS).to_dicts()
+        return ToolResult.ok(
+            {
+                "dataset_id": dataset_id,
+                "rows": int(out.height),
+                "columns": int(out.width),
+                # 回执实际应用的操作参数：否则答案说不出「确实按你说的分组算了」
+                "params": {"group_by": group_by, "aggregations": aggregations},
+                "preview": preview,
+            },
+            summary=(
+                f"聚合完成：{out.height} 行 × {out.width} 列"
+                + ("（未指定聚合方式，默认按分组计数）" if defaulted else "")
+                + ("；" + "；".join(retuned) if retuned else "")
+                + "（统计结果，数据集未改动）"
+            ),
+        )
+
+
+#: 合法的聚合函数（与 ``data_engine.operations.AGG_FUNCTIONS`` 同口径）
+_ALLOWED_AGG_FUNCS = ("count", "sum", "mean", "median", "min", "max", "std")
+#: 中文说法 → 标准函数名。槽位抽取常常原样带回「平均值」「笔数」这类词。
+_AGG_FUNC_ALIASES = {
+    "平均值": "mean", "均值": "mean", "平均": "mean", "mean": "mean",
+    "求和": "sum", "总和": "sum", "合计": "sum", "sum": "sum",
+    "计数": "count", "笔数": "count", "数量": "count", "个数": "count", "条数": "count", "count": "count",
+    "中位数": "median", "median": "median",
+    "最大值": "max", "最大": "max", "max": "max",
+    "最小值": "min", "最小": "min", "min": "min",
+    "标准差": "std", "std": "std",
+}
+
+
+def _normalize_aggregations(params: dict[str, Any]) -> dict[str, Any]:
+    """把聚合配置补成 ``{"column": ..., "func": ...}``。
+
+    能接受的三种输入：
+    - ``{"column": "credit_amount", "func": "mean"}``（标准形）
+    - ``{"credit_amount": "mean"}``（抽取模型最常给的单键形）
+    - 缺 func / func 是中文说法（``{"column": "x", "func": "平均值"}``）
+
+    补不出来的项直接丢弃——留下它只会让引擎抛一句用户看不懂的错。
+    """
+    items = params.get("aggregations")
+    if not isinstance(items, list):
+        return params
+
+    fixed: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict) or not item:
+            continue
+        column = item.get("column")
+        func = item.get("func")
+        if column is None and func is None and len(item) == 1:
+            # 单键形：{"credit_amount": "mean"} —— 抽取模型最常给的形态
+            column, func = next(iter(item.items()))
+        func = _AGG_FUNC_ALIASES.get(str(func).strip().lower(), str(func).strip().lower())
+        if func not in _ALLOWED_AGG_FUNCS:
+            # 没写函数：有点名列 → 求均值（最常见的诉求）；连列都没有 → 计数
+            func = "mean" if column else "count"
+        if not column:
+            continue
+        fixed.append({"column": str(column), "func": func})
+
+    if not fixed:
+        # 一个都没救回来：原样交回，让必填槽位/引擎给出它自己的错误
+        return params
+    return {**params, "aggregations": fixed}
 
 
 # 常见的外键后缀（维度表主键），用于「事实表外键 = <前缀> + <维度主键名>」的识别。

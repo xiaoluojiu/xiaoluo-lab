@@ -18,7 +18,7 @@
 - **本地优先**：数据与实验产物（数据集版本、模型、报告）存储在本地文件系统与本地数据库，避免数据外流。
 - **可服务器部署**：提供 Docker 化部署方案，支持多用户访问。
 - **面向教学**：覆盖数据处理 / 分析 / 建模 / Agent 编排 / 工作流 / 实验对比的完整链路，支持中文实验报告自动生成（Markdown / HTML / PDF）。
-- **AI 编排**：内置统一 Stateful Agent Loop（Observe → Decide → Execute/CHAT/Ask/Escalate → Update），通过工具注册表与权限管理编排数据分析任务，三层资源调度（确定性工具 / 本地 Router / Remote 按需升级）。
+- **AI 编排**：Agent 采用「规则意图路由 → 固定 playbook（工具链写死）→ 有界执行 → 模板/LLM 渲染」四段式，通过工具注册表与权限管理编排数据分析任务。**默认零 Token**：未配置 LLM Key 时全链路照常可用。
 - **可复现**：所有数据操作产生不可变版本快照，所有实验绑定具体版本快照与随机种子。
 - **安全可控**：Agent 无 shell/eval/exec 通道，所有工具调用经 TOOL_REGISTRY；存储层防路径穿越；按角色与风险等级授权。
 
@@ -31,7 +31,7 @@
 | 智能合并 | Schema 映射建议、Join Key 分析、MergePlan 计划与执行分离、合并前强制校验 |
 | 探索性分析 (EDA) | 描述统计、分布分析、相关性分析、异常值检测、可视化 |
 | 机器学习 | 11 个内置模型（分类 / 回归 / 聚类 / 降维），统一 ModelAdapter 接口，自动任务识别与模型选择，sklearn Pipeline 预处理（防数据泄漏） |
-| Agent 系统 | 统一 Stateful Loop 增量决策、确定性 playbook、权限裁决、工具执行、结果校验、失败三策略、动态复杂度，带硬限制防无限循环 |
+| Agent 系统 | 规则意图路由（零 Token）+ 固定 playbook 工具链 + 权限裁决 + 有界执行（8 步 / 4 次 LLM / 300 秒）+ 模板渲染；无重规划循环，未配 Key 也能完整运行 |
 | 工作流 | DAG 工作流引擎，节点拓扑执行、失败传递跳过、可取消 |
 | 实验 | 实验与数据版本绑定，支持训练运行、指标评估、模型对比、实验删除 |
 | 报告 | 中文实验报告生成器（Markdown / HTML / PDF 渲染，PDF 字体路径可配置） |
@@ -53,10 +53,10 @@
 │  ── 统一异常 / 中间件 / 依赖注入 / 10 个 Router                │
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌──────────┐ │
 │  │ DataEngine │  │  ML Engine │  │   Agent    │  │ Workflow │ │
-│  │ Polars     │  │  scikit-   │  │ AgentLoop │  │  DAG     │ │
-│  │ PyArrow    │  │  learn     │  │ Observe→  │  │  拓扑执行│ │
-│  │ 9 操作     │  │  11 模型   │  │ Decide→   │  │          │ │
-│  │ loaders.py │  │  评估/解释 │  │ Execute   │  │          │ │
+│  │ Polars     │  │  scikit-   │  │ AgentEngine│ │  DAG     │ │
+│  │ PyArrow    │  │  learn     │  │ 规则路由→ │  │  拓扑执行│ │
+│  │ 9 操作     │  │  11 模型   │  │ 固定链路→ │  │          │ │
+│  │ loaders.py │  │  评估/解释 │  │ 模板渲染  │  │          │ │
 │  └────────────┘  └────────────┘  └────────────┘  └──────────┘ │
 │  ┌────────────┐  ┌──────────────────────────────────────────┐ │
 │  │ analysis  │  │ Tool Registry（36 内置工具） / Permission │ │
@@ -88,26 +88,25 @@
 | 部署 | Docker + docker-compose |
 | 本地意图路由（可选） | Qwen3-0.6B + LoRA（torch / transformers / peft，**可选依赖**） |
 
-### 本地意图路由器（可选能力）
+### 意图路由（规则，零 Token）
 
-Agent 的第一层意图理解可以跑一个本地小模型（Qwen3-0.6B + LoRA），
-**它只做意图识别与路由，不执行工具、不做复杂推理、不产出最终回答**：
+Agent 的意图理解是一张**可读、可审计、可增量补充**的关键词表，`backend/app/agent/intents.py`：
 
 ```
-用户 → L0 升级规则 → L1 Qwen 神经路由 →（未命中）L1 词法路由 → 反问规则
-     → RouterDecision → Agent Loop（Observe→Decide→Execute→Update）
-     → Tool Registry → Permission → Executor → Validator → 最终回答
+用户原话 → 关键词打分（强 +3 / 弱 +1，阈值 3）
+     → 命中 → 固定 playbook（工具链写死，不需要模型编排）
+     → 未命中 → 对话兜底（不发起任何 LLM 调用）
+     → 工具链执行 → 权限裁决 → 模板渲染 → 最终回答
 ```
 
-- 三档开关 `LOCAL_ROUTER_MODE`：`off`（默认）/ `shadow`（只记录不改行为）/ `active`。
-- 权重不随仓库分发，放在 `models/` 下即可，路径支持相对与绝对两种写法。
-- 依赖是**可选的**：不装 torch 也能完整运行平台，本地路由自动退回词法模型 + 规则。
-- 模型输出只经 `json.loads` 解析成既有 `RouterDecision`，随后走统一的
-  Agent Loop（决策分层 → Tool Registry → Permission）流程，不存在 `eval` / `exec` 执行路径。
-- 加载失败、JSON 解析失败、推理超时、工具不在注册表、`dataset_id` 幻觉
-  都有明确处置，不会出现空白回复或 SSE 挂死。
+- 代价是「说法没写进关键词表就识别不了」，这是刻意的取舍：
+  关键词表可以读、可以改、可以补，而神经路由器的行为只能靠重新训练改变。
+- 未配置 `LLM_API_KEY` 时全链路照常可用，`token_usage.llm_calls == 0`。
 
-详见 [`backend/docs/LOCAL_ROUTER_QWEN.md`](backend/docs/LOCAL_ROUTER_QWEN.md)。
+> **旧的本地神经路由（`app/local_router/`、Qwen3-0.6B + LoRA）已随本次重构删除。**
+> 它带来的复杂度（三档开关、阈值调优、shadow/guard 模式、权重分发）
+> 与它解决的问题不成比例 —— 一张关键词表就能覆盖数据分析场景的意图空间。
+> `backend/scripts/router/` 下的训练脚本保留为研究产物，已不属于运行时链路。
 
 ---
 
@@ -379,11 +378,15 @@ Agent 路径：`app.agent`，API 路由：`app.api.v1.agent`。
 
 ```
 POST /api/v1/agent/sessions                     # 创建会话（绑定 dataset_ids）
-POST /api/v1/agent/sessions/{id}/messages       # 发送用户请求 → 触发一次 AgentRun
+POST /api/v1/agent/sessions/{id}/messages       # 发送用户请求 → 触发一次 AgentRun（stream=true 走 SSE）
 GET  /api/v1/agent/sessions/{id}/runs           # 列出会话内运行
 GET  /api/v1/agent/runs/{run_id}                # 查看运行详情
-GET  /api/v1/agent/runs/{run_id}/events         # SSE 事件流
-POST /api/v1/agent/runs/{run_id}/resume         # 高风险确认后继续
+GET  /api/v1/agent/runs/{run_id}/trace          # 运行轨迹（Markdown）
+POST /api/v1/agent/runs/{run_id}/confirm        # 高风险确认后继续
+POST /api/v1/agent/runs/{run_id}/deny           # 拒绝授权
+POST /api/v1/agent/runs/{run_id}/clarify        # 补充缺失参数后继续
+POST /api/v1/agent/runs/{run_id}/cancel         # 请求停止
+GET  /api/v1/agent/tools · /capabilities        # 工具目录与能力摘要
 ```
 
 #### 运行链路
@@ -391,25 +394,23 @@ POST /api/v1/agent/runs/{run_id}/resume         # 高风险确认后继续
 ```
 User Request
   ↓
-AgentLoop.turn（统一 Stateful Loop，唯一控制流）
-  ↓ Observe
-ContextBuilder.build（元数据 only，绝不加载 DataFrame）+ 按阶段召回候选工具
-  ↓ Decide（单一分层，每跳带 source/confidence/rationale）
-取消/熔断 → Pre-flight/槽位反问 → 待办队首 → 客观信号 → 本地 Router
-→ 确定性 playbook（建模/工作流/合并/变换/综合分析/质量/EDA/intake）
-→ Remote 结构化升级（RemoteDecision，≤4 步，限次）→ CHAT 动作
-  ↓ Execute
-AgentExecutor.execute_step → TOOL_REGISTRY.execute（强制 PermissionManager.check）
+intents.route（关键词打分：强 +3 / 弱 +1 / 阈值 3，零 LLM）
+  ↓ 命中                                    ↓ 未命中
+playbooks.get_playbook（固定工具链）        render_chat → 直接结束
   ↓
-Permission Decision: ALLOW / DENY / REQUIRE_CONFIRMATION（一次性凭据）
+逐步执行（MAX_STEPS=8），每步：
+  ① _build_params  defaults → 会话 dataset_id → carry → 澄清答案 → 规则/LLM 抽取
+  ② 缺必填         有 fallback 就退化，否则挂起反问（WAITING_CLARIFICATION）
+  ③ PermissionManager.check  DENY 即止 / HIGH·CRITICAL 挂起（WAITING_CONFIRMATION）
+  ④ Tool.execute → 记 ToolCall → 发 tool_call / tool_result / validation
   ↓
-Tool.execute → ToolResult
-  ↓ Update
-AgentResultValidator.validate + 失败三策略（依赖断裂即止/参数错误不重试/瞬时≤2 次）
-+ 熔断（步数/工具数/时长/Token/重规划/2000 事件）+ uncertainty 动态重算
-  ↓ Finish
-确定性结果渲染优先（必要时一次远程总结）→ AgentRun.final_answer
+answer.render 模板渲染（默认）或 LLM 润色（配了 Key 且在预算内才用）
+  ↓
+usage + completed/failed（SSE 帧）
 ```
+
+默认**零 Token**：路由是关键词表、工具链是写死的、答案是模板渲染的。
+LLM 只在两处可选介入 —— 规则读不出必填参数时抽一次、把工具结果润色成自然语言。
 
 #### 工具注册表
 
@@ -589,10 +590,8 @@ xiaoluo-lab/
 │   │   ├── tools/                     # base / registry / builtin / dataset_tools /
 │   │   │                              #   data_tools / eda_tools / ml_tools / workflow_tools /
 │   │   │                              #   report_tools / connector_tools
-│   │   ├── agent/                     # context(budget/tokens) / intent / preflight / clarify /
-│   │   │                              #   planner / permission / executor / validator / runtime
-│   │   ├── local_router/              # 【实验性，默认关闭】contract(生产依赖) +
-│   │   │                              #   model/router/scoring/escalation_rules(仅 shadow 档加载)
+│   │   ├── agent/                     # engine / intents / playbooks / slots / answer /
+│   │   │                              #   models / store / permission / llm / channels
 │   │   ├── workflow/                  # models / validator / executor / service / runners
 │   │   ├── experiments/               # service / comparator
 │   │   └── reports/                   # models / generator / numbering / discovery /
@@ -661,9 +660,18 @@ xiaoluo-lab/
 
 ### 7.5 扩展 Agent 能力
 
-- 新增上下文字段：扩展 `AgentContext`（`app.agent.context.models`）与 `ContextBuilder.build`，注意所有字段都要受控大小（用 `clip_obj` / `clip_text` 截断）。
-- 新增确定性动作链：在 `app.agent.playbooks` 的 `select_playbook` 登记新分支（信号 → PendingAction 队列），复用既有 Executor / Validator / Permission 链路。
-- 新增决策来源：在 `app.agent.loop.AgentLoop._prime` 的分层序列中插入新层，每跳带 source/confidence/rationale。
+新增一个意图要改三处，缺一不可：
+
+1. `app/agent/intents.py` 的 `Intent` 枚举 + `_STRONG` / `_WEAK` 关键词表（要写用户真的会说的说法）。
+2. `app/agent/playbooks.py` 的 `PLAYBOOKS`：给出该意图的固定工具链（`PlaybookStep` 支持
+   `defaults` / `required_slots` / `carry` / `fallback_tool` / `skippable`）。
+   新增必填槽位时同步在 `SLOT_QUESTIONS` 里补中文问法。
+3. `backend/tests/test_playbooks.py` 会校验链条引用的工具在注册表中真实存在 —— 跑一遍测试即可验证。
+
+- 新增工具：在 `app/tools/` 下实现 `Tool` 子类并登记进 `app/tools/builtin.py`。
+  `permission` 与 `risk_level` 的取值必须与 `app/agent/permission.py` 的枚举一致
+  （测试 `test_every_registered_tool_is_reachable_with_full_permissions` 会兜住这一点）。
+- 新增意图路由说法：只改关键词表，不要引入模型 —— 路由零 Token 是硬指标。
 
 ---
 
@@ -682,7 +690,8 @@ xiaoluo-lab/
 
 | 模块 | 状态 | 说明 |
 | --- | --- | --- |
-| `app/local_router/` | **实验性，默认未启用** | `LOCAL_ROUTER_MODE=off`。但该目录**不是死代码**：其中 `contract.py` 的 `Intent` 枚举是 Agent 运行时路由的唯一真源（`app/agent/intent.py`、`app/agent/loop.py` 直接 import）。只有 `model.py` / `router.py` / `scoring.py` 在 `shadow`（只记录不改变行为）或 `guard`（预留档，**尚未实现接管逻辑**）时才被加载。开启前需先跑 `scripts/router/analyze_fusion.py` 选阈值。 |
+| Agent 意图覆盖 | 关键词表驱动 | 只识别写进 `app/agent/intents.py` 的说法；未命中会走对话兜底而不是猜。补充说法只需改关键词表（改完跑 `backend/tests/test_intents.py`）。 |
+| Agent 存储 | 进程内单例 | `AGENT_STORE` 是进程级单例 + JSON 文件，**多 worker 部署下不共享**，须固定 `--workers 1`；SSE 通道同理。 |
 | 认证与授权 | **没有** | 单租户本地平台的刻意取舍。所有 API 对能访问端口的人开放，请勿直接暴露到公网；详见 `SECURITY.md`。 |
 | 通知 / WebSocket 兼容性 | 已支持 SSE 降级 | `GET /notifications/stream` 失败时前端退回指数退避轮询（15s→30s→60s→120s）。不支持长连接的代理环境下会自动走这条兜底路径。 |
 | SQLite | 生产可用但有上限 | 已启用 WAL / `synchronous=NORMAL` / `busy_timeout`，单实例可用；多实例或高并发写请切换 PostgreSQL / MySQL。 |

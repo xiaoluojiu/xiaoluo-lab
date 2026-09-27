@@ -239,7 +239,7 @@ export default function Datasets() {
         </div>
       )}
 
-      <ConfirmDialog open={pendingDelete !== null} title="删除数据集" message={`确定删除「${pendingDelete?.name}」？所有版本快照将一并清理，不可恢复。`} confirmText="删除" danger onCancel={() => setPendingDelete(null)} onConfirm={() => { if (pendingDelete) void deleteDataset(pendingDelete.id).then(() => { setPendingDelete(null); setReloadKey((k) => k + 1); }); }} />
+      <ConfirmDialog open={pendingDelete !== null} title="删除数据集" message={`确定删除「${pendingDelete?.name}」？版本快照、数据操作记录，以及绑定在该数据集上的建模实验（含运行记录与模型产物）都会一并清理，不可恢复。`} confirmText="删除" danger onCancel={() => setPendingDelete(null)} onConfirm={() => { if (pendingDelete) void deleteDataset(pendingDelete.id).then(() => { setPendingDelete(null); setReloadKey((k) => k + 1); }); }} />
     </div>
   );
 }

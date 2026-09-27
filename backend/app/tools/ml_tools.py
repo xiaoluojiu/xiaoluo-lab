@@ -33,6 +33,10 @@ from app.tools.result import ToolResult
 PREDICT_PREVIEW_LIMIT_MAX = 5000
 PREDICT_PREVIEW_LIMIT_DEFAULT = 20
 
+#: 超过这个行数就在结果里提醒先抽样。真实事故里一条「做机器学习分析」的
+#: 请求直接在 296 万行上全量跑了 kmeans —— 既慢又没人要。
+_LARGE_ROWS = 1_000_000
+
 
 def _load_df(services: ToolServices, dataset_id: int, version: int | None) -> pl.DataFrame:
     ds = services.require("dataset_service")
@@ -143,6 +147,16 @@ class MlDetectTaskTool(Tool):
         self.assert_dataset_access(context, dataset_id)
         target = params.get("target")
         df = _load_df(services, dataset_id, params.get("version"))
+        # ★ 空表上算「缺失率 / 唯一值占比」必然除零，报出来的却是
+        #   「工具执行失败：division by zero」—— 用户看不出是数据空了还是系统坏了
+        #   （第十二轮实测「用 0 行数据训练模型」）。空表要在门口就挡住并说人话。
+        if df.height == 0:
+            return ToolResult.fail(
+                "当前版本没有任何数据行（0 行），无法判断任务类型，也没法训练模型。"
+                "请换一个有数据的版本或数据集后再试；"
+                "如果是刚做过一次筛选，那次筛选没有匹配到任何记录，数据本身并没有丢。",
+                data={"dataset_id": dataset_id, "rows": 0},
+            )
         reasons: list[str] = []
         dataset_name = _dataset_name(services, dataset_id)
         dataset_hint = _dataset_task_hint(dataset_name)
@@ -208,6 +222,13 @@ class MlDetectTaskTool(Tool):
                     {
                         "task": "clustering",
                         "target": None,
+                        # ★ 必须回传：告诉链路「这不是结论，是没法定」。
+                        # 没有这个标记时，下一步只能照着 clustering 直接开训，
+                        # 于是用户一句「做机器学习分析」换来一个没人要的 kmeans。
+                        "needs_target": True,
+                        # 行数必须结构化回传：答案层靠它提醒「百万行先抽样」。
+                        # 只写在 reasons 文本里等于没有 —— 没人会去解析一句中文。
+                        "row_count": df.height,
                         "reasons": reasons,
                         "dataset_hint": dataset_hint,
                         "target_candidates": options,
@@ -216,9 +237,11 @@ class MlDetectTaskTool(Tool):
                     summary="任务类型：clustering",
                     warnings=(
                         ["未指定目标列，已按无监督聚类执行；如需回归/分类请显式指定 target"]
+                        + ([f"数据规模 {df.height:,} 行，建议先抽样验证方案"] if df.height >= _LARGE_ROWS else [])
                         if params.get("infer_target")
                         else None
                     ),
+                    signals=["needs_target"],
                 )
         if target not in df.columns:
             return ToolResult.fail(
@@ -257,6 +280,7 @@ class MlDetectTaskTool(Tool):
         payload: dict[str, Any] = {
             "task": task,
             "target": target,
+            "row_count": df.height,
             "reasons": reasons,
             "dataset_hint": dataset_hint,
         }
@@ -362,6 +386,44 @@ class MlPrepareTool(Tool):
 # 而失败会触发重规划 —— 2026-09-22 r-22 的死循环就是这么起头的。
 _AUTO_MODEL_ALIASES = {"", "auto", "自动", "default"}
 
+#: 模型「族名」→ 按任务类型落到具体注册模型。
+#:
+#: 为什么需要族名：用户说「用随机森林」时并不知道最终是分类还是回归，
+#: 而注册名是带任务后缀的（random_forest_classifier / random_forest_regressor）。
+#: 没有这一层，抽取器只能填 ``auto`` —— 用户点名了模型，跑的还是默认模型，
+#: 而且从结果里完全看不出来他被忽略了。
+#:
+#: 该任务下族名没有对应模型时**明确失败**，绝不静默退回默认模型。
+_MODEL_FAMILIES: dict[str, dict[str, str | None]] = {
+    "random_forest": {
+        "classification": "random_forest_classifier",
+        "regression": "random_forest_regressor",
+    },
+    "decision_tree": {
+        "classification": "decision_tree_classifier",
+        "regression": "decision_tree_regressor",
+    },
+    "knn": {"classification": "knn_classifier", "regression": "knn_regressor"},
+    "logistic_regression": {"classification": "logistic_regression"},
+    "linear_regression": {"regression": "linear_regression"},
+    "kmeans": {"clustering": "kmeans"},
+    "dbscan": {"clustering": "dbscan"},
+    "pca": {"dimensionality": "pca"},
+}
+
+
+def _trainable_model_enum() -> list[str]:
+    """``ml.train`` 的 ``model`` 合法取值：auto + 族名 + 注册模型名。
+
+    **必须显式列出**：不列的话看 schema 的人（前端、LLM 参数抽取）根本不知道
+    「随机森林」在这里该写成什么，只能一律填 ``auto``。
+    """
+    ordered: list[str] = ["auto"]
+    for name in [*_MODEL_FAMILIES, *sorted(m["name"] for m in MODEL_REGISTRY.list())]:
+        if name not in ordered:
+            ordered.append(name)
+    return ordered
+
 
 def _prune_params_for_model(
     raw: dict[str, Any], model: str
@@ -412,8 +474,32 @@ class MlTrainTool(Tool):
                 "type": "string",
                 "description": "用户诉求原文（如「预测出发延误」），用于自动推断目标列",
             },
-            "model": {"type": "string", "description": "模型名；填 auto 表示按任务类型自动选择（分类→logistic_regression，回归→linear_regression，聚类→kmeans）"},
-            "params": {"type": "object"},
+            "model": {
+                "type": "string",
+                "description": (
+                    "模型名。auto=按 task 自动选择（分类→logistic_regression，"
+                    "回归→linear_regression，聚类→kmeans）。"
+                    "用户在请求里点名了模型就必须照他说的填，不要再填 auto："
+                    "「随机森林」→random_forest（按任务解析成 "
+                    "random_forest_classifier / random_forest_regressor），"
+                    "「逻辑回归」→logistic_regression，「KMeans」→kmeans。"
+                    "写具体注册名（如 random_forest_classifier）也可以。"
+                ),
+                "enum": _trainable_model_enum(),
+            },
+            "params": {
+                "type": "object",
+                "description": (
+                    "透传给模型的超参，键必须是该模型真实接受的参数名。"
+                    "常用：随机森林 n_estimators（树棵数）、max_depth（树深）；"
+                    "逻辑回归 C（正则强度，越小越保守）、max_iter；"
+                    "KNN n_neighbors；kmeans n_clusters（簇数）、random_state；"
+                    "dbscan eps、min_samples。"
+                    "用户说「分成 5 簇」就写 {\"n_clusters\": 5}；"
+                    "说「200 棵树」就写 {\"n_estimators\": 200}。"
+                    "不确定就留空，不要填模型不认识的参数。"
+                ),
+            },
             "preprocessing": {"type": "object"},
             "excluded_columns": {
                 "type": "array",
@@ -443,6 +529,8 @@ class MlTrainTool(Tool):
         target = params.get("target")
         task = params.get("task")
         model_adjusted: dict[str, str] | None = None
+        #: 任务类型被改写（仅发生在「用户点名聚类模型 + 目标列是推断的」时）
+        task_adjusted: dict[str, str] | None = None
         task_defaults = {
             "clustering": "kmeans",
             "classification": "logistic_regression",
@@ -472,6 +560,24 @@ class MlTrainTool(Tool):
             )
             if not detect.success:
                 return detect
+            # ★ detect 跑成功了，但没定下目标列 —— 这不是结论，是「没法定」。
+            # 照着它返回的 clustering 往下训，就是把「不知道预测什么」伪装成
+            # 「决定做聚类」：用户拿到一个 kmeans 和一堆看不懂的簇，问题一个没答。
+            if detect.data.get("needs_target") and not target:
+                candidates = detect.data.get("target_candidates") or {}
+                return ToolResult.fail(
+                    "未能确定目标列：无法判断要做回归还是分类。"
+                    "请显式指定 target 后重试；"
+                    f"回归候选：{candidates.get('regression') or '无'}；"
+                    f"分类候选：{candidates.get('classification') or '无'}",
+                    data={
+                        "needs_target": True,
+                        "task": detect.data.get("task"),
+                        "target_candidates": candidates,
+                        "reasons": list(detect.data.get("reasons") or [])[-3:],
+                    },
+                    metadata={"columns": list(_load_df(services, dataset_id, version_row.version).columns)},
+                )
             task = detect.data["task"]
             task_inferred = True
             if detect.data.get("target") and not target:
@@ -492,6 +598,43 @@ class MlTrainTool(Tool):
                 return ToolResult.fail(f"无法确定任务类型 {task} 对应的默认模型，请显式指定 model。")
             model_adjusted = {"from": requested_model or "auto", "to": fallback, "task": task}
             params["model"] = fallback
+        elif requested_model in _MODEL_FAMILIES:
+            # ★ 族名按任务解析。用户点名了模型却跑出默认模型，
+            # 比直接报错更难发现 —— 所以解析不了就明确失败并列出可选任务。
+            resolved = _MODEL_FAMILIES[requested_model].get(task or "")
+            if not resolved and task_inferred and "clustering" in _MODEL_FAMILIES[requested_model]:
+                # ★ 用户点名了聚类模型（「做客户分群」→ kmeans），而任务类型是
+                #   detect_task **推断**出来的 —— 这时用户诉求才是准的：他要的是
+                #   无监督分群，不是拿推断出的 Churn 做分类。
+                #   照推断出的 task 硬跑只会报「kmeans 不适用于 classification」，
+                #   一次训练都没发生（Telco 压测实测）。
+                #
+                #   判据必须是 ``task_inferred`` 而不是 ``target_inferred``：
+                #   playbook 用 carry 把 detect 的 target 传了进来，于是
+                #   ``target_inferred`` 恒为 None（看起来像用户点名的目标列），
+                #   只有「任务类型是不是推断的」能反映这份不确定性。
+                task_adjusted = {
+                    "from": task, "to": "clustering",
+                    "reason": f"用户点名了聚类模型 {requested_model}，而目标列 {target} 是推断结果",
+                }
+                task = "clustering"
+                params["task"] = task
+                params.pop("target", None)
+                resolved = _MODEL_FAMILIES[requested_model]["clustering"]
+            if not resolved:
+                supported = [k for k, v in _MODEL_FAMILIES[requested_model].items() if v]
+                return ToolResult.fail(
+                    f"模型 {requested_model} 不适用于当前任务「{task}」"
+                    f"（它只支持：{'、'.join(supported)}）。"
+                    "请换一个模型，或换一个目标列让任务类型改变。",
+                    data={
+                        "requested_model": requested_model,
+                        "task": task,
+                        "supported_tasks": supported,
+                    },
+                )
+            model_adjusted = {"from": requested_model, "to": resolved, "task": task}
+            params["model"] = resolved
         elif task_inferred:
             # 任务类型是推断出来的，就可能与模型不匹配：
             # 例「训练一个模型」未指明目标列 -> 判为 clustering，但模型默认给了
@@ -553,6 +696,12 @@ class MlTrainTool(Tool):
                 "status": run.status,
                 "metrics": run.metrics,
                 "error": run.error,
+                # 回执实际生效的训练配置：用户点名了模型/超参/测试集比例时，
+                # 答案层必须能确认「按你说的执行了」，而不是回一句「本次未获取」。
+                # 缺这三项，用户指定的参数虽然生效了，AI 却无从向用户确认。
+                "model": params["model"],
+                "parameters": raw_params or None,
+                "test_size": params.get("test_size"),
                 **({"model_adjusted": model_adjusted} if model_adjusted else {}),
                 # 目标列是推断出来的时候必须回执：否则报告里出现一个
                 # 用户从没指定过的目标列，谁也说不清它从哪来。
@@ -561,11 +710,18 @@ class MlTrainTool(Tool):
             summary=(
                 f"训练成功：{exp.model}"
                 + (f"（目标列 {target} 为推断结果）" if target_inferred else "")
+                # 用户点名的超参/测试集比例必须写进 summary：
+                # 事实摘要只取 summary + 前 8 个字段，data 里的 parameters/test_size
+                # 会被 metrics 挤掉，AI 于是无法确认「按你的设置执行了」。
+                + (f"；超参 {raw_params}" if raw_params else "")
+                + (f"；测试集比例 {params.get('test_size')}" if params.get("test_size") else "")
+                + (f"；任务类型由 {task_adjusted['from']} 改为 {task_adjusted['to']}" if task_adjusted else "")
             ),
             metadata={
                 "task": task,
                 "model": params["model"],
                 "model_adjusted": model_adjusted,
+                "task_adjusted": task_adjusted,
                 "target_inferred": target_inferred,
             },
         )
@@ -583,7 +739,7 @@ class MlPredictTool(Tool):
     input_schema = {
         "type": "object",
         "properties": {
-            "run_id": {"type": "integer", "description": "成功训练的运行 ID"},
+            "run_id": {"type": "integer", "description": "成功训练的运行 ID（可选，缺省取最近一次）"},
             "dataset_id": {"type": "integer", "description": "待推理的数据集（缺省用训练数据集）"},
             "version": {"type": "integer"},
             "limit": {"type": "integer", "description": "预览行数，默认 20"},
@@ -595,7 +751,6 @@ class MlPredictTool(Tool):
                 ),
             },
         },
-        "required": ["run_id"],
     }
     output_schema = {"type": "object"}
     permission = "train_model"
@@ -604,7 +759,9 @@ class MlPredictTool(Tool):
         self, params: dict[str, Any], context: ToolExecutionContext, services: ToolServices
     ) -> ToolResult:
         exp_service = services.require("experiment_service")
-        run_id = int(params["run_id"])
+        run_id, inferred = _resolve_run_id(params, context, services)
+        if run_id is None:
+            return ToolResult.fail("没有可用于推理的训练运行：请先执行 ml.train，或显式传入 run_id")
         run = exp_service.get_run(run_id)
         exp = exp_service.get(run.experiment_id)
         dataset_id = params.get("dataset_id")
@@ -672,14 +829,47 @@ class MlPredictTool(Tool):
         return f"{base} · 阈值 {threshold}{changed}"
 
 
+def _resolve_run_id(
+    params: dict[str, Any],
+    context: ToolExecutionContext,
+    services: ToolServices,
+) -> tuple[int | None, dict[str, Any] | None]:
+    """run_id 缺失时从该数据集最近实验推断（半自主：不用用户手填 run_id）。
+
+    返回 ``(run_id, ml_context)``。ml_context 是发现到的最近实验摘要（含 model/task/
+    metrics），供工具回执给 AI，让用户知道「评估/解释的是哪一次训练」，而不是凭空冒出一个数字。
+    """
+    if params.get("run_id") is not None:
+        return int(params["run_id"]), None
+    candidate_ids: list[int] = []
+    if params.get("dataset_id") is not None:
+        candidate_ids.append(int(params["dataset_id"]))
+    for ds_id in (context.dataset_ids or []):
+        if ds_id not in candidate_ids:
+            candidate_ids.append(int(ds_id))
+    if services.db is None or services.dataset_service is None:
+        return None, None
+    from app.reports.discovery import discover_ml_context
+
+    for ds_id in candidate_ids:
+        found = discover_ml_context(
+            services.db, services.dataset_service, ds_id, max_experiments=1, max_runs=1
+        )
+        if found.ml and found.ml.get("run_id") is not None:
+            return int(found.ml["run_id"]), found.ml
+    return None, None
+
+
 class MlEvaluateTool(Tool):
     name = "ml.evaluate"
-    description = "查看一次训练运行的评估指标与解读。"
+    description = "查看一次训练运行的评估指标与解读。未指定 run_id 时自动取该数据集最近一次训练。"
     category = "ml"
     input_schema = {
         "type": "object",
-        "properties": {"run_id": {"type": "integer"}},
-        "required": ["run_id"],
+        "properties": {
+            "run_id": {"type": "integer", "description": "训练运行 ID（可选，缺省取最近一次）"},
+            "dataset_id": {"type": "integer", "description": "数据集 ID（run_id 缺失时据此找最近训练）"},
+        },
     }
     output_schema = {"type": "object"}
     permission = "analyze_data"
@@ -688,7 +878,12 @@ class MlEvaluateTool(Tool):
         self, params: dict[str, Any], context: ToolExecutionContext, services: ToolServices
     ) -> ToolResult:
         exp_service = services.require("experiment_service")
-        run = exp_service.get_run(int(params["run_id"]))
+        run_id, inferred = _resolve_run_id(params, context, services)
+        if run_id is None:
+            return ToolResult.fail(
+                "没有可评估的训练运行：请先执行 ml.train，或显式传入 run_id"
+            )
+        run = exp_service.get_run(run_id)
         exp = exp_service.get(run.experiment_id)
         return ToolResult.ok(
             {
@@ -700,9 +895,11 @@ class MlEvaluateTool(Tool):
                 "metrics": run.metrics,
                 "runtime": run.runtime,
                 "error": run.error,
+                **({"inferred": inferred} if inferred else {}),
             },
             summary=(
                 f"运行 {run.id}（{exp.task}/{exp.model}）状态 {run.status}"
+                + ("（按最近一次训练自动选取）" if inferred else "")
             ),
         )
 
@@ -740,12 +937,14 @@ class MlExplainTool(Tool):
     """模型解释：读取训练产物（模型字节）+ 训练特征。"""
 
     name = "ml.explain"
-    description = "解释已训练模型：特征重要性（可扩展 SHAP）。"
+    description = "解释已训练模型：特征重要性（可扩展 SHAP）。未指定 run_id 时自动取该数据集最近一次训练。"
     category = "ml"
     input_schema = {
         "type": "object",
-        "properties": {"run_id": {"type": "integer"}},
-        "required": ["run_id"],
+        "properties": {
+            "run_id": {"type": "integer", "description": "训练运行 ID（可选，缺省取最近一次）"},
+            "dataset_id": {"type": "integer", "description": "数据集 ID（run_id 缺失时据此找最近训练）"},
+        },
     }
     output_schema = {"type": "object"}
     permission = "analyze_data"
@@ -754,12 +953,15 @@ class MlExplainTool(Tool):
         self, params: dict[str, Any], context: ToolExecutionContext, services: ToolServices
     ) -> ToolResult:
         exp_service = services.require("experiment_service")
-        run = exp_service.get_run(int(params["run_id"]))
+        run_id, inferred = _resolve_run_id(params, context, services)
+        if run_id is None:
+            return ToolResult.fail("没有可解释的训练运行：请先执行 ml.train，或显式传入 run_id")
+        run = exp_service.get_run(run_id)
         if run.status != "success":
             return ToolResult.fail("只能解释成功完成的训练运行")
         try:
             # 优先复用训练时落库的特征重要性，避免每次都反序列化整个模型
-            explanation = exp_service.explain(int(params["run_id"]))
+            explanation = exp_service.explain(int(run_id))
         except Exception as exc:  # noqa: BLE001 - 转成工具可读失败
             return ToolResult.fail(f"解释失败：{exc}", data={"run_id": run.id})
         top = explanation["importances"][:5]

@@ -64,7 +64,7 @@
 │  data_engine/service.py（DataEngineService）                    │  数据加工统一门面
 │  experiments/service.py（ExperimentService）                    │  训练/推理/对比
 │  workflow/service.py（WorkflowService）                         │  DAG 生命周期
-│  agent/runtime/*（AgentRuntime）                                │  Agent Turn 编排
+│  agent/engine.py（AgentEngine）                                  │  Agent 一次运行的编排
 └───────────────┬──────────────────────────────────────────────┘
                 │
 ┌───────────────▼──────────────────────────────────────────────┐
@@ -137,6 +137,7 @@ app/
 │
 ├── core/
 │   ├── config.py                 ★ Settings（env 锚定、database_url 相对路径解析、Agent 预算、LLM 配置）
+│   ├── runtime_settings.py       大模型连接配置落盘（白名单 7 键 → {DATA_ROOT}/llm_settings.json，0600）
 │   ├── database.py               Engine / SessionLocal / get_db / Base
 │   ├── exceptions.py             8 类业务异常（AppException 族）
 │   ├── logging.py                结构化日志 + redact 脱敏 + request_id
@@ -203,30 +204,24 @@ app/
 │   ├── data_tools.py / dataset_tools.py / eda_tools.py / ml_tools.py /
 │   ├── report_tools.py / workflow_tools.py
 │
-└── agent/
-    ├── runtime/
-    │   ├── agent_runtime.py      AgentRuntime 门面（事件增量持久化）
-    │   ├── runtime.py            会话/Run 生命周期 + 等待态原子领取 + resume/deny/cancel（turn 委托 AgentLoop）
-    │   ├── models.py             AgentStore（RLock + JSON 持久化）/ AgentRun / AgentSession / TokenLedger
-    │   └── step_resolution.py    {{stepN.field}} 结构化依赖解析
-    ├── loop.py                   ★ 统一 Stateful Agent Loop（Observe→Decide→Execute→Update→Continue/Finish，唯一控制流）
-    ├── state.py                  ★ 统一 TaskState（跨 Run 持续 + PendingAction 队列 + 紧凑远程视图）
-    ├── playbooks.py              ★ 确定性层（取消/槽位/信号→工具/九类确定性 playbook，零 LLM）
-    ├── context/                  builder（上下文构建）/ budget（预算）/ cache / models
-    ├── permission/               manager / models / rules（风险分级与授权判定）
-    ├── executor/                 executor（工具执行与重试记录）
-    ├── validator/                validator / models（结果校验）
-    ├── trace/                    DecisionTrace（决策链 JSONL 出口）
-    └── llm/
-        ├── base.py / capabilities.py / usage.py
-        ├── openai_compatible.py  OpenAI 兼容协议（DeepSeek 等）
-        ├── structured.py         JSON 模式输出与容错解析
-        └── mock.py               离线/测试用 Mock
+└── agent/                        ★ 数据分析 Agent（扁平 9 模块，无子包）
+    ├── engine.py                 ★ 有界执行器：路由 → playbook → 逐步执行 → 渲染（唯一控制流）
+    ├── intents.py                规则意图路由（关键词打分，零 LLM）
+    ├── playbooks.py              意图 → 固定工具链（PlaybookStep 含 carry / fallback / ask_if / tuned_slots）
+    ├── slots.py                  参数抽取：自动 → 规则 → LLM（仅兜底，带工具 schema 的 enum 提示）
+    ├── answer.py                 答案渲染：模板（默认）/ LLM 润色（可选）
+    ├── models.py                 ★ 与前端 src/types/agent.ts 逐字对齐的运行期模型
+    ├── store.py                  AgentStore（RLock + JSON 原子写 + 损坏自愈 + 事件监听）
+    ├── permission.py             Permission / RiskLevel / PermissionManager（叶子模块，纯函数裁决）
+    ├── llm.py                    LLMProvider 抽象 + OpenAI 兼容实现 + build_default_provider
+    └── channels.py               SSE 通道（RunChannel / ChannelManager / 帧构造）
 ```
 
-> 重构（统一 Agent Loop）删除的模块：`agent/decision/`（router/provider/rule/signal/local_model/remote）、
-> `agent/planner/`（planner/replanner/models）、`agent/task_spec.py`、`agent/task_spec_builder.py`。
-> 其职责已收敛进 `loop.py`（唯一决策分层）+ `state.py`（统一状态）+ `playbooks.py`（确定性层）。
+> **旧 Agent 架构已整体删除，不做兼容。** `agent/runtime/`、`agent/loop.py`、`agent/state.py`、
+> `agent/context/`、`agent/permission/{manager,models,rules}`、`agent/executor/`、`agent/validator/`、
+> `agent/trace/`、`agent/llm/{base,capabilities,usage,structured,mock,openai_compatible}`、
+> `agent/playbooks.py`（旧的确定性层）以及 `app/local_router/`、`api/v1/agent.py` 的旧实现均已移除。
+> 重构动机与取舍见 [3.6](#36-agent-turn含-sse-与授权确认闭环)。
 
 ### 2.3 入口文件
 
@@ -234,7 +229,7 @@ app/
 | --- | --- | --- |
 | ASGI 应用 | `app/main.py` | 创建 `FastAPI`、注册 `RequestContextMiddleware`、`include_router(api_router)`、定义 `/api/v1/health` |
 | 路由汇总 | `app/api/v1/__init__.py` | `api_router`（prefix `/api/v1`），注册 12 个 router（注意 `experiments.router` 与 `experiments.ml_router` 是**两个** router） |
-| 依赖装配 | `app/api/deps.py` | 进程级单例 `AGENT_STORE`、`WORKFLOW_SERVICE`；`get_agent_runtime` 构造 `AgentRuntime`（内部装配 `AgentLoop`）；`get_db` 复用 |
+| 依赖装配 | `app/api/deps.py` | 进程级单例 `AGENT_STORE`、`WORKFLOW_SERVICE`；`build_agent_engine()` 构造**自包含**的 `AgentEngine`（自带会话工厂、自建依赖链、用完自关）；`get_db` 复用 |
 | 配置 | `app/core/config.py` | `Settings`；`database_url` 属性把相对 sqlite 路径按 `BACKEND_ROOT` 解析（避免从项目根启动连到空库） |
 | 迁移 | `migrations/env.py` + `alembic.ini` | 复用 `Settings.database_url`（勿改回直接用 `settings.DATABASE_URL`） |
 | 脚本 | `scripts/demo_data.py`、`scripts/experiments/*` | 演示数据与实验脚本，非运行时依赖 |
@@ -320,59 +315,93 @@ POST /reports/export   → _report_from_dict（本轮改为逐字段取值，见
                        → export_markdown / export_html / export_pdf
 ```
 
-### 3.6 Agent Turn（统一 Stateful Loop，含 SSE 与授权确认闭环）
+### 3.6 Agent Turn（规则路由 + 固定 playbook，含 SSE 与授权确认闭环）
 
 ```
-POST /agent/sessions/{id}/messages  （api/v1/agent.py: post_message）
-  1. _ensure_idle(session)            # 存在活动 run → 409
-  2. _try_reserve(session_id)         # 进程内预留集合，堵住"检查→worker 创建"的竞态
-  3a. stream=false → runtime.run(...) → store.persist(force=True) → 返回 summary
-  3b. stream=true  → _sse_live_run()
-        · 起 daemon 线程执行 runtime.run(...)，事件经 queue 推流
-        · run 停在 WAITING_CONFIRMATION 时 SSE **保持打开**并持续 tail run.events
-        · 用户确认 → POST /agent/runs/{id}/confirm → runtime.resume() 同步执行
-          → 新事件继续经同一条 SSE 推出
-        · 终态/断连 → 结束流
+POST /agent/sessions/{id}/messages  （api/v1/agent.py: send_message）
+  1. 校验会话存在 + 内容非空；可选 body.dataset_ids 覆盖会话绑定
+  2. store.create_run(session_id, content)
+  3a. stream=false → asyncio.to_thread(engine.run) → 返回 run.to_dict()
+  3b. stream=true  → CHANNELS.get_or_create(run.id) → StreamingResponse
+        · 先注册 store 监听者，再补发已有事件，最后消费通道队列（顺序反了会重复推送）
+        · 引擎在 asyncio.to_thread 里跑，事件经监听者实时进通道
+        · run 挂起（WAITING_CONFIRMATION / WAITING_CLARIFICATION）时 SSE **保持打开**
+        · 用户确认 → POST /agent/runs/{id}/confirm → 写一次性凭据 → _resume() 后台续跑
+          → 恢复后的 completed 经**同一条流**补发（那是答案进入聊天区的唯一出口）
+        · 终态事件 → 关通道 → 发 event: done 控制帧
 
-runtime.run（runtime.py，370 行瘦身）：
-  _hydrate_state(session.task_state)          # 接续 / 重置 TaskState
-  → AgentLoop.turn(run, session, state)       # 唯一控制流，见下
-  → _snapshot_plan(run, state)                # run.plan 快照（只读消费）
-  → 回写 session.task_state + persist(force)
-
-AgentLoop.turn（loop.py）—— 统一 Observe→Decide→Execute→Update 循环：
-  Observe   ContextBuilder 元数据 + 按阶段召回候选工具 + state.last_result/signals
-  Decide    单一分层（每跳带 source/confidence/rationale）：
-            ① 取消/熔断 ② Pre-flight/必填槽位反问 ③ 待办队首（重校验参数）
-            ④ 客观信号→工具白名单 ⑤ local_router（TF-IDF/Qwen，唯一入口，异常诚实降级）
-            ⑥ 确定性 playbook（建模/工作流/合并/变换/综合分析/质量/EDA/intake）
-            ⑦ Remote 结构化升级（RemoteDecision：execute_tool/ask_user/chat/stop + ≤4 步队列）
-            ⑧ CHAT 动作
-  Execute   executor.execute_step 单点；高风险 → WAITING_CONFIRMATION；反问 → WAITING_CLARIFICATION
-  Update    validator 校验；失败三策略（依赖断裂即止 / 参数错误不重试 / 瞬时≤2 次）；
-            熔断（步数/工具数/时长/Token/重规划/2000 事件）；uncertainty 动态重算（可中途升级一次）
-  Finish    确定性结果渲染优先；仅明确要求综合时才一次远程总结；answer_source 诚实标注
+AgentEngine.run（engine.py）—— 一次性、有界、可挂起可恢复，**没有循环式重规划**：
+  route       intents.route(user_request)：关键词打分（强 +3 / 弱 +1 / 阈值 3）
+              → 未命中即 CHAT，走 render_chat 直接结束
+              → 命中多个时只执行主意图，其余放进 RouteResult.secondary 并在 reason 里明说
+  plan        playbooks.get_playbook(intent)：意图 → 固定工具链（1~3 步，写死）
+  execute     逐步执行；每步做五件事，做完就往下走：
+              ① _build_params（defaults → 会话 dataset_id → carry → 澄清答案 → 规则/LLM 抽取）
+                 · tuned_slots（可微调槽位，如 ml.train 的 model / params）：
+                   抽到就**覆盖** defaults，抽不到用默认值，绝不反问
+              ② 缺必填 → 有 fallback 就退化（如「哪一列」答不出改看全表分布概览），否则挂起反问
+              ③ ask_if：上一步跑成功了但结论里有必须人来定的选择（如目标列推断不出）
+                 → 挂起反问，并把候选列作为可点选项一并返回；顺序上先于权限裁决
+              ④ PermissionManager.check：缺权限即 DENY；HIGH/CRITICAL 挂起等确认
+              ⑤ 执行工具 → 记 ToolCall → 发 tool_call / tool_result / validation
+  render      answer.render：模板渲染（默认）或 LLM 润色（配了 Key 才用，且受预算限制）
+              → 模板里附「解读与下一步」：指标阈值解读 + 未建模说明 + 大体量抽样提醒
+  finish      把助手这一轮的话写进 session.history（前端重建对话的唯一数据源）
+              → 发 usage + completed/failed；清理凭据与挂起请求
 ```
 
-**三层资源调度**（Token 一等公民）：确定性工具不调模型 → local_router（TF-IDF/Qwen）单步低成本决策 → Remote LLM 仅在低置信/复杂/冲突/失败时介入**一次**（结构化决策，不直接执行工具，控制权立即回到本地 Loop）。
+**三类槽位，语义各不相同。**
 
-**授权语义**：一次确认只放行**被确认的那一个**高风险工具（一次性凭据，用掉即失效），越权由 PermissionManager 与 deny/cancel 兜底。
+| 类别 | 抽不到时 | 抽到时 | 例子 |
+| --- | --- | --- | --- |
+| `required_slots` | 退化 `fallback_tool`，否则挂起反问 | 补空缺 | `column`、`run_id` |
+| `tuned_slots` | 用 `defaults`，**绝不反问** | **覆盖** `defaults` | `ml.train` 的 `model` / `params` |
+| `defaults` | — | 兜底值 | `{"model": "auto"}` |
 
-**多轮接续**：会话级 `TaskState` 跨 Run 持续。追问读 facts/findings/last_result 零工具作答；改要求 `apply_constraint_change` 真实改写待办参数；新任务 reset 状态。
+没有 `tuned_slots` 之前，「用随机森林训练，200 棵树」也会被 `model="auto"` 吃掉：
+`model` 不是槽位（无处可填）、规则读出来了也会被默认值盖掉、
+LLM 抽取时只看到参数名看不到 enum 只能填 `auto`。三层都要修，缺一层都不生效。
 
-**架构减法对照（as-is → to-be）**：
+**「没法定」不许默认。** 工具返回 `success=True` 不代表它给出了结论 ——
+`ml.detect_task` 推断不出目标列时会回传 `needs_target=True`，
+`ml.train` 这一步声明 `ask_if="needs_target"` 后**挂起问用户**，
+而不是按 clustering 自动选 kmeans 开训（真实事故：一句「做机器学习分析」
+换来一个 296 万行上、轮廓系数 0.13 的 kmeans）。
+同理，`ml.train` 不再 carry 上一步的 `task`：目标列是后补的，任务类型就必须重新判定。
 
-| 维度 | 重构前（as-is） | 重构后（to-be） |
+**零 Token 是默认路径。** 意图路由是关键词表、工具链是写死的、答案是模板渲染的 ——
+三者都不经过模型。LLM 只在两处**可选**介入：规则读不出必填参数时抽一次、
+以及把工具结果润色成自然语言（且只喂事实摘要，上限 6000 字符）。
+未配置 API Key 时整条链路照常完成，`token_usage.llm_calls == 0`。
+
+**参数抽取必须让模型看得见取值范围。** `extract_slots` 把工具的 `input_schema`
+传给 `llm_extract`，由 `_slot_help()` 把每个待抽参数的 type / enum / description
+写进 prompt。只给 `["model"]` 这种光秃秃的键名，模型只能填 `auto` 或省略 ——
+看起来就是「Agent 不会按诉求调参数」。
+
+**有界性**：`MAX_STEPS=8`、`MAX_LLM_CALLS=4`、`WALL_CLOCK_SECONDS=300`、
+单 run 事件上限 500。超界不会重规划，只会如实失败。
+
+**授权语义**：一次确认只放行**被确认的那一个**高风险工具 ——
+`authorized_key = "{step_index}:{tool}"`，用掉即置空，越权由 `PermissionManager` 与 deny/cancel 兜底。
+
+**SSE 事件类型（11 种，前端零改动）**：`route` `chat` `planning` `permission`
+`clarification` `tool_call` `tool_result` `validation` `completed` `failed` `usage`，
+外加控制帧 `done`。旧架构的 `preflight` 与 `replanning` 已随重规划一并删除。
+
+**架构减法对照（旧 → 新）**：
+
+| 维度 | 旧架构 | 新架构 |
 | --- | --- | --- |
-| 控制流 | Chat/Agent 硬分流（`_route`）+ 三套规划入口 + 两条执行引擎 | 单一 `AgentLoop`（CHAT 是循环内动作之一） |
-| 状态 | 运行间无持续任务状态 | 统一 `TaskState`（随会话持久化） |
-| 决策 | `decision/` 包 + TaskSpecBuilder + AgentPlanner（一次性大规划） | 单层 `_prime`/`_decide` 分层（增量决策，每步 Observe 真实结果） |
-| 执行 | `_run_plan`（静态计划）+ `_run_dynamic`（signals） | 单一迭代体 |
-| 远程 | 自由文本指导 + 无条件远程总结 | 结构化 `RemoteDecision`（限次、不触工具、必要才介入） |
-| 复杂度 | 首次理解后固定 | `uncertainty` 每轮重算，可中途升降级 |
-| 账本 | llm_calls/remote_escalations | + qwen_calls/tool_calls/task_steps/escalation_count/total_cost 实时下发 |
-
-**Token 账本字段**（`AgentTokenLedger.to_dict()`）：remote_calls、remote_input_tokens、remote_output_tokens、qwen_calls、tool_calls、task_steps、escalation_count、total_cost（旧键 llm_calls/remote_escalations/actual/budget/optimization 保留）。
+| 控制流 | `AgentLoop` 迭代循环（Observe→Decide→Execute→Update→Continue） | 固定 playbook 顺序执行，**无重规划循环** |
+| 决策 | 六层分层 + local_router（TF-IDF/Qwen）+ Remote 结构化升级 | 一层关键词打分（`intents.py`），零 LLM |
+| 状态 | 会话级 `TaskState` 跨 Run 持续 | 运行级 `AgentRun.resume_step`，挂起即存档 |
+| 执行 | `executor` + `validator` + 三套失败重试策略 | 引擎内直接执行，失败即如实终止（可标 `skippable`） |
+| 上下文 | `context/`（builder/budget/cache/models）+ 预算记账 | 无上下文包；每步只传工具需要的参数 |
+| LLM | `llm/` 7 模块（base/capabilities/local/mock/openai_compatible/structured/usage） | 单文件 `llm.py` |
+| 权限 | `permission/{manager,models,rules}` 三处分散 | 单文件 `permission.py`，一个纯函数 |
+| 代码量 | Agent 模块约 5 500 行（`loop.py` 单文件 1 084 行） | 9 个扁平模块，约 2 600 行 |
+| 磁盘 | store 涨到 15.87 MB（约 20 万条 replanning 事件） | 事件天然很少，且硬性封顶 500/运行 |
 
 ### 3.7 Workflow DAG 执行
 

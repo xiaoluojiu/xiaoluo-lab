@@ -1126,7 +1126,7 @@ def aggregate(
 # - {"type": "math", "op": "add|sub|mul|div", "left": spec, "right": spec}
 # - {"type": "date_part", "part": "year|month|day|hour|minute|second", "column": "ts"}
 
-MATH_OPS = ("add", "sub", "mul", "div")
+MATH_OPS = ("add", "sub", "mul", "div", "abs", "neg")
 DATE_PARTS = ("year", "month", "day", "hour", "minute", "second")
 DATE_PART_METHODS = {
     "year": "year",
@@ -1180,6 +1180,21 @@ def _math_expr(df: pl.DataFrame, spec: dict[str, Any]) -> pl.Expr:
         raise TransformError(
             f"unsupported math op: {op!r}", details={"op": op, "allowed": list(MATH_OPS)}
         )
+    # 一元运算（abs 绝对值 / neg 取负）：只读一个操作数，兼容 args[0] 与 left 两种写法
+    if op in ("abs", "neg"):
+        operand: Any = None
+        args = spec.get("args")
+        if isinstance(args, list) and args:
+            operand = args[0]
+        elif spec.get("left") is not None:
+            operand = spec.get("left")
+        if operand is None:
+            raise TransformError(
+                f"math op {op} requires one operand",
+                details={"op": op, "hint": "用 args[0] 或 left 传操作数"},
+            )
+        arg = _operand_expr(df, operand)
+        return arg.abs() if op == "abs" else -arg
     left = _operand_expr(df, spec.get("left"))
     right = _operand_expr(df, spec.get("right"))
     if op == "add":

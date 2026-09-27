@@ -120,11 +120,22 @@ export interface AnswerSource {
 export interface PermissionRequest { tool: string; arguments: Record<string, unknown>; step_index: number; reason: string; }
 
 /** 聊天消息。定义在 types 里而不是组件里：会话历史、事件流、Hook 都要读写它。 */
+/** 对话里内联渲染的图表（后端生成的 SVG，随 completed 事件与会话历史下发）。 */
+export interface ChatChart {
+  kind?: string;
+  title?: string;
+  /** 完整 <svg> 源码；为空表示本次没能渲染出图。 */
+  svg?: string;
+  rendered?: boolean;
+}
+
 export interface ChatMessage {
   role: string;
   content: string;
   /** 回答来源（后端判定后下发，前端不猜）。 */
   source?: AnswerSource | null;
+  /** 这一轮真正画出来的图。文字描述不是图，必须真的渲染出来。 */
+  charts?: ChatChart[] | null;
 }
 
 /** 运行面板页签。事件流会主动切页签（如出现工具调用时切到「活动」），故提升到类型层。 */

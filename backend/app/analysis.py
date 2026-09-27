@@ -151,6 +151,28 @@ def categorical_columns(df: pl.DataFrame, columns: list[str] | None = None) -> l
     return [c for c, is_cat in classify_columns(df, columns).items() if is_cat]
 
 
+#: 标识符列的名称特征：customer_id / user_id / order_id / 序号 / index。
+#: 这类列是**行标识**，取值连续且几乎唯一，Pearson/Spearman 照算不误，
+#: 于是矩阵里塞满「customer_id × age = 0.04」这种毫无业务意义的噪声，
+#: 还会把真正有信息量的那几对挤到后面（实测 10 对里有 4 对是 customer_id 的）。
+_ID_LIKE_NAMES = frozenset({"id", "ids", "index", "idx", "编号", "序号", "行号"})
+_ID_LIKE_SUFFIXES = ("_id", "-id", "_idx")
+
+
+def is_identifier_like(column: str) -> bool:
+    """列名看起来是不是「行标识」而不是一个可分析的变量。
+
+    只认**明确的**命名习惯（id / index / 编号 / ``*_id``），不猜语义：
+    误伤一个真变量的代价比多留一个 ID 列大得多。
+    """
+    name = str(column or "").strip().lower()
+    if not name:
+        return False
+    if name in _ID_LIKE_NAMES:
+        return True
+    return name.endswith(_ID_LIKE_SUFFIXES)
+
+
 def continuous_columns(df: pl.DataFrame, columns: list[str] | None = None) -> list[str]:
     """返回应视为连续变量的数值列（分类编码列已剔除）。"""
     cls = classify_columns(df, columns)
@@ -1250,6 +1272,39 @@ CORRELATION_METHODS = ("pearson", "spearman", "auto")
 _LINE_VALUE = "__line_value"
 
 
+#: 二分类列里代表「正类」的写法
+_TRUE_TOKENS = frozenset({"yes", "y", "true", "t", "1", "是", "真", "流失", "churned", "positive"})
+
+
+def _encode_binary_columns(
+    df: pl.DataFrame, columns: list[str]
+) -> tuple[pl.DataFrame, dict[str, str]]:
+    """把请求的**二分类**列编成 0/1，使它能进入相关性矩阵。
+
+    只处理「用户点名了、非数值、且只有两个取值」的列；编码方式写进返回值，
+    由调用方写进结果，绝不能静默改数据。
+    """
+    encoded: dict[str, str] = {}
+    exprs: list[pl.Expr] = []
+    for col in columns:
+        if col not in df.columns or df.schema[col].is_numeric():
+            continue
+        try:
+            values = df.select(pl.col(col).drop_nulls().unique()).to_series().to_list()[:3]
+        except Exception:  # noqa: BLE001
+            continue
+        uniq = sorted({str(v) for v in values})
+        if len(uniq) != 2:
+            continue
+        positive = [v for v in uniq if v.lower() in _TRUE_TOKENS]
+        pos_str = positive[0] if len(positive) == 1 else uniq[1]
+        encoded[col] = f"{pos_str}=1，{uniq[0] if uniq[0] != pos_str else uniq[1]}=0"
+        exprs.append(pl.col(col).cast(pl.Utf8).eq(pos_str).cast(pl.Int8).alias(col))
+    if not exprs:
+        return df, encoded
+    return df.with_columns(exprs), encoded
+
+
 def _correlation_shortfall(
     df: pl.DataFrame,
     requested: list[str] | None,
@@ -1358,7 +1413,35 @@ class CorrelationAnalyzer(EdaModule):
         # 只用「连续变量」做相关性：分类编码整型列（VendorID/ratecodeID/区域 ID 等）
         # 不该参与 Pearson/Spearman 相关，否则会得到无业务意义的伪相关（回归：报告热力图
         # 曾把 VendorID、PULocationID、DOLocationID 与金额字段混在一起算相关性）。
+        # ★ 用户点名的**二分类列**要编码后参与，而不是直接剔除。
+        #   「计算所有特征与 Churn 的相关系数」「tenure 和 Churn 的相关性」里
+        #   Churn 是 Yes/No 字符串，此前一律被剔 ⇒ 报「可用数值列 0 个」，
+        #   而类别目标与特征的关联度恰恰是分类建模的第一步（Telco 压测实测）。
+        #   二值编码后算的就是标准的点二列相关，编码方式写进结果，可追溯。
+        binary_encoded: dict[str, str] = {}
+        if columns:
+            df, binary_encoded = _encode_binary_columns(df, columns)
         numeric_cols = continuous_columns(df, columns)
+        if binary_encoded:
+            # 编码后是 Int8、只有两个取值 ⇒ 又被「低基数按分类处理」剔掉了。
+            # 用户点名的列必须留下（这正是他要看的那一列）。按请求顺序插回原位。
+            order = {c: i for i, c in enumerate(columns or [])}
+            numeric_cols = sorted(
+                set(numeric_cols) | set(binary_encoded),
+                key=lambda c: order.get(c, len(order) + 1),
+            )
+        if not columns:
+            # 用户没点名列时才剔除标识符列；他点名了就必须照办（哪怕是 id）。
+            kept = [c for c in numeric_cols if not is_identifier_like(c)]
+            # 剔除后不够 2 列就别剔：宁可给出噪声，也不能让一次本来能跑的分析失败
+            if len(kept) >= 2:
+                numeric_cols = kept
+        if len(numeric_cols) < 2 and columns:
+            # ★ 只点名了一列（「计算所有特征与 Churn 的相关系数」里只抽到 Churn）
+            #   ⇒ 直接报「至少需要 2 个数值字段」，一次本可行的分析白失败了。
+            #   补上数据集里其它连续数值列：用户要看的那一列仍在第一位。
+            extra = [c for c in continuous_columns(df, None) if c not in numeric_cols]
+            numeric_cols = list(dict.fromkeys([*numeric_cols, *extra]))
         if len(numeric_cols) < 2:
             # all_columns：API 层做 Parquet 列裁剪时带上的「该数据集全部列名」，
             # 用于给出准确的「还有哪些可用列」提示（见 _insufficient_numeric_details）。
@@ -1411,6 +1494,8 @@ class CorrelationAnalyzer(EdaModule):
         result["truncated"] = bool(dropped)
         result["dropped_columns"] = list(dropped)
         result["pair_count"] = len(mat_cols) * (len(mat_cols) - 1) // 2
+        if binary_encoded:
+            result["binary_encoded"] = binary_encoded
         return result
 
     # ---- 数据准备 ----
@@ -1905,10 +1990,19 @@ class VisualizationBuilder(EdaModule):
 
     # ---- 直方图（数值分布）----
     def histogram(self, df: pl.DataFrame, **options: Any) -> dict[str, Any]:
-        column = options.get("column")
+        name = _require_str(options.get("column"), "column")
+        self.require_columns(df, [name])
+        # 文本列画不出直方图。旧行为是一路抛到 Polars 的
+        # ``could not convert string to float: 'bad'`` —— 用户既不知道哪一步错了，
+        # 也不知道该换成什么图。这里直接按类别频次出柱状图，并如实标注降级。
+        if not df.schema[name].is_numeric():
+            result = self.bar(df, **options)
+            result["degraded_from"] = "histogram"
+            result["note"] = f"{name} 不是数值列，直方图不适用，已按各类别频次出柱状图"
+            return result
         clip_q = options.get("clip_quantile")
         dist = DistributionAnalyzer().numeric_distribution(
-            df, _require_str(column, "column"),
+            df, name,
             bins=int(options.get("bins", 10)),
             clip_quantile=float(clip_q) if clip_q is not None else None,
         )

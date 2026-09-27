@@ -88,7 +88,15 @@ export function useAiSession({ onError, onNotice }: UseAiSessionOptions) {
     (s: AgentSession) => {
       setSession(s.id);
       setSelectedDatasets(s.dataset_ids ?? []);
-      setMessages(s.history.map((h) => ({ role: h.role, content: h.content })));
+      // charts 必须一起映射：会话历史是重建对话的唯一数据源，
+      // 只带 content 的话，切走再切回来图就全没了 —— 那和没画一样。
+      setMessages(
+        s.history.map((h) => ({
+          role: h.role,
+          content: h.content,
+          charts: (h as { charts?: ChatMessage["charts"] }).charts ?? null,
+        })),
+      );
       setSelectedIds([]);
       setSwitchToken((v) => v + 1);
     },
@@ -205,8 +213,9 @@ export function useAiSession({ onError, onNotice }: UseAiSessionOptions) {
 
   /**
    * 删除会话（单条 / 批量 / 清空共用）。
-   * 后端只提供单条删除且活动会话会返回 409，这里逐个删除并汇总失败项，
-   * 不因为其中一条失败就中断整个批量操作。
+   * 后端只提供单条删除：仍在**推进中**（pending/planning/running）的会话返回 409，
+   * 挂起等确认 / 等补充信息的会被后端自动收成终态后照删，不会卡住。
+   * 这里逐个删除并汇总失败项，不因为其中一条失败就中断整个批量操作。
    */
   const removeSessions = useCallback(
     async (ids: string[]) => {

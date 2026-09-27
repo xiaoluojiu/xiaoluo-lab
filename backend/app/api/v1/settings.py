@@ -9,16 +9,28 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app import __version__
-from app.agent.llm.base import LLMException, LLMMessage
-from app.agent.llm.openai_compatible import OpenAICompatibleProvider
+from app.agent.llm import LLMException, LLMMessage
+from app.agent.llm import OpenAICompatibleProvider
 from app.api.deps import get_storage_service
 from app.core.config import settings
+from app.core.runtime_settings import has_persisted, save_llm_overrides
 from app.schemas.common import ApiResponse
 from app.storage.service import StorageService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+
+
+def _llm_payload() -> dict[str, Any]:
+    """大模型配置摘要 + ``persisted`` 标记。
+
+    ``persisted`` 回答的是「这份配置重启后还在吗」——
+    它决定了设置页提示的是「后端已配置」还是「重启后会丢失，建议点保存并应用」。
+    """
+    data = settings.llm_model_summary()
+    data["persisted"] = has_persisted(settings.data_root_path)
+    return data
 
 
 class LLMTestRequest(BaseModel):
@@ -63,54 +75,6 @@ def agent_settings() -> ApiResponse[dict[str, Any]]:
     return ApiResponse[dict[str, Any]](data=settings.agent_context_summary())
 
 
-@router.get("/local_router", response_model=ApiResponse[dict[str, Any]])
-def local_router_settings() -> ApiResponse[dict[str, Any]]:
-    """本地 Router 的只读状态（模式 / 产物路径 / 是否已加载）。
-
-    只读是刻意的：模式切换会**改变线上路由行为**，不该由一个 HTTP 请求顺手完成
-    （设置页可切换的那些参数都只影响上下文预算，不影响决策路径）。
-    切档请改 `backend/.env` 的 `LOCAL_ROUTER_MODE` 后重启。
-
-    这里附带「产物是否已就位/是否过期」，因为最常见的困惑是
-    「明明打开了 shadow 却没有新数据」—— 那通常是模型不存在或平台工具清单已变。
-    """
-    summary = settings.local_router_summary()
-    try:
-        from app.local_router.model import artifact_path, get_model
-
-        path = artifact_path()
-        model = get_model() if summary["active"] else None
-        summary |= {
-            "artifact": str(path),
-            "artifact_exists": path.exists(),
-            "artifact_loaded": model is not None,
-            "artifact_staleness": model.staleness() if model is not None else None,
-        }
-        if summary["active"] and model is None and path.exists():
-            # 文件在却加载不了 ⇒ 过期或结构不符，这类静默失效必须显式暴露。
-            summary["artifact_staleness"] = summary["artifact_staleness"] or (
-                "产物存在但未能加载（可能已过期，请重跑 scripts/router/train_runtime_l1.py）"
-            )
-    except Exception as exc:  # noqa: BLE001 — 状态查询不该因模型层异常而 500
-        summary["probe_error"] = f"{type(exc).__name__}: {exc}"
-
-    # Qwen 神经路由的可用性探测。**刻意不在这里触发加载**（加载要几秒，
-    # 一次状态查询不该付出这个代价），只回答三件事：依赖装没装、权重在不在、
-    # 现在是否已加载。真正的加载留给第一次真实请求。
-    try:
-        from app.local_router import qwen as qwen_module
-
-        summary |= {
-            "qwen_deps_installed": qwen_module.available(),
-            "qwen_deps_error": qwen_module.unavailable_reason(),
-            "qwen_loaded": qwen_module.is_loaded(),
-            "qwen_device": qwen_module.device_of(),
-        }
-    except Exception as exc:  # noqa: BLE001
-        summary["qwen_probe_error"] = f"{type(exc).__name__}: {exc}"
-    return ApiResponse[dict[str, Any]](data=summary)
-
-
 @router.put("/agent", response_model=ApiResponse[dict[str, Any]])
 def update_agent_settings(body: AgentSettingsUpdateRequest) -> ApiResponse[dict[str, Any]]:
     """更新当前进程中的 Agent 策略；重启后仍以 .env/默认配置为准。"""
@@ -148,7 +112,7 @@ def update_agent_settings(body: AgentSettingsUpdateRequest) -> ApiResponse[dict[
 
 @router.get("/llm", response_model=ApiResponse[dict[str, Any]])
 def llm_settings() -> ApiResponse[dict[str, Any]]:
-    return ApiResponse[dict[str, Any]](data=settings.llm_model_summary())
+    return ApiResponse[dict[str, Any]](data=_llm_payload())
 
 
 @router.put("/llm", response_model=ApiResponse[dict[str, Any]])
@@ -160,6 +124,10 @@ def update_llm_settings(body: LLMUpdateRequest) -> ApiResponse[dict[str, Any]]:
     而调用方（如设置页的「应用到 Agent」）通常只带 base_url / model / api_key，
     于是 Pydantic 默认的 None 会把已配置的 context_window 与 max_output_tokens
     静默清空——表现为「同步一次模型，输出上限就丢了」。
+
+    **改动会落盘**：写入 ``{DATA_ROOT}/llm_settings.json``，进程重启后由
+    ``config._restore_persisted_llm`` 回填。此前这份配置只活在内存里，
+    用户每次重启平台都得重点一次「保存并应用」。
     """
     settings.LLM_PROVIDER = body.provider_type.strip() or "openai_compatible"
     settings.LLM_BASE_URL = body.base_url.strip()
@@ -170,7 +138,8 @@ def update_llm_settings(body: LLMUpdateRequest) -> ApiResponse[dict[str, Any]]:
         settings.LLM_MAX_OUTPUT_TOKENS = body.max_output_tokens
     if body.api_key.strip():
         settings.LLM_API_KEY = body.api_key.strip()
-    return ApiResponse[dict[str, Any]](data=settings.llm_model_summary())
+    save_llm_overrides(settings, settings.data_root_path)
+    return ApiResponse[dict[str, Any]](data=_llm_payload())
 
 
 class LLMRemoteToggleRequest(BaseModel):
@@ -186,9 +155,12 @@ def update_llm_remote(body: LLMRemoteToggleRequest) -> ApiResponse[dict[str, Any
 
     **只切开关、不动凭据**：`LLM_API_KEY` / base_url / model 原样保留，重新开启立即生效。
     这样既不会出现「关一次就要重填 Key」，也不会和 PUT /llm 的条件赋值语义打架。
+
+    开关状态同样落盘：它是用户显式做过的一次决定，重启后被悄悄改回去更糟。
     """
     settings.LLM_REMOTE_ENABLED = body.enabled
-    return ApiResponse[dict[str, Any]](data=settings.llm_model_summary())
+    save_llm_overrides(settings, settings.data_root_path)
+    return ApiResponse[dict[str, Any]](data=_llm_payload())
 
 
 def _provider_error_message(exc: Exception) -> str:

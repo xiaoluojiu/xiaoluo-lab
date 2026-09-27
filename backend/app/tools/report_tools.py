@@ -14,7 +14,7 @@ from typing import Any
 
 import polars as pl
 
-from app.agent.permission.models import Permission
+from app.agent.permission import Permission
 from app.data_engine.json_utils import json_safe
 from app.reports.saved import save_report
 from app.tools.base import Tool, ToolServices
@@ -107,6 +107,9 @@ class ReportGenerateTool(Tool):
         "type": "object",
         "properties": {
             "dataset_id": {"type": "integer"},
+            # ★ 同 dataset.inspect：不给 version 就写 latest，而 latest 可能已被一次
+            #   空结果操作顶成 0 行的表 —— 报告会在一张空表上生成（第十二轮实测）。
+            "version": {"type": "integer", "description": "基于哪个版本生成报告；不给则读最新版本"},
             "title": {"type": "string"},
             "request": {"type": "string", "description": "用户的原始分析诉求，用于让 LLM 撰写有针对性的正文"},
             "conclusions": {"type": "array", "items": {"type": "string"}},
@@ -127,7 +130,11 @@ class ReportGenerateTool(Tool):
         dataset_id = int(params["dataset_id"])
         ds = services.require("dataset_service")
         engine = services.require("data_engine_service")
-        version = ds.get_version_row(dataset_id, None)
+        wanted = params.get("version")
+        try:
+            version = ds.get_version_row(dataset_id, int(wanted) if wanted else None)
+        except Exception:  # noqa: BLE001 - 指定版本不存在就退回最新
+            version = ds.get_version_row(dataset_id, None)
         df = ds.load_version(dataset_id, version.version)
         info = {
             "dataset_id": dataset_id,

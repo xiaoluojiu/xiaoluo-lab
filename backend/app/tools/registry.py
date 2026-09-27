@@ -7,7 +7,7 @@ import logging
 import re
 from typing import Any
 
-from app.agent.permission.manager import PermissionManager
+from app.agent.permission import PermissionManager
 from app.core.config import TOOL_CATEGORY_HINTS
 from app.core.exceptions import AppException
 from app.core.registry import Registry
@@ -122,10 +122,14 @@ class ToolRegistry(Registry[Tool]):
         tool = self.get(name)
         services = services or ToolServices()
         decision = self.permission_manager.check(context.user_id, tool, context, params)
-        if decision.denied:
-            raise ToolPermissionError(decision.reason, details={"tool": name})
+        # 顺序即语义：先判「要不要人确认」，再判「是不是被规则挡死」。
+        # 反过来的话，NEEDS_CONFIRMATION 会被 decision.denied 吃掉（它的 allowed
+        # 也是 False），高风险工具在用户点过「允许」之后仍以「需要你确认后才会执行」
+        # 失败一次 —— 用户看到的是「确认无效」，而不是「缺权限」。
         if decision.needs_confirmation and not confirmed:
             raise ToolConfirmationRequired(decision.reason, details={"tool": name})
+        if decision.denied:
+            raise ToolPermissionError(decision.reason, details={"tool": name})
         try:
             return tool.execute(params, context, services)
         except (ToolPermissionError, ToolConfirmationRequired):

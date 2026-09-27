@@ -58,18 +58,25 @@ const MAX_POLL_FAILURES = 8;
  * `document.hidden` 时轮询会跳过本次请求（省后台资源），若标签页长期不回到前台，
  * 定时器既不推进也不计失败 ⇒ 无限期挂起。给一条总时长上限兜住这种情况。
  */
-const POLL_MAX_MS = 300_000;
+const POLL_MAX_MS = 600_000;
 /** 需要用户介入的状态：轮询到这里必须停（继续轮询没有意义，答案在用户那里）。 */
 const AWAITING_USER_STATUSES = new Set(["waiting_confirmation", "waiting_clarification"]);
 
 /**
- * SSE 流的墙钟上限。
+ * SSE 的两条超时，各管一件事 —— 只留一条必然出错。
  *
- * 裸 `fetch` 没有超时（axios 侧有 60s，见 api/client.ts），后端 SSE tail 最长可挂
- * `AGENT_SSE_CONFIRM_WAIT_SECONDS`（默认 900s）。流不结束 ⇒ `busy` / `sendingRef`
- * 不复位 ⇒ 界面停在「发送中」、后续输入被静默吞掉。这里到点直接 abort 同一条流。
+ * 1. **空闲上限**：`STREAM_IDLE_TIMEOUT_MS` 内一条事件都没有 ⇒ 后端大概率卡住了，
+ *    必须放弃等待并给提示。它**每收到一条事件就重置**。
+ * 2. **硬上限**：`STREAM_HARD_TIMEOUT_MS`。后端 `WALL_CLOCK_SECONDS` 是 600s，
+ *    超过它引擎自己会终止运行；这里多留 20s 收尾余量。
+ *
+ * 为什么不能只有一条墙钟：早先只有一个 120s 的墙钟，而 ml.train 在大数据上
+ * 跑两三百秒是常态、期间事件一直在推。于是界面在 120s 硬生生 abort，
+ * 弹出「Agent 120 秒未响应」—— 用户明明看着进度条在走，却被告知没响应。
+ * 反过来说只有空闲上限也不行：后端真的挂死时一条事件都不来，能一直等到天亮。
  */
-const STREAM_TIMEOUT_MS = 120_000;
+const STREAM_IDLE_TIMEOUT_MS = 120_000;
+const STREAM_HARD_TIMEOUT_MS = 620_000;
 
 /** 仍在进行中的状态（轮询需要继续）。与 AWAITING_USER_STATUSES 互补。 */
 function isInFlight(status: string): boolean {
@@ -165,6 +172,8 @@ export function useAgentRun(opts: UseAgentRunOptions) {
   clarificationRef.current = clarification;
   /** 本轮 SSE 是否因超时被中断（用于把「超时」与「用户主动中断」区分开）。 */
   const timedOutRef = useRef(false);
+  /** 本次超时是空闲超时还是硬上限：提示文案要能说清是哪一种。 */
+  const idleReasonRef = useRef("");
 
   /** 用户手动切页签：置上「用户已选择」标记，之后不再被自动切换覆盖。 */
   const setInspectorTab = useCallback((tab: InspectorTab) => {
@@ -434,10 +443,20 @@ export function useAgentRun(opts: UseAgentRunOptions) {
       // 超时复用**同一个** controller：多建一个 controller 会让「一次中断」变成
       // 两次 abort 调用，也让「谁中断的」变得难以区分。
       timedOutRef.current = false;
-      const streamTimer = window.setTimeout(() => {
+      idleReasonRef.current = "";
+      const fire = (reason: string) => {
         timedOutRef.current = true;
+        idleReasonRef.current = reason;
         controller.abort();
-      }, STREAM_TIMEOUT_MS);
+      };
+      let idleTimer = window.setTimeout(
+        () => fire(`Agent ${Math.round(STREAM_IDLE_TIMEOUT_MS / 1000)} 秒内没有任何进展`),
+        STREAM_IDLE_TIMEOUT_MS,
+      );
+      const hardTimer = window.setTimeout(
+        () => fire(`已等待 ${Math.round(STREAM_HARD_TIMEOUT_MS / 1000)} 秒`),
+        STREAM_HARD_TIMEOUT_MS,
+      );
       appendMessage({ role: "user", content });
       setProgress(5);
       setStage("理解任务");
@@ -454,6 +473,13 @@ export function useAgentRun(opts: UseAgentRunOptions) {
           onEvent: (ev) => {
             runId = ev.run_id;
             applyEffects(push(ev), ev.run_id);
+            // ★ 有事件就说明后端还活着：空闲计时器必须重置。
+            //   否则一条跑了 200 秒、全程在推事件的长任务会被 120 秒墙钟掐断。
+            window.clearTimeout(idleTimer);
+            idleTimer = window.setTimeout(
+              () => fire(`Agent ${Math.round(STREAM_IDLE_TIMEOUT_MS / 1000)} 秒内没有任何进展`),
+              STREAM_IDLE_TIMEOUT_MS,
+            );
           },
           onDone: () => {
             setBusy(false);
@@ -480,7 +506,8 @@ export function useAgentRun(opts: UseAgentRunOptions) {
         timedOutRef.current = false;
         const aborted = controller.signal.aborted || (e instanceof DOMException && e.name === "AbortError");
         if (timedOut) {
-          onError(`Agent ${Math.round(STREAM_TIMEOUT_MS / 1000)} 秒未响应，已停止等待。任务可能仍在后台运行，可稍后查看该会话的运行记录。`);
+          const why = idleReasonRef.current || "超时";
+          onError(`${why}，已停止等待。任务可能仍在后台运行，可稍后查看该会话的运行记录。`);
         } else if (!aborted) {
           onError(errText(e, "发送失败"));
         }
@@ -496,7 +523,8 @@ export function useAgentRun(opts: UseAgentRunOptions) {
           autoInspectorTab("activity");
         }
       } finally {
-        window.clearTimeout(streamTimer);
+        window.clearTimeout(idleTimer);
+        window.clearTimeout(hardTimer);
       }
     },
     [
@@ -573,8 +601,14 @@ export function useAgentRun(opts: UseAgentRunOptions) {
 
   /**
    * 请求取消当前运行。
-   * 后端只在「步骤边界」检查 cancel_requested，长步骤（训练 / 报告生成 / 大模型响应）
-   * 期间不会立刻停止，因此补上轮询兜底，让进度条继续反映真实状态。
+   *
+   * 两种结果，界面要分别处理：
+   * - **运行中**：后端只在步骤边界检查标记，长步骤（训练 / 报告 / 大模型响应）不会
+   *   立刻停，这里只能提示「将在当前步骤结束后停止」，并靠轮询反映真实进度。
+   * - **挂起中（等确认 / 等补充信息）**：后端会当场把运行收成终态。此时再显示
+   *   「将在当前步骤结束后停止」是错的，而且等待期间 SSE 还开着 —— 最终话术由
+   *   SSE 的 completed 事件补发（唯一出口）；只有在没有活动流时（例如切回一个
+   *   历史挂起运行后点停止）才需要自己补一条消息。
    */
   const stop = useCallback(async () => {
     const target = activeRunId;
@@ -584,14 +618,28 @@ export function useAgentRun(opts: UseAgentRunOptions) {
     // 取消同时撤回待澄清面板：等待态已终止，再显示问题会误导用户。
     setClarification(null);
     try {
-      await cancelRun(target);
-      setStage("已请求取消，将在当前步骤结束后停止");
-      startPolling(target);
+      const cancelled = await cancelRun(target);
+      if (isInFlight(cancelled.status)) {
+        setStage("已请求取消，将在当前步骤结束后停止");
+        startPolling(target);
+        return;
+      }
+      setRun(cancelled);
+      setEvents(cancelled.events ?? []);
+      setPermission(null);
+      setClarification(null);
+      setStage(stageOfRun(cancelled));
+      setProgress(100);
+      setBusy(false);
+      sendingRef.current = false;
+      if (!busy && cancelled.final_answer) {
+        appendMessage({ role: "assistant", content: cancelled.final_answer });
+      }
     } catch (e) {
       onError(errText(e, "取消失败"));
       setStage("取消失败");
     }
-  }, [activeRunId, onError, startPolling]);
+  }, [activeRunId, busy, onError, startPolling, appendMessage, setEvents]);
 
   /**
    * 会话镜像：切会话 / 新建 / 删除后回退时，中断上一条流与轮询、清空本轮状态，

@@ -160,11 +160,12 @@ def delete_dataset(
     dataset_id: int,
     service: DatasetService = Depends(get_dataset_service),
 ) -> ApiResponse[dict]:
-    service.delete(dataset_id)
+    deleted = service.delete(dataset_id)
 
     return ApiResponse(
         data={
             "deleted": True,
             "dataset_id": dataset_id,
+            **deleted,
         }
     )

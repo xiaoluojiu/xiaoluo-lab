@@ -60,3 +60,6 @@ class DecisionTreeClassifierAdapter(BaseSklearnClassifier):
 class RandomForestClassifierAdapter(BaseSklearnClassifier):
     name = "random_forest_classifier"
     estimator_factory = staticmethod(ensemble.RandomForestClassifier)
+    # 与 random_forest_regressor 同口径：n_jobs=-1 并行 + max_depth=16 限深，
+    # 避免默认 max_depth=None 在高基数 one-hot 特征上既慢又过拟合。
+    default_params = {"n_jobs": -1, "max_depth": 16}

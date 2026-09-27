@@ -1,0 +1,61 @@
+======================================================================
+BACKEND（AI 实验室）
+======================================================================
+
+======================================================================
+FRONTEND（AI 实验室）
+======================================================================
+
+======================================================================
+文件规模（行数）
+======================================================================
+   670  backend/app/agent/answer.py
+   130  backend/app/agent/channels.py
+  1435  backend/app/agent/engine.py
+   668  backend/app/agent/intents.py
+    35  backend/app/agent/limits.py
+   345  backend/app/agent/llm.py
+   486  backend/app/agent/models.py
+   210  backend/app/agent/permission.py
+   388  backend/app/agent/playbooks.py
+   728  backend/app/agent/slots.py
+   338  backend/app/agent/store.py
+   587  backend/app/api/v1/agent.py
+     1  backend/app/tools/__init__.py
+   116  backend/app/tools/base.py
+    42  backend/app/tools/builtin.py
+   181  backend/app/tools/connector_tools.py
+    41  backend/app/tools/context.py
+   594  backend/app/tools/data_tools.py
+   521  backend/app/tools/dataset_tools.py
+   516  backend/app/tools/eda_tools.py
+  1088  backend/app/tools/ml_tools.py
+   183  backend/app/tools/registry.py
+   235  backend/app/tools/report_tools.py
+    98  backend/app/tools/result.py
+   578  backend/app/tools/workflow_tools.py
+   156  backend/app/core/registry.py
+   139  backend/app/core/runtime_settings.py
+   264  frontend/src/pages/AI/index.tsx
+   109  frontend/src/features/agent/AgentTimeline.tsx
+   105  frontend/src/features/agent/CapabilitiesPanel.tsx
+   144  frontend/src/features/agent/ChatPanel.tsx
+   111  frontend/src/features/agent/ClarificationPanel.tsx
+    19  frontend/src/features/agent/PermissionRequest.tsx
+   263  frontend/src/features/agent/RunInspector.tsx
+    85  frontend/src/features/agent/RunUsageViews.tsx
+   114  frontend/src/features/agent/SessionSidebar.tsx
+    21  frontend/src/features/agent/SmartAnalysisButton.tsx
+    71  frontend/src/features/agent/ToolCallCard.tsx
+    26  frontend/src/features/agent/hooks/useAgentEvents.ts
+   749  frontend/src/features/agent/hooks/useAgentRun.ts
+    72  frontend/src/features/agent/hooks/useAgentUsage.ts
+   319  frontend/src/features/agent/hooks/useAiSession.ts
+    62  frontend/src/store/aiLab.ts
+   143  frontend/src/api/agent.ts
+   193  frontend/src/lib/agentEvents.ts
+   109  frontend/src/lib/llmSync.ts
+    60  frontend/src/lib/toolLabel.ts
+    82  frontend/src/lib/toolPermissions.ts
+   117  frontend/src/lib/browserLlm.ts
+   218  frontend/src/types/agent.ts

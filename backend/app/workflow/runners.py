@@ -11,8 +11,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from app.agent.llm.base import LLMMessage
-from app.agent.llm.openai_compatible import OpenAICompatibleProvider
+from app.agent.llm import LLMMessage
+from app.agent.llm import OpenAICompatibleProvider
 from app.core.config import settings
 from app.core.exceptions import WorkflowException
 from app.data_engine.json_utils import json_safe
@@ -74,10 +74,22 @@ def _summarize(df) -> dict[str, Any]:
     return {"row_count": df.height, "column_count": df.width, "columns": df.columns}
 
 
+#: 会出现在节点 config 里、但**不是模型参数**的键。
+#:
+#: ★ 真实事故：Agent 编排/推荐的 ml.train 节点带了 ``dataset_id``（因为它同时
+#:   也是 dataset.read 的必填项，平铺写法里很容易一起带上），剩下的 config 被
+#:   整个塞进 ``MODEL_REGISTRY.create`` ⇒ ``TypeError: RandomForestRegressor
+#:   收到不认识的参数 dataset_id``。工作流跑到建模节点就崩，而报错完全没提
+#:   dataset_id 是从哪来的 —— 用户只会以为「建模不可用」。
+#:   数据类节点靠 dataset_id 取数，建模节点的 df 来自**上游**，这里一律剔除。
+_NON_MODEL_CONFIG_KEYS = frozenset({"dataset_id", "version", "__ui"})
+
+
 def _ml_config(node) -> dict[str, Any]:
     raw = dict(node.config or {})
     params = raw.get("params")
-    return dict(params) if isinstance(params, dict) else {k: v for k, v in raw.items() if k != "__ui"}
+    picked = dict(params) if isinstance(params, dict) else {k: v for k, v in raw.items() if k != "__ui"}
+    return {k: v for k, v in picked.items() if k not in _NON_MODEL_CONFIG_KEYS}
 
 
 # 每个节点类型「缺少就一定跑不起来」的必需 config 键（单一事实源）。

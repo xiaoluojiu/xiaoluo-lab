@@ -15,8 +15,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from app.agent.permission.models import Permission
-from app.agent.permission.rules import RiskLevel
+from app.agent.permission import Permission, RiskLevel, risk_needs_confirmation
 from app.core.exceptions import AppException
 from app.tools.context import ToolExecutionContext
 from app.tools.result import ToolResult
@@ -67,7 +66,8 @@ class Tool(ABC):
     input_schema: dict[str, Any] = {}
     output_schema: dict[str, Any] = {}
     permission: Permission = Permission.READ_DATA
-    risk_level: RiskLevel = RiskLevel.LOW
+    # 缺省 MEDIUM 而非 LOW：忘记声明风险的工具不应被静默放行（安全默认）。
+    risk_level: RiskLevel = RiskLevel.MEDIUM
     requires_confirmation: bool = False
 
     @abstractmethod
@@ -89,6 +89,16 @@ class Tool(ABC):
                 details={"dataset_id": dataset_id, "allowed": sorted(context.dataset_ids)},
             )
 
+    @property
+    def needs_confirmation(self) -> bool:
+        """是否必须经用户确认后才能执行。
+
+        ``requires_confirmation`` 是显式开关，但绝大多数工具只写了
+        ``risk_level = "high"`` 就以为说清楚了。这里把两者合并，
+        让「这个工具危险吗」只有一个答案、一处实现。
+        """
+        return bool(self.requires_confirmation) or risk_needs_confirmation(self.risk_level)
+
     def describe(self) -> dict[str, Any]:
         """工具自描述（供 Agent 选择工具 / LLM function calling）。"""
         return {
@@ -99,5 +109,8 @@ class Tool(ABC):
             "output_schema": self.output_schema,
             "permission": str(self.permission),
             "risk_level": str(self.risk_level),
-            "requires_confirmation": self.requires_confirmation,
+            # 必须下发**合并后**的结论：前端设置页按它区分高风险 / 低风险，
+            # 并决定默认是否自动放行。下发类属性原值会让所有高风险工具
+            # 自称「低风险、可自动放行」，用户连确认弹窗都见不到。
+            "requires_confirmation": self.needs_confirmation,
         }

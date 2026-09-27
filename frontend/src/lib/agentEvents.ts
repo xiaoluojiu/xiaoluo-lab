@@ -168,14 +168,23 @@ export function eventEffects(ev: AgentEvent, label: (tool: string) => string = (
                 role: "assistant",
                 content: p.final_answer,
                 source: (p.answer_source as ChatMessage["source"]) ?? null,
+                charts: (p.charts as ChatMessage["charts"]) ?? null,
               }
             : undefined,
       };
     case "failed":
+      // 后端失败时也会给出一段人能读的说明（哪一步挂了、下一步该怎么问），
+      // 优先显示它；只有拿不到时才退回原始报错，避免把技术错误直接甩给用户。
       return {
         progress: 100,
         stage: "任务失败",
-        append: { role: "assistant", content: `执行失败：${String(p.error ?? "未知错误")}` },
+        append: {
+          role: "assistant",
+          content:
+            typeof p.final_answer === "string" && p.final_answer
+              ? p.final_answer
+              : `执行失败：${String(p.error ?? "未知错误")}`,
+        },
       };
     default:
       // usage 不在这里处理：Token 账本由 useAgentUsage 直接从事件列表派生。

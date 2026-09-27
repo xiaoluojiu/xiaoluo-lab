@@ -48,7 +48,9 @@ export function ClarificationPanel({
     <div className="dialog-mask" role="presentation">
       <div className="dialog" role="dialog" aria-modal="true" aria-label="需要补充信息">
         <h3>需要你补充一点信息</h3>
-        <p className="muted" style={{ marginTop: 0 }}>{request.question || "请补充必要信息后继续。"}</p>
+        {/* pre-line：workflow.recommend 的问句是多行的（列出了 3 个方案），
+            不保留换行用户看到的就是一坨挤在一起的文字。 */}
+        <p className="muted clarify-question">{request.question || "请补充必要信息后继续。"}</p>
 
         {useSelect ? (
           <div className="mt">

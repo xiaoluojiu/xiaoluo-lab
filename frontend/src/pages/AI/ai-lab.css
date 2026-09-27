@@ -128,6 +128,19 @@
 .ai-route-notice { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; margin: 10px 14px 0; padding: 9px 12px; border: 1px solid var(--warning); border-radius: 8px; background: color-mix(in srgb, var(--warning) 8%, var(--surface)); color: var(--text); font-size: 12px; line-height: 1.5; }
 .ai-error { margin: 0 14px 12px; }
 
+/* 待澄清问句：可能是多行（如 Workflow 方案列表），必须保留换行 */
+.clarify-question { margin-top: 0; white-space: pre-line; line-height: 1.6; max-height: 40vh; overflow-y: auto; }
+
+/* ---------- 对话内嵌图表 ----------
+   后端 eda.visualize 现在随 completed 事件下发内联 SVG，这里必须真的显示出来。
+   缩略状态限高 + 点击放大：图直接铺满会把整段对话顶出视口。 */
+.chat-charts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.chat-chart { flex: 1 1 260px; min-width: 240px; max-width: 100%; margin: 0; padding: 8px 10px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.chat-chart-title { margin-bottom: 6px; color: var(--muted); font-size: 11px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-chart-img { display: block; width: 100%; height: auto; max-height: 220px; object-fit: contain; border-radius: 6px; background: var(--surface-muted); cursor: zoom-in; transition: max-height 0.18s ease; }
+.chat-chart.expanded { flex-basis: 100%; }
+.chat-chart.expanded .chat-chart-img { max-height: 560px; cursor: zoom-out; }
+
 /* ---------- 回答来源徽标：这条回答到底是谁给的 ----------
    远程（--primary）与「平台内置规则 / 降级兜底」（--warning）必须一眼可分：
    开启远程 API 后，调用失败会静默退回内置规则，不标注的话用户无从判断。 */

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.agent.permission.models import Permission
+from app.agent.permission import Permission
 
 
 @dataclass

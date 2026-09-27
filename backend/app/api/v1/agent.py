@@ -1,382 +1,587 @@
-"""Prompt 131-132：Agent API。"""
+"""Agent API（数据分析 Agent）。
+
+端点与事件名**照旧**，前端零改动；内部实现已整体替换为
+「规则路由 → 固定 playbook → 有界执行 → 模板/LLM 渲染」。
+
+关于 SSE
+--------
+``POST /sessions/{id}/messages`` 且 ``stream=true`` 时返回 ``text/event-stream``，
+一帧一个完整事件对象（前端按 ``\\n\\n`` 切帧，读 ``event:`` 与 ``data:``）。
+
+三条不能违反的约定：
+
+1. 每条事件都要带 ``run_id`` —— 前端用它作为 confirm/deny/cancel/clarify 的目标
+2. 结束帧必须是 ``event: done`` —— 收到它前端才停止读取
+3. **挂起时不关闭流**：等待确认/补充信息期间流保持打开，
+   恢复后的 ``completed`` 必须经同一条流补发，那是答案进入聊天区的唯一出口
+"""
 
 from __future__ import annotations
 
+import asyncio
 import json
-import queue
-import threading
+import logging
 import time
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.agent.runtime.models import RunStatus
-from app.agent.runtime.runtime import AgentRuntime
-from app.api.deps import get_agent_runtime
-from app.core.config import settings
+from app.agent.channels import CHANNELS, EMPTY, is_terminal_event, sse_frame, wait_deadline
+from app.agent.engine import MAX_LLM_CALLS, MAX_STEPS
+from app.agent.intents import is_abandonment
+from app.agent.models import AgentRun, EventType, RunStatus
+from app.agent.store import AgentStore
+from app.api.deps import build_agent_engine, get_agent_store
 from app.schemas.common import ApiResponse
+from app.tools.builtin import TOOL_REGISTRY
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
+#: SSE 在挂起状态下的最长等待时间（秒）。
+#: 前端有两条超时：空闲 120s（收到事件就重置）与硬上限 620s（对齐引擎的
+#: ``WALL_CLOCK_SECONDS``），到点会 abort 并转轮询；这里放宽到 15 分钟，
+#: 是为了让「用户稍后才点确认」仍能走同一条流拿到答案。
+SSE_WAIT_SECONDS = 900.0
 
-class AgentSessionCreate(BaseModel):
+
+# ----------------------------------------------------------------------
+# 请求体
+# ----------------------------------------------------------------------
+class SessionCreate(BaseModel):
     user_id: str = "anonymous"
-    title: str = ""
+    title: str = "新会话"
     dataset_ids: list[int] = Field(default_factory=list)
 
 
-class AgentSessionContextUpdate(BaseModel):
+class SessionPatch(BaseModel):
+    archived: bool = False
+
+
+class SessionContextPatch(BaseModel):
     dataset_ids: list[int] = Field(default_factory=list)
 
 
-class AgentSessionArchiveUpdate(BaseModel):
-    archived: bool = True
-
-
-class AgentMessageRequest(BaseModel):
+class MessageRequest(BaseModel):
     content: str
-    stream: bool = False
-    dataset_ids: list[int] | None = None
+    stream: bool = True
+    dataset_ids: list[int] = Field(default_factory=list)
 
 
-class AgentClarifyRequest(BaseModel):
-    """回答 Agent 的结构化反问（第一层：Pre-flight / agent.clarify）。
-
-    ``answer`` 是**机读值**：取反问里的 ``options[].value``，
-    不是自由文本。前端应渲染成选择器而不是输入框。
-    """
-
-    answer: str = Field(..., min_length=1, max_length=500)
-    # 安全约束（S-1/S-2）：
-    # - 不接受客户端传入 confirmed —— 高风险确认只能走 POST /agent/runs/{id}/confirm
-    # - 不接受客户端传入 role —— 角色由服务端决定（当前固定 analyst），防止提权到 admin
+class ClarifyRequest(BaseModel):
+    answer: str
 
 
-def _ensure_idle(runtime: AgentRuntime, session_id: str) -> None:
-    active = runtime.store.active_run(session_id)
-    if active is not None:
-        raise HTTPException(status_code=409, detail={"code": "agent_turn_active", "message": f"当前会话正在执行运行 {active.id}，请等待当前 Turn 完成。", "run_id": active.id})
-
-
-# S-6：_ensure_idle 检查与 worker 线程 store.add_run 之间存在竞态窗口，
-# 用进程内会话预留集合堵住：请求线程先占位，worker 结束后释放。
-_RESERVE_LOCK = threading.Lock()
-_RESERVED_SESSIONS: set[str] = set()
-
-
-def _try_reserve(session_id: str) -> bool:
-    with _RESERVE_LOCK:
-        if session_id in _RESERVED_SESSIONS:
-            return False
-        _RESERVED_SESSIONS.add(session_id)
-        return True
-
-
-def _release_reservation(session_id: str) -> None:
-    with _RESERVE_LOCK:
-        _RESERVED_SESSIONS.discard(session_id)
-
-
-#: SSE tail 循环的退出条件：落到这些状态就收流。
-#
-# 注意 WAITING_CLARIFICATION **必须**在这里：澄清态的恢复走独立的
-# ``POST /runs/{id}/clarify``（与 /confirm 一样是同步跑完的另一个 HTTP 请求），
-# 而前端在 SSE 未结束时 ``busy`` / ``sendingRef`` 都不会复位——界面停在「发送中」、
-# 用户输入被静默吞掉，用户根本没有机会去回答那个问题。
-# 早期这里只有 completed/failed（那时还没有澄清态），于是澄清态被当成「还在跑」，
-# tail 一直挂到 AGENT_SSE_CONFIRM_WAIT_SECONDS（默认 900s）—— 这就是「8% 永久不动」。
-# 收流后前端走 refreshRun + 轮询拉全量事件，恢复阶段的事件通过 /clarify 的响应拿到。
-#
-# WAITING_CONFIRMATION **不**在这里：授权闭环依赖同一条流把 resume 之后的事件
-# 继续推给浏览器（见 _sse_live_run 的 docstring），这条路径已验证，保持原样。
-_TERMINAL_STATUSES = {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.WAITING_CLARIFICATION}
-
-
-def _sse_from_events(events: list) -> StreamingResponse:
-    def generate():
-        for event in events:
-            yield event.to_sse()
-        yield "event: done\ndata: {}\n\n"
-    return StreamingResponse(generate(), media_type="text/event-stream")
-
-
-def _sse_live_run(runtime: AgentRuntime, session, content: str) -> StreamingResponse:
-    """跑到运行结束（含「等待确认 → 用户确认 → 继续执行」的完整闭环）。
-
-    过去 SSE 在 runtime.run() 返回时就关闭，而此时运行可能只是停在
-    WAITING_CONFIRMATION：
-      - 用户点确认后 resume 在另一个 HTTP 请求里同步执行，事件只写进 run.events，
-        没有任何通道推给浏览器 → 界面从「已确认」开始就再无进展，看起来卡死；
-      - 若计划里还有第二个受控工具，UI 甚至看不到新的确认提示。
-    这里让 SSE 在等待确认期间保持打开，并持续 tail run.events，把 resume 之后
-    产生的事件继续推给同一条流，前端无需改动即可看到完整过程。
-    """
-    # 调用方已完成 _ensure_idle + 会话预留
-    events: queue.Queue = queue.Queue()
-    # 客户端断开标记：由 generate() 在流被关闭时置位，让 tail 线程立即退出，
-    # 而不是一直挂到 AGENT_SSE_CONFIRM_WAIT_SECONDS（默认 900s）。
-    tail_stop = threading.Event()
-
-    def on_event(event) -> None:
-        events.put(event)
-
-    def emit_new(seen_seq: int) -> int:
-        """把 run 上新增的事件补发到流里，返回最新 seq。"""
-        try:
-            current = runtime.get_run(run_holder[0].id)
-        except Exception:  # noqa: BLE001 - run 被删除时直接结束流
-            return seen_seq
-        for event in current.events:
-            if getattr(event, "seq", 0) > seen_seq:
-                seen_seq = event.seq
-                events.put(event)
-        return seen_seq
-
-    run_holder: list = []
-    original_run = runtime.run
-
-    def worker() -> None:
-        try:
-            run = original_run(session, content, on_event=on_event)
-            run_holder.append(run)
-        except Exception as exc:
-            # ★ exc 必须在 except 块内**立刻取值**。
-            # 之前把 str(exc) 写进了下面那个 lambda 的 f-string 里，而 lambda 是
-            # 在 SSE 取元素时才被调用的 —— 那时 except 块早已结束，Python 已经
-            # 隐式 `del exc`，于是本该报告「为什么失败」的这行代码自己抛
-            # NameError，SSE 流被掐断，前端只看到"连接中断"而没有任何原因。
-            error_payload = json.dumps(str(exc), ensure_ascii=False)
-            # 运行对象尚未建立时也要把失败原因送回 UI，避免 SSE 静默结束。
-            events.put(type("BootstrapEvent", (), {"to_sse": lambda self: f'event: failed\ndata: {{"payload": {{"error": {error_payload}}}}}\n\n'})())
-            _release_reservation(session.id)
-            events.put(None)
-            return
-
-        seen = len(run_holder[0].events)
-        deadline = time.time() + max(float(settings.AGENT_SSE_CONFIRM_WAIT_SECONDS), 1.0)
-        try:
-            # 进入等待确认：保持连接，等用户确认后继续 tail 事件，直到运行终态
-            while time.time() < deadline and not tail_stop.is_set():
-                status = run_holder[0].status
-                seen = emit_new(seen)
-                if status in _TERMINAL_STATUSES:
-                    break
-                # resume 是同步跑完的，留出一点余量确保事件都已落盘再收尾
-                time.sleep(0.3 if status == RunStatus.WAITING_CONFIRMATION else 0.15)
-        except Exception:  # noqa: BLE001 - tail 失败不应影响已产出结果
-            pass
-        finally:
-            runtime.store.persist(force=True)
-            _release_reservation(session.id)
-            events.put(None)
-
-    threading.Thread(target=worker, daemon=True, name="agent-run").start()
-
-    def generate():
-        try:
-            while True:
-                event = events.get()
-                if event is None:
-                    break
-                yield event.to_sse()
-            yield "event: done\ndata: {}\n\n"
-        except GeneratorExit:
-            tail_stop.set()
-            raise
-        except Exception:  # noqa: BLE001 - 客户端断开后 ASGI 会在下一次 send 抛错
-            tail_stop.set()
-            raise
-
-    return StreamingResponse(generate(), media_type="text/event-stream")
-
-
+# ----------------------------------------------------------------------
+# 会话
+# ----------------------------------------------------------------------
 @router.post("/sessions", response_model=ApiResponse[dict])
-def create_session(body: AgentSessionCreate, runtime: AgentRuntime = Depends(get_agent_runtime)) -> ApiResponse[dict]:
-    session = runtime.create_session(user_id=body.user_id, title=body.title, dataset_ids=body.dataset_ids)
-    return ApiResponse[dict](data=session.summary())
+def create_session(body: SessionCreate, store: AgentStore = Depends(get_agent_store)) -> ApiResponse[dict]:
+    session = store.create_session(user_id=body.user_id, title=body.title, dataset_ids=body.dataset_ids)
+    return ApiResponse[dict](data=session.to_dict())
 
 
 @router.get("/sessions", response_model=ApiResponse[list])
 def list_sessions(
-    user_id: str | None = Query(None),
-    include_archived: bool = Query(True, description="是否包含已归档会话；归档会话始终排在最后"),
-    runtime: AgentRuntime = Depends(get_agent_runtime),
+    user_id: str = "anonymous",
+    include_archived: bool = False,
+    store: AgentStore = Depends(get_agent_store),
 ) -> ApiResponse[list]:
-    sessions = runtime.list_sessions(user_id, include_archived=include_archived)
-    return ApiResponse[list](data=[s.summary() for s in sessions])
+    sessions = store.list_sessions(user_id=user_id, include_archived=include_archived)
+    return ApiResponse[list](data=[s.to_dict() for s in sessions])
 
 
 @router.patch("/sessions/{session_id}", response_model=ApiResponse[dict])
-def update_session(session_id: str, body: AgentSessionArchiveUpdate, runtime: AgentRuntime = Depends(get_agent_runtime)) -> ApiResponse[dict]:
-    """归档 / 取消归档。归档只改变列表可见性，不删除历史与运行记录。"""
-    session = runtime.set_session_archived(session_id, body.archived)
-    return ApiResponse[dict](data=session.summary())
+def patch_session(
+    session_id: str,
+    body: SessionPatch,
+    store: AgentStore = Depends(get_agent_store),
+) -> ApiResponse[dict]:
+    session = store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    session.archived = bool(body.archived)
+    store.update_session(session)
+    return ApiResponse[dict](data=session.to_dict())
 
 
 @router.delete("/sessions/{session_id}", response_model=ApiResponse[dict])
-def delete_session(session_id: str, runtime: AgentRuntime = Depends(get_agent_runtime)) -> ApiResponse[dict]:
-    try:
-        session = runtime.delete_session(session_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail={"code": "agent_turn_active", "message": str(exc)}) from exc
-    _release_reservation(session_id)
-    return ApiResponse[dict](data={"id": session.id, "deleted": True})
+def delete_session(session_id: str, store: AgentStore = Depends(get_agent_store)) -> ApiResponse[dict]:
+    """删除会话。
+
+    删之前必须先把**挂起态**运行收成终态，否则永远删不掉（历史缺陷）：
+
+    挂起（等待确认 / 等待补充信息）时引擎线程已在挂起点退出，没有任何人会再推进
+    这条 run。而 store 的守卫只认「terminal」，会把 waiting 也算成「未结束」→ 一律
+    409。前端那个「停止」按钮只对**当前正在查看**的 run 有效，从列表 / 归档视图够
+    不着，用户就卡在「既删不掉、也停不了」的死局里。
+
+    收成终态还有个副作用是必要的：挂起期间 SSE 流仍开着，``_finalize_cancelled``
+    会经 store 发一条 completed 并关通道，流才能干净收尾（否则要干等 900s 超时）。
+
+    对**真正在推进**的运行（pending / planning / running）线程还活着，强删会把 run
+    变成没人引用的孤儿，仍按 409 拒绝，前端据此提示「请先停止运行」。
+    """
+    session = store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    for run_id in list(session.run_ids):
+        run = store.get_run(run_id)
+        if run is not None and run.status.waiting:
+            _finalize_cancelled(run, store)
+
+    ok, message = store.delete_session(session_id)
+    if not ok:
+        status = 409 if "未结束" in message else 404
+        raise HTTPException(status_code=status, detail=message or "删除失败")
+    return ApiResponse[dict](data={"id": session_id, "deleted": True})
 
 
 @router.patch("/sessions/{session_id}/context", response_model=ApiResponse[dict])
-def update_session_context(session_id: str, body: AgentSessionContextUpdate, runtime: AgentRuntime = Depends(get_agent_runtime)) -> ApiResponse[dict]:
-    try:
-        session = runtime.store.update_session_context(session_id, body.dataset_ids)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail={"code": "agent_turn_active", "message": str(exc)}) from exc
-    return ApiResponse[dict](data=session.summary())
+def patch_session_context(
+    session_id: str,
+    body: SessionContextPatch,
+    store: AgentStore = Depends(get_agent_store),
+) -> ApiResponse[dict]:
+    session = store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    session.dataset_ids = list(body.dataset_ids)
+    store.update_session(session)
+    return ApiResponse[dict](data=session.to_dict())
 
 
-@router.post("/sessions/{session_id}/messages")
-def post_message(session_id: str, body: AgentMessageRequest, runtime: AgentRuntime = Depends(get_agent_runtime)):
-    session = runtime.get_session(session_id)
-    if body.dataset_ids is not None:
-        try:
-            session = runtime.store.update_session_context(session_id, body.dataset_ids)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail={"code": "agent_turn_active", "message": str(exc)}) from exc
-    _ensure_idle(runtime, session_id)
-    if not _try_reserve(session_id):
-        raise HTTPException(status_code=409, detail={"code": "agent_turn_active", "message": "当前会话已有进行中的请求，请稍后再试。"})
-    if body.stream:
-        return _sse_live_run(runtime, session, body.content)
-    try:
-        run = runtime.run(session, body.content)
-    finally:
-        _release_reservation(session_id)
-    runtime.store.persist(force=True)
-    data = run.summary()
-    if run.status == RunStatus.WAITING_CONFIRMATION:
-        data["hint"] = "存在高风险操作待确认：POST /agent/runs/{id}/confirm 继续执行"
-    return ApiResponse[dict](data=data)
-
-
+# ----------------------------------------------------------------------
+# 运行
+# ----------------------------------------------------------------------
 @router.get("/runs/{run_id}", response_model=ApiResponse[dict])
-def get_run(run_id: str, runtime: AgentRuntime = Depends(get_agent_runtime)) -> ApiResponse[dict]:
-    return ApiResponse[dict](data=runtime.get_run(run_id).full())
-
-
-@router.get("/runs/{run_id}/events")
-def get_run_events(run_id: str, runtime: AgentRuntime = Depends(get_agent_runtime)):
-    return _sse_from_events(runtime.get_run(run_id).events)
+def get_run(run_id: str, store: AgentStore = Depends(get_agent_store)) -> ApiResponse[dict]:
+    run = store.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="运行不存在")
+    return ApiResponse[dict](data=run.to_dict())
 
 
 @router.post("/runs/{run_id}/confirm", response_model=ApiResponse[dict])
-def confirm_run(run_id: str, runtime: AgentRuntime = Depends(get_agent_runtime)) -> ApiResponse[dict]:
-    run = runtime.get_run(run_id)
-    if run.status != RunStatus.WAITING_CONFIRMATION or run.pending_confirmation is None:
-        return ApiResponse[dict](data={**run.summary(), "hint": "该运行不在等待确认状态，已返回当前进度"})
-    session = runtime.get_session(run.session_id)
-    resumed = runtime.resume(session, run_id)
-    runtime.store.persist(force=True)
-    return ApiResponse[dict](data=resumed.summary())
+async def confirm_run(run_id: str, store: AgentStore = Depends(get_agent_store)) -> ApiResponse[dict]:
+    """放行当前待确认的高风险步骤。
 
-
-@router.post("/runs/{run_id}/clarify", response_model=ApiResponse[dict])
-def clarify_run(run_id: str, body: AgentClarifyRequest, runtime: AgentRuntime = Depends(get_agent_runtime)) -> ApiResponse[dict]:
-    """回答 Agent 的反问（第一层改造）。
-
-    与 ``/confirm`` 的区别：``/confirm`` 是授权（做不做），``/clarify`` 是补信息
-    （做哪个）。回答后运行从 Pre-flight 处重新规划，或从发起反问的那一步继续，
-    前面的重型步骤不重跑。
+    一次性凭据只对「被确认的那一个 (step_index, tool)」生效 —— 写成
+    ``authorized_key is None 也算通过`` 会让一次确认放行整条高风险链。
     """
-    run = runtime.get_run(run_id)
-    if run.status != RunStatus.WAITING_CLARIFICATION or run.pending_clarification is None:
-        return ApiResponse[dict](data={**run.summary(), "hint": "该运行不在等待澄清状态，已返回当前进度"})
-    resumed = runtime.answer_clarification(run_id, body.answer)
-    runtime.store.persist(force=True)
-    return ApiResponse[dict](data=resumed.summary())
+    run = store.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="运行不存在")
+    if run.status is not RunStatus.WAITING_CONFIRMATION or run.pending_confirmation is None:
+        # 幂等：重复确认不改变状态，直接回当前运行
+        return ApiResponse[dict](data=run.to_dict())
+
+    pending = run.pending_confirmation
+    run.authorized_key = f"{pending.step_index}:{pending.tool}"
+    run.pending_confirmation = None
+    run.status = RunStatus.RUNNING
+    store.update_run(run)
+
+    _resume(run_id, store)
+    return ApiResponse[dict](data=run.to_dict())
 
 
 @router.post("/runs/{run_id}/deny", response_model=ApiResponse[dict])
-def deny_run(run_id: str, runtime: AgentRuntime = Depends(get_agent_runtime)) -> ApiResponse[dict]:
-    """S-3：拒绝授权必须落库终止运行，否则会话被 WAITING_CONFIRMATION 永久锁死。"""
-    run = runtime.deny(run_id)
-    return ApiResponse[dict](data=run.summary())
+def deny_run(run_id: str, store: AgentStore = Depends(get_agent_store)) -> ApiResponse[dict]:
+    run = store.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="运行不存在")
+    if run.pending_confirmation is None:
+        return ApiResponse[dict](data=run.to_dict())
+
+    tool = run.pending_confirmation.tool
+    index = run.pending_confirmation.step_index
+    run.pending_confirmation = None
+    run.authorized_key = None
+    run.status = RunStatus.COMPLETED
+    run.final_answer = f"已拒绝「{tool}」的授权，该步骤未执行。"
+    run.finished_at = time.time()
+    store.add_event(
+        run,
+        EventType.COMPLETED,
+        {"final_answer": run.final_answer, "answer_source": None, "denied_step": index},
+    )
+    store.update_run(run)
+    channel = CHANNELS.get(run_id)
+    if channel is not None:
+        channel.close()
+    return ApiResponse[dict](data=run.to_dict())
 
 
 @router.post("/runs/{run_id}/cancel", response_model=ApiResponse[dict])
-def cancel_run(run_id: str, runtime: AgentRuntime = Depends(get_agent_runtime)) -> ApiResponse[dict]:
-    """T-10：请求取消运行；等待授权状态下取消等价于拒绝授权。"""
-    run = runtime.cancel(run_id)
-    data = run.summary()
-    if run.cancel_requested:
-        data["hint"] = "已请求取消，运行将在当前步骤结束后停止"
-    return ApiResponse[dict](data=data)
+def cancel_run(run_id: str, store: AgentStore = Depends(get_agent_store)) -> ApiResponse[dict]:
+    """请求停止。分两种情形，处理方式不同：
+
+    - **运行中**（pending / planning / running）：只打标记，引擎在**步骤边界**
+      检查它，不会强杀正在跑的工具（长训练/报告要跑完当前步骤才停）。
+    - **挂起中**（等待确认 / 等待补充信息）：引擎线程**已经退出**，没人会再推进
+      这条 run，标记只会被写进磁盘然后石沉大海。这里必须当场收成终态，
+      否则界面永远停在「等待确认」—— 既不能继续，也不能结束，只能刷新页面。
+    """
+    run = store.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="运行不存在")
+    if run.status.terminal:
+        # 幂等：已经结束的运行再点停止不改变任何东西
+        return ApiResponse[dict](data=run.to_dict())
+
+    if run.status.waiting:
+        _finalize_cancelled(run, store)
+        return ApiResponse[dict](data=run.to_dict())
+
+    run.cancel_requested = True
+    store.update_run(run)
+    return ApiResponse[dict](data=run.to_dict())
 
 
-def _trace_markdown(run) -> str:
-    """把一次 Agent 运行导出为可读的 Markdown 执行轨迹。"""
-    status = str(run.status)
-    lines = [
-        "# Agent 执行轨迹",
-        "",
-        f"- 运行 ID：`{run.id}`（会话 `{run.session_id}`）",
-        f"- 用户请求：{run.user_request}",
-        f"- 状态：{status} · 耗时 {run.elapsed():.1f}s · 工具调用 {run.tool_call_count} 次",
-        f"- Token：{run.token_ledger.actual_total_tokens}（LLM 调用 {run.token_ledger.llm_calls} 次）",
-        "",
-    ]
-    if run.error:
-        lines += ["## 失败原因", "", run.error, ""]
-    if run.plan:
-        lines += ["## 执行计划", "", f"目标：{run.plan.get('goal', '')}", ""]
-        for i, step in enumerate(run.plan.get("steps", []), 1):
-            if isinstance(step, dict):
-                lines.append(f"{i}. `{step.get('tool')}` · 期望：{step.get('expected_output', '-') or '-'}")
-        lines.append("")
-    if run.tool_calls:
-        lines += ["## 工具调用", ""]
-        for call in run.tool_calls:
-            args = json.dumps(call.arguments, ensure_ascii=False, default=str)
-            summary = call.result.summary if call.result else ""
-            lines.append(f"### 第 {call.step_index + 1} 步 `{call.tool}`（{call.status}，第 {call.attempt} 次尝试，{call.elapsed_ms:.0f} ms）")
-            lines.append(f"- 参数：`{args}`")
-            if summary:
-                lines.append(f"- 摘要：{summary}")
-            if call.error:
-                lines.append(f"- 错误：{call.error}")
-            if call.result and call.result.warnings:
-                lines.append(f"- 警告：{'；'.join(str(w) for w in call.result.warnings)}")
-            lines.append("")
-    if run.events:
-        lines += ["## 事件时间线", "", "| 时间 | 事件 | 内容 |", "| --- | --- | --- |"]
-        for ev in run.events:
-            payload = json.dumps(ev.payload, ensure_ascii=False, default=str)
-            if len(payload) > 160:
-                payload = payload[:160] + "…"
-            lines.append(f"| {ev.created_at:.1f} | {ev.type} | {payload.replace('|', '\\|')} |")
-        lines.append("")
-    if run.final_answer:
-        lines += ["## 最终回答", "", run.final_answer, ""]
-    return "\n".join(lines)
+def _finalize_cancelled(run: AgentRun, store: AgentStore) -> None:
+    """把挂起中的运行收成「已停止」终态。
+
+    ``completed`` 事件必须经 store 发出：等待期间 SSE 流还开着，那是这条运行
+    唯一能把最终话术送进聊天区的出口；直接只改状态不改事件，前端会有状态无文案。
+    """
+    if run.pending_confirmation is not None:
+        what = f"「{run.pending_confirmation.tool}」"
+        run.final_answer = f"已停止本次运行，{what}未执行，数据未做任何改动。"
+    elif run.pending_clarification is not None:
+        tool = run.pending_clarification.tool or "当前步骤"
+        run.final_answer = f"已停止本次运行，未继续执行「{tool}」。"
+    else:
+        run.final_answer = "已停止本次运行。"
+
+    run.pending_confirmation = None
+    run.pending_clarification = None
+    run.authorized_key = None
+    run.cancel_requested = True
+    run.status = RunStatus.COMPLETED
+    run.finished_at = time.time()
+    store.add_event(
+        run,
+        EventType.COMPLETED,
+        {"final_answer": run.final_answer, "answer_source": None, "cancelled": True},
+    )
+    store.update_run(run)
+    # 关闭通道让挂着的 SSE 流收尾（先发事件再关，队列是 FIFO，事件不会丢）
+    channel = CHANNELS.get(run.id)
+    if channel is not None:
+        channel.close()
+
+
+@router.post("/runs/{run_id}/clarify", response_model=ApiResponse[dict])
+async def clarify_run(
+    run_id: str,
+    body: ClarifyRequest,
+    store: AgentStore = Depends(get_agent_store),
+) -> ApiResponse[dict]:
+    """回答待补充的信息，并从挂起点继续。"""
+    run = store.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="运行不存在")
+    answer = (body.answer or "").strip()
+    if not answer:
+        raise HTTPException(status_code=400, detail="回答不能为空")
+    if run.status is not RunStatus.WAITING_CLARIFICATION or run.pending_clarification is None:
+        return ApiResponse[dict](data=run.to_dict())
+
+    request = run.pending_clarification
+    # code 形如 slot.column —— 去掉前缀即工具参数名
+    slot = request.code.split(".", 1)[1] if request.code.startswith("slot.") else request.code
+    value: Any = answer
+    if slot in ("run_id", "right_dataset_id", "dataset_id"):
+        try:
+            value = int(answer)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"{slot} 需要是数字") from None
+
+    run.clarification_answers[slot] = value
+    run.pending_clarification = None
+    run.status = RunStatus.RUNNING
+    store.append_history(run.session_id, "user", answer)
+    store.add_event(
+        run,
+        EventType.CLARIFICATION,
+        {"stage": "answered", "answer": answer, "code": request.code, "step_index": request.step_index},
+    )
+    store.update_run(run)
+
+    _resume(run_id, store)
+    return ApiResponse[dict](data=run.to_dict())
 
 
 @router.get("/runs/{run_id}/trace")
-def get_run_trace(run_id: str, format: str = Query("md", pattern="^(json|md)$"), runtime: AgentRuntime = Depends(get_agent_runtime)):
-    """T-7：导出执行轨迹（Markdown 供人读，JSON 供复盘/分享）。"""
-    run = runtime.get_run(run_id)
+def get_trace(run_id: str, format: str = "md", store: AgentStore = Depends(get_agent_store)) -> PlainTextResponse:
+    """导出运行轨迹（前端用 <a download> 直连，不走信封）。"""
+    run = store.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="运行不存在")
     if format == "json":
-        return ApiResponse[dict](data=run.full())
+        payload = json.dumps(run.to_dict(), ensure_ascii=False, indent=2, default=str)
+        return PlainTextResponse(payload, media_type="application/json")
     return PlainTextResponse(_trace_markdown(run), media_type="text/markdown; charset=utf-8")
 
 
+# ----------------------------------------------------------------------
+# 元信息
+# ----------------------------------------------------------------------
 @router.get("/tools", response_model=ApiResponse[list])
-def list_tools(runtime: AgentRuntime = Depends(get_agent_runtime)) -> ApiResponse[list]:
-    return ApiResponse[list](data=runtime.registry.list())
+def list_tools() -> ApiResponse[list]:
+    return ApiResponse[list](data=TOOL_REGISTRY.list())
 
 
 @router.get("/capabilities", response_model=ApiResponse[dict])
-def get_capabilities(runtime: AgentRuntime = Depends(get_agent_runtime)) -> ApiResponse[dict]:
-    """暴露 Agent 能力参数与预算上限，供前端在 UI 中展示预算、校验和策略提示。"""
-    return ApiResponse[dict](data={
-        "agent": settings.agent_context_summary(),
-        "llm": settings.llm_model_summary(),
-        "tools": {"count": len(runtime.registry.list()), "names": runtime.registry.names()},
-    })
+def capabilities() -> ApiResponse[dict]:
+    """能力摘要。结构与前端 CapabilitiesPanel 一一对应（字段缺一即显示「—」）。"""
+    from app.core.config import settings
+
+    tools = TOOL_REGISTRY.list()
+    return ApiResponse[dict](
+        data={
+            "agent": {
+                "context_max_chars": settings.AGENT_CONTEXT_MAX_CHARS,
+                "context_sections": {
+                    "user_request": settings.AGENT_CONTEXT_USER_REQUEST_CHARS,
+                    "dataset": settings.AGENT_CONTEXT_DATASET_CHARS,
+                    "permissions": settings.AGENT_CONTEXT_PERMISSION_CHARS,
+                    "tools": settings.AGENT_CONTEXT_TOOL_CHARS,
+                    "history": settings.AGENT_CONTEXT_HISTORY_CHARS,
+                },
+                "history_messages": settings.AGENT_CONTEXT_HISTORY_MESSAGES,
+                # 新架构不缓存 DataFrame：每个工具只读自己需要的列
+                "dataset_cache": {"enabled": False, "max_items": 0},
+                "max_steps": MAX_STEPS,
+                "llm_budget": {
+                    "max_calls": MAX_LLM_CALLS,
+                    "max_input_tokens": settings.AGENT_LLM_MAX_INPUT_TOKENS,
+                    "max_output_tokens": settings.AGENT_LLM_MAX_OUTPUT_TOKENS,
+                    "max_total_tokens": settings.AGENT_LLM_MAX_TOTAL_TOKENS,
+                },
+                # 旧架构的「开关」在这里全部固化：路由是确定的，压缩是默认行为，
+                # 没有 plan cache，也没有重规划。如实回填，避免前端显示假开关。
+                "agent_policy": {
+                    "allow_model_fallback": True,
+                    "enable_tool_retrieval": False,
+                    "tool_retrieval_top_k": 0,
+                    "tool_retrieval_min_score": 0.0,
+                    "enable_result_compression": True,
+                    "enable_plan_cache": False,
+                    "plan_cache_max_items": 0,
+                },
+            },
+            "llm": settings.llm_model_summary(),
+            "tools": {"count": len(tools), "names": [t["name"] for t in tools]},
+        }
+    )
+
+
+# ----------------------------------------------------------------------
+# 发消息（SSE）
+# ----------------------------------------------------------------------
+def _pending_run(store: AgentStore, session: Any) -> AgentRun | None:
+    """会话里还挂着的那条运行（等待确认 / 等待补充信息）。"""
+    for run_id in reversed(list(getattr(session, "run_ids", ()) or ())):
+        run = store.get_run(run_id)
+        if run is not None and run.status.waiting:
+            return run
+    return None
+
+
+def _finish_with_answer(store: AgentStore, session_id: str, run: AgentRun, answer: str) -> None:
+    """把一条新建的运行直接收成终态（用于「改口」这类不需要跑工具的回合）。
+
+    completed 事件必须发出去：SSE 流是答案进入聊天区的唯一出口。
+    """
+    run.status = RunStatus.COMPLETED
+    run.final_answer = answer
+    run.finished_at = time.time()
+    store.add_event(
+        run,
+        EventType.COMPLETED,
+        {"final_answer": answer, "answer_source": None, "abandoned": True},
+    )
+    store.update_run(run)
+    store.append_history(session_id, "assistant", answer)
+    channel = CHANNELS.get(run.id)
+    if channel is not None:
+        channel.close()
+
+
+@router.post("/sessions/{session_id}/messages")
+async def send_message(
+    session_id: str,
+    body: MessageRequest,
+    store: AgentStore = Depends(get_agent_store),
+) -> Any:
+    session = store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    content = (body.content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="消息内容不能为空")
+
+    if body.dataset_ids:
+        session.dataset_ids = list(body.dataset_ids)
+        store.update_session(session)
+    store.append_history(session_id, "user", content)
+
+    # 上一条还挂着（等确认 / 等补充信息），用户却又发了新消息 ——
+    # 那条挂起的运行再也没人推进，界面会永远停在「等待确认」。
+    # 新指令本身就代表放弃旧的，这里直接把它收成终态。
+    pending = _pending_run(store, session)
+    abandoned = pending is not None and is_abandonment(content)
+    if pending is not None:
+        _finalize_cancelled(pending, store)
+
+    run = store.create_run(session_id, content, dataset_ids=session.dataset_ids)
+
+    if abandoned:
+        # 用户说的是「算了 / 不用了」，不是新指令。系统此前会把它当成新诉求
+        # 再跑一遍高风险操作 —— 等确认清洗时说「不用清洗了」，结果真的洗了一遍。
+        _finish_with_answer(store, session_id, run, "好的，这一步不做了，数据没有改动。")
+        if not body.stream:
+            return ApiResponse[dict](data=run.to_dict())
+        channel = CHANNELS.get_or_create(run.id, start_seq=0)
+        return StreamingResponse(
+            _event_stream(run.id, session_id, channel, store),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    if not body.stream:
+        # 非流式：在线程里跑完再返回（前端当前不使用这条分支，保留以兼容）
+        engine = build_agent_engine()
+        await asyncio.to_thread(engine.run, run, session)
+        return ApiResponse[dict](data=run.to_dict())
+
+    channel = CHANNELS.get_or_create(run.id, start_seq=0)
+    return StreamingResponse(
+        _event_stream(run.id, session_id, channel, store),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # 反向代理必须关掉缓冲，否则 SSE 会被攒成一坨再吐
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _event_stream(run_id: str, session_id: str, channel: RunChannel, store: AgentStore) -> Any:
+    """产出 SSE 帧。
+
+    顺序很重要：**先注册监听者，再补发历史，最后消费队列**。
+    反过来的话，补发期间新产生的事件会先进队列，造成重复推送。
+    """
+    run = store.get_run(run_id)
+    if run is None:
+        return
+
+    def _listener(event: Any) -> None:
+        channel.publish(event)
+
+    store.add_listener(run_id, _listener)
+    session = store.get_session(session_id)
+    if session is None:
+        store.remove_listener(run_id, _listener)
+        return
+    engine = build_agent_engine()
+    task = asyncio.create_task(asyncio.to_thread(engine.run, run, session))
+
+    deadline = wait_deadline(SSE_WAIT_SECONDS)
+    try:
+        # 补发已有事件（重连 / 切会话重建时间线靠它）
+        for event in list(run.events):
+            yield _frame(event)
+            channel.mark_started(event.seq)
+
+        while time.time() < deadline:
+            item = await asyncio.to_thread(channel.poll, 1.0)
+            if item is None:  # 通道已关闭
+                break
+            if item is EMPTY:
+                current = store.get_run(run_id)
+                if current is None:
+                    break
+                # 挂起中：继续等（用户还没点确认/补充信息）
+                if current.status.waiting:
+                    continue
+                if current.status.terminal and task.done():
+                    break
+                continue
+            yield _frame(item)
+            if is_terminal_event(item):
+                channel.close()
+                break
+    finally:
+        store.remove_listener(run_id, _listener)
+        if not task.done():
+            task.cancel()
+        CHANNELS.discard(run_id)
+    # 控制帧：前端收到即停止读取
+    yield sse_frame("done", "{}")
+
+
+async def _noop() -> None:
+    return None
+
+
+def _frame(event: Any) -> str:
+    return sse_frame(str(event.type), json.dumps(event.to_dict(), ensure_ascii=False, default=str))
+
+
+def _trace_markdown(run: Any) -> str:
+    lines: list[str] = [
+        f"# Agent 运行轨迹 {run.id}",
+        "",
+        f"- 会话：{run.session_id}",
+        f"- 状态：{run.status}",
+        f"- 请求：{run.user_request}",
+        "",
+        "## 事件",
+        "",
+    ]
+    for event in run.events:
+        lines.append(f"{event.seq}. [{event.type}] {json.dumps(event.payload, ensure_ascii=False, default=str)}")
+    lines += ["", "## 工具调用", ""]
+    for call in run.tool_calls:
+        lines.append(f"- 步骤 {call.step_index} · {call.tool} · {call.status}")
+        if call.error:
+            lines.append(f"  - 错误：{call.error}")
+    if run.final_answer:
+        lines += ["", "## 最终回答", "", run.final_answer]
+    return "\n".join(lines)
+
+
+def _resume(run_id: str, store: AgentStore) -> None:
+    """从挂起点继续执行（后台线程）。
+
+    刻意**不复用**请求级依赖：线程里自建引擎与会话，避免请求结束后
+    session 被关闭导致的线程间误用。
+    """
+    run = store.get_run(run_id)
+    if run is None:
+        return
+    session = store.get_session(run.session_id)
+    if session is None:
+        return
+    engine = build_agent_engine()
+
+    def _task() -> None:
+        try:
+            engine.run(run, session)
+        except Exception:  # noqa: BLE001
+            logger.exception("恢复运行失败（run=%s）", run_id)
+
+    asyncio.get_event_loop().create_task(asyncio.to_thread(_task))

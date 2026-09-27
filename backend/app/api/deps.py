@@ -1,36 +1,44 @@
 """FastAPI 依赖注入。"""
+
 from __future__ import annotations
+
 from fastapi import Depends
 from sqlalchemy.orm import Session
-from app.agent.llm.base import LLMProvider
-from app.agent.llm.capabilities import LLMCapabilities
-from app.agent.llm.openai_compatible import OpenAICompatibleProvider
-from app.agent.runtime.models import AgentStore
-from app.agent.runtime.agent_runtime import AgentRuntime
-from app.core.config import settings
-from app.core.database import get_db
+
+from app.agent.engine import AgentEngine
+from app.agent.llm import LLMProvider, build_default_provider
+from app.agent.store import AgentStore
 from app.connectors.service import ConnectorService
+from app.core.database import SessionLocal, get_db
 from app.data_engine.service import DataEngineService
 from app.experiments.service import ExperimentService
-from app.learning.service import LearningService
 from app.services.dataset_service import DatasetService
 from app.services.file_service import FileService
 from app.storage.service import StorageService, get_storage
 from app.workflow.runners import NODE_REQUIRED_CONFIG, build_default_runners
 from app.workflow.service import WorkflowService
 
+#: Agent 会话与运行的存储。进程级单例：SSE 通道需要跨请求复用同一份运行记录
+#: （确认后要从同一条流补发 completed），所以不能按请求新建。
 AGENT_STORE = AgentStore()
+
 WORKFLOW_SERVICE = WorkflowService(
     node_runners=build_default_runners(),
     # 必需的节点参数规格：只在 run() 前预检生效，create/update 仍允许保存未配置的草稿。
     required_config_keys=NODE_REQUIRED_CONFIG,
 )
 
+
 def get_storage_service() -> StorageService:
     return get_storage()
 
-def get_dataset_service(db: Session = Depends(get_db), storage: StorageService = Depends(get_storage_service)) -> DatasetService:
+
+def get_dataset_service(
+    db: Session = Depends(get_db),
+    storage: StorageService = Depends(get_storage_service),
+) -> DatasetService:
     return DatasetService(db, storage)
+
 
 def get_data_engine_service(dataset_service: DatasetService = Depends(get_dataset_service)) -> DataEngineService:
     return DataEngineService(dataset_service)
@@ -48,39 +56,46 @@ def get_connector_service(
     """
     return ConnectorService(db, dataset_service)
 
-def get_experiment_service(db: Session = Depends(get_db), dataset_service: DatasetService = Depends(get_dataset_service)) -> ExperimentService:
+
+def get_experiment_service(
+    db: Session = Depends(get_db),
+    dataset_service: DatasetService = Depends(get_dataset_service),
+) -> ExperimentService:
     return ExperimentService(db, dataset_service)
 
+
 def get_llm_provider() -> LLMProvider | None:
-    """默认 Agent Provider；具体厂商由 Base URL / OpenAI-compatible 协议决定。
+    """当前生效的 LLM Provider；不可用返回 None。
 
-    返回 None ⇒ 上层退回平台自带的规则规划器。两种情况：
-    ① 设置页把「启用远程 API 大模型」关掉了（用于测试平台自带小模型）；
-    ② 从未配置过 API Key。
+    「设置页关掉远程大模型」与「未配置 API Key」都返回 None —— 两者的处置
+    完全相同：Agent 走规则路由 + 模板渲染，链路照常完成，只是不用模型。
     """
-    if not settings.remote_llm_available():
-        return None
-    capabilities = LLMCapabilities(
-        chat=True,
-        context_window=settings.LLM_CONTEXT_WINDOW,
-        max_output_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
-    )
-    return OpenAICompatibleProvider(settings.LLM_BASE_URL, settings.LLM_MODEL, settings.LLM_API_KEY, capabilities=capabilities)
+    return build_default_provider()
 
-def get_agent_runtime(
-    data_engine: DataEngineService = Depends(get_data_engine_service),
-    experiment_service: ExperimentService = Depends(get_experiment_service),
-    db: Session = Depends(get_db),
-    llm: LLMProvider | None = Depends(get_llm_provider),
-) -> AgentRuntime:
-    # 统一 Loop：决策/执行/收尾全部在 AgentLoop 内，这里只注入基础设施与共享 store。
-    return AgentRuntime(data_engine, experiment_service=experiment_service, db=db, llm=llm, store=AGENT_STORE)
+
+def get_agent_store() -> AgentStore:
+    return AGENT_STORE
+
+
+def build_agent_engine(llm: LLMProvider | None = None) -> AgentEngine:
+    """构造一个**自包含**的引擎，供后台线程使用。
+
+    为什么不用 Depends(get_agent_engine)：
+    Agent 在 SSE 场景下跑在后台线程，而请求级 db session 会在请求结束时被
+    关闭，后台线程再访问就会炸。引擎因此自带会话工厂、自建依赖链、用完自关。
+    """
+    return AgentEngine(AGENT_STORE, llm=llm if llm is not None else build_default_provider())
+
 
 def get_file_service(db: Session = Depends(get_db), storage: StorageService = Depends(get_storage_service)) -> FileService:
     return FileService(db, storage)
 
-def get_learning_service(db: Session = Depends(get_db)) -> LearningService:
+
+def get_learning_service(db: Session = Depends(get_db)) -> LearningService:  # noqa: F821
+    from app.learning.service import LearningService
+
     return LearningService(db)
+
 
 def get_workflow_service() -> WorkflowService:
     return WORKFLOW_SERVICE

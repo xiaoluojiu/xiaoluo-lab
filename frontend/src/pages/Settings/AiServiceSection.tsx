@@ -139,7 +139,7 @@ export function AiServiceSection({
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           API Key
           <InfoHint label="API Key 存储说明">
-            只保存在本标签页（关闭标签页即清除）；点「保存并应用」后写入后端进程内存，重启仍以 .env 为准。
+            浏览器侧只保存在本标签页（关闭标签页即清除）；点「保存并应用」后写入后端并落盘，重启平台会自动恢复，无需重新应用。
           </InfoHint>
         </span>
         <div className="settings-key-wrap">
