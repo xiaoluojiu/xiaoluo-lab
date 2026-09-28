@@ -19,6 +19,10 @@ class ReportSection:
     content: str = ""
     tables: list[dict[str, Any]] = field(default_factory=list)  # {"title","headers","rows"}
     charts: list[dict[str, Any]] = field(default_factory=list)  # {"type","title","data"}
+    # 位图附件：{"title", "png_base64"}。**只有 HTML 导出器渲染** ——
+    # Markdown 是纯文本、PDF 走 fpdf（贴 base64 图要另接一套图片管线），
+    # 本轮不动它们，因此同一份 Report 在两个出口里呈现不同是**有意的**。
+    images: list[dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -26,6 +30,7 @@ class ReportSection:
             "content": self.content,
             "tables": self.tables,
             "charts": self.charts,
+            "images": self.images,
         }
 
 

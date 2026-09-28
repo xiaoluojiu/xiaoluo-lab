@@ -10,7 +10,14 @@
 - POST /experiments/{id}/run            运行实验
 - GET  /experiments/{id}/runs           运行历史
 - GET  /experiments/runs/{run_id}       单次运行详情
+- GET  /experiments/runs/{run_id}/report         详细报告导出（HTML/Markdown/PDF）
+- GET  /experiments/runs/{run_id}/predict-export 全量推理结果导出（CSV/Parquet）
 - POST /experiments/compare             运行/实验对比
+- DELETE /experiments/{id}              删除实验
+- DELETE /experiments                   删除全部实验
+- POST /experiments/batch-delete        批量删除实验（删除选中）
+- DELETE /experiments/runs/{run_id}     删除单次运行（实验保留）
+- POST /experiments/runs/batch-delete   批量删除运行
 """
 
 from __future__ import annotations
@@ -19,19 +26,25 @@ import json
 import logging
 import queue
 import threading
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel, Field, model_validator
 
 from app.api.deps import get_dataset_service, get_experiment_service, get_storage_service
 from app.api.v1._serializers import experiment_dict, run_dict
+from app.api.v1.files import _content_disposition
 from app.core.database import SessionLocal
 from app.experiments.service import ExperimentService
 from app.ml_engine.metadata import build_catalog
 from app.ml_engine.registry import MODEL_REGISTRY
+from app.models.dataset_version import DatasetVersion
 from app.notifications import notify
+from app.reports.html import export_html
+from app.reports.markdown import export_markdown
+from app.reports.pdf import export_pdf
 from app.schemas.common import ApiResponse, PageInfo, Pagination
 from app.services.dataset_service import DatasetService
 from app.storage.service import StorageService
@@ -62,6 +75,17 @@ class CompareRequest(BaseModel):
     experiment_ids: list[int] = Field(default_factory=list)
 
 
+class ExperimentIdsRequest(BaseModel):
+    """批量删除实验的入参。「删除选中」与「一键删除全部」共用这一个端点：
+    后者只是把当前列表里所有 id 传进来，不必再维护第二条清空路径。"""
+
+    experiment_ids: list[int] = Field(default_factory=list)
+
+
+class RunIdsRequest(BaseModel):
+    run_ids: list[int] = Field(default_factory=list)
+
+
 class PredictRequest(BaseModel):
     run_id: int = Field(description="用于推理的成功运行 ID")
     dataset_id: int | None = Field(default=None, description="推理数据源数据集")
@@ -77,6 +101,14 @@ class PredictRequest(BaseModel):
     )
 
 
+class OptimizeRequest(BaseModel):
+    """自动超参搜索请求。"""
+
+    n_iter: int = Field(
+        default=20, ge=1, le=200, description="随机搜索的候选组数（每组都要跑 folds 折）"
+    )
+
+
 class TrainRequest(BaseModel):
     dataset_id: int
     version: int | None = Field(default=None, description="数据版本号（缺省最新）")
@@ -89,8 +121,25 @@ class TrainRequest(BaseModel):
     test_size: float | None = Field(
         default=None, gt=0, lt=1, description="测试集比例，缺省 0.2"
     )
+    # 训练数据预算：二者互斥；均缺省时由后端按 ML_MAX_TRAIN_ROWS 自动治理
+    max_rows: int | None = Field(
+        default=None, gt=0, description="参与训练的数据行数上限（随机抽样）"
+    )
+    train_fraction: float | None = Field(
+        default=None, gt=0, le=1, description="参与训练的数据占比（0~1），1 表示全量"
+    )
+    # 学习曲线需要额外多次拟合，默认关闭；概率校准无需开关（二分类自动计算）
+    enable_learning_curve: bool = False
+    # 交叉验证：5 折 × 每折重新拟合，训练耗时约为普通的 5 倍，默认关闭
+    enable_cv: bool = False
     seed: int | None = None
     description: str = ""
+
+    @model_validator(mode="after")
+    def _check_budget_exclusive(self) -> "TrainRequest":
+        if self.max_rows is not None and self.train_fraction is not None:
+            raise ValueError("max_rows 与 train_fraction 只能二选一，不能同时指定")
+        return self
 
 
 @ml_router.get("/catalog", response_model=ApiResponse[dict])
@@ -168,6 +217,10 @@ def train(
         seed=body.seed,
         description=body.description,
         test_size=body.test_size,
+        max_rows=body.max_rows,
+        train_fraction=body.train_fraction,
+        enable_learning_curve=body.enable_learning_curve,
+        enable_cv=body.enable_cv,
     )
     run = experiment_service.run(exp.id)
     _notify_training_done(run, exp)
@@ -211,6 +264,10 @@ def train_stream(
                 seed=body.seed,
                 description=body.description,
                 test_size=body.test_size,
+                max_rows=body.max_rows,
+                train_fraction=body.train_fraction,
+                enable_learning_curve=body.enable_learning_curve,
+                enable_cv=body.enable_cv,
             )
             run = experiment_service.run(exp.id, on_progress=progress_q.put)
             progress_q.put(
@@ -338,6 +395,90 @@ def get_run(
     return ApiResponse[dict](data=run_dict(experiment_service.get_run(run_id)))
 
 
+@router.get("/runs/{run_id}/report")
+def export_run_report(
+    run_id: int,
+    format: str = Query("html", pattern="^(html|markdown|pdf)$"),
+    experiment_service: ExperimentService = Depends(get_experiment_service),
+    dataset_service: DatasetService = Depends(get_dataset_service),
+) -> Response:
+    """一键导出单次运行的详细报告（HTML / Markdown / PDF）。
+
+    报告体由 `experiments/run_report.py` 装配成既有的 `Report` 模型，
+    渲染完全复用 `app/reports` 的三个导出器 —— 不另写一套模板，
+    这样报告的外观与数据集分析报告天然一致。
+    """
+    run = experiment_service.get_run(run_id)
+    if run.status != "success":
+        raise HTTPException(status_code=400, detail="仅成功运行可导出详细报告")
+
+    dataset_name = ""
+    try:
+        exp = experiment_service.get(run.experiment_id)
+        version = experiment_service.db.get(DatasetVersion, exp.dataset_version_id)
+        if version is not None:
+            dataset_name = dataset_service.get(version.dataset_id).name
+    except Exception:  # noqa: BLE001 - 数据集名称查不到不影响报告主体
+        dataset_name = ""
+
+    from app.experiments.run_report import build_run_report
+
+    report = build_run_report(run, dataset_name=dataset_name)
+    filename = f"ML-Run{run_id}-{datetime.now().strftime('%Y%m%d')}"
+    if format == "markdown":
+        return Response(
+            content=export_markdown(report).encode("utf-8"),
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": _content_disposition(filename + ".md")},
+        )
+    if format == "pdf":
+        return Response(
+            content=export_pdf(report),
+            media_type="application/pdf",
+            headers={"Content-Disposition": _content_disposition(filename + ".pdf")},
+        )
+    return Response(
+        content=export_html(report).encode("utf-8"),
+        media_type="text/html; charset=utf-8",
+        headers={"Content-Disposition": _content_disposition(filename + ".html")},
+    )
+
+
+@router.get("/runs/{run_id}/predict-export")
+def export_predictions(
+    run_id: int,
+    dataset_id: int | None = Query(None, description="推理数据源数据集（缺省用训练时的版本）"),
+    version: int | None = Query(None, description="数据版本号（缺省最新）"),
+    threshold: float | None = Query(
+        None, gt=0.0, lt=1.0, description="决策阈值（仅二分类；缺省 0.5）"
+    ),
+    format: str = Query("csv", pattern="^(csv|parquet)$"),
+    experiment_service: ExperimentService = Depends(get_experiment_service),
+) -> Response:
+    """导出一次推理的**全量**结果（原始列 + 预测列 + 概率列）。
+
+    与 `POST /ml/predict` 的区别只在于出口：那边返回前 N 行给界面看，
+    这里把每一行都写成文件 —— 批量推理的意义本来就是「每行都要有结果」，
+    只给预览等于让用户拿着 200 行去汇报全量结论。
+    """
+    content, ext = experiment_service.export_predictions(
+        run_id,
+        dataset_id=dataset_id,
+        version=version,
+        threshold=threshold,
+        format=format,
+    )
+    filename = f"ML-Run{run_id}-predictions-{datetime.now().strftime('%Y%m%d')}.{ext}"
+    media = (
+        "application/vnd.apache.parquet" if ext == "parquet" else "text/csv; charset=utf-8"
+    )
+    return Response(
+        content=content,
+        media_type=media,
+        headers={"Content-Disposition": _content_disposition(filename)},
+    )
+
+
 @router.get("/{experiment_id}", response_model=ApiResponse[dict])
 def get_experiment(
     experiment_id: int,
@@ -369,6 +510,23 @@ def get_experiment_narrative(
     return ApiResponse[dict](data=narrative.to_dict())
 
 
+@router.post("/{experiment_id}/optimize", response_model=ApiResponse[dict])
+def optimize_experiment(
+    experiment_id: int,
+    body: OptimizeRequest,
+    experiment_service: ExperimentService = Depends(get_experiment_service),
+) -> ApiResponse[dict]:
+    """自动搜索超参数：RandomizedSearchCV over 5 折 CV，预处理在折内拟合。
+
+    **只返回最佳参数与 Top10，不改动实验配置** —— 采纳与否由用户在界面上决定：
+    一次搜索的训练量是普通训练的 n_iter × folds 倍，静默改配置再重训
+    既昂贵又无法解释「这些参数是哪来的」。
+    """
+    return ApiResponse[dict](
+        data=experiment_service.optimize(experiment_id, n_iter=body.n_iter)
+    )
+
+
 @router.get("/{experiment_id}/runs", response_model=ApiResponse[list])
 def list_runs(
     experiment_id: int,
@@ -391,6 +549,32 @@ def run_experiment(
     return ApiResponse[dict](data=run_dict(run))
 
 
+@router.post("/runs/batch-delete", response_model=ApiResponse[dict])
+def delete_runs(
+    body: RunIdsRequest,
+    experiment_service: ExperimentService = Depends(get_experiment_service),
+) -> ApiResponse[dict]:
+    """批量删除运行记录（含各自的模型产物）；实验定义本身保留。
+
+    路由必须声明在 ``/{experiment_id}`` 之前不是必需的（段数不同不会冲突），
+    但它与 ``/runs/{run_id}`` 同属「运行」语义，放一起便于日后维护。
+    """
+    count = experiment_service.delete_runs(body.run_ids)
+    return ApiResponse[dict](
+        data={"deleted": True, "count": count, "requested": len(body.run_ids)}
+    )
+
+
+@router.delete("/runs/{run_id}", response_model=ApiResponse[dict])
+def delete_run(
+    run_id: int,
+    experiment_service: ExperimentService = Depends(get_experiment_service),
+) -> ApiResponse[dict]:
+    """删除单次运行：实验配置保留，只清掉这一次的运行记录与模型产物。"""
+    experiment_service.delete_run(run_id)
+    return ApiResponse[dict](data={"deleted": True, "run_id": run_id})
+
+
 @router.delete("/{experiment_id}", response_model=ApiResponse[dict])
 def delete_experiment(
     experiment_id: int,
@@ -408,6 +592,18 @@ def delete_all_experiments(
 ) -> ApiResponse[dict]:
     count = experiment_service.delete_all()
     return ApiResponse[dict](data={"deleted": True, "count": count})
+
+
+@router.post("/batch-delete", response_model=ApiResponse[dict])
+def delete_experiments(
+    body: ExperimentIdsRequest,
+    experiment_service: ExperimentService = Depends(get_experiment_service),
+) -> ApiResponse[dict]:
+    """批量删除实验（「删除选中」与「一键删除全部」共用）。"""
+    count = experiment_service.delete_experiments(body.experiment_ids)
+    return ApiResponse[dict](
+        data={"deleted": True, "count": count, "requested": len(body.experiment_ids)}
+    )
 
 
 @router.post("/compare", response_model=ApiResponse[dict])

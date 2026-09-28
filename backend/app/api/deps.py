@@ -9,7 +9,7 @@ from app.agent.engine import AgentEngine
 from app.agent.llm import LLMProvider, build_default_provider
 from app.agent.store import AgentStore
 from app.connectors.service import ConnectorService
-from app.core.database import SessionLocal, get_db
+from app.core.database import get_db
 from app.data_engine.service import DataEngineService
 from app.experiments.service import ExperimentService
 from app.services.dataset_service import DatasetService

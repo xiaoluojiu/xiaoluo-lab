@@ -28,9 +28,6 @@ export function archiveSession(sessionId: string, archived = true) {
 export function deleteSession(sessionId: string) {
   return unwrap<{ id: string; deleted: boolean }>(client.delete(`/agent/sessions/${sessionId}`));
 }
-export function updateSessionContext(sessionId: string, datasetIds: number[]) {
-  return unwrap<AgentSession>(client.patch(`/agent/sessions/${sessionId}/context`, { dataset_ids: datasetIds }));
-}
 export function getRun(runId: string) { return unwrap<AgentRun>(client.get(`/agent/runs/${runId}`)); }
 export function confirmRun(runId: string) { return unwrap<AgentRun>(client.post(`/agent/runs/${runId}/confirm`)); }
 export function denyRun(runId: string) { return unwrap<AgentRun>(client.post(`/agent/runs/${runId}/deny`)); }

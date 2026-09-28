@@ -330,6 +330,28 @@
   font-size: 12px;
   line-height: 1.7;
 }
+/* 三层错误提示的「发生了什么 / 影响 / 怎么解决」标签 */
+.analysis-error-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--danger-weak, transparent);
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+/* 紧凑模式：用于侧栏 / 上传抽屉等窄容器 */
+.analysis-error-compact { padding: var(--space-3); }
+/* 错误提示里的行动按钮（如「去处理缺失值」） */
+.analysis-error-action {
+  margin-top: var(--space-2);
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 
 /* ---------- 数据处理 ---------- */
 .processing-layout {

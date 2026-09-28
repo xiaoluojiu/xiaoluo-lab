@@ -113,11 +113,18 @@ class LLMUsage:
 
 @dataclass(frozen=True)
 class LLMResponse:
-    """单次调用结果。"""
+    """单次调用结果。
+
+    :attr:`from_reasoning` 标明 ``content`` 是不是**退而求其次**拿到的思维链。
+    这个标记不是装饰：上层要靠它判断「这次调用其实没拿到正经答案」。
+    少了它，重试保护会被自己骗过去（见 ``_request_with_retry`` 的注释）。
+    """
 
     content: str
     model: str = ""
     usage: LLMUsage = field(default_factory=LLMUsage)
+    #: True = content 是思维链回退产物，不是面向用户的答案
+    from_reasoning: bool = False
 
 
 class LLMProvider(ABC):
@@ -194,6 +201,36 @@ class OpenAICompatibleProvider(LLMProvider):
             "api_key_set": self.api_key_set,
         }
 
+    def with_thinking(self, thinking: str | None) -> "OpenAICompatibleProvider":
+        """返回一份**仅 thinking 设置不同**的副本。
+
+        为什么默认关、但又要留一个切换口
+        --------------------------------
+        默认关闭是为了防「思维链吃掉全部 max_tokens，content 变空」——
+        实测过用户看到以「我们需要回答中文，基于事实摘要」开头的自言自语。
+
+        但反过来，**多步数值计算恰恰需要推理空间**。实测 10 个工资求平均：
+        - 关闭 thinking：14400.00 / 14740.00 / 14218.18（三个不同轮次，全错，真值 15440）
+        - 开启 thinking：15440.00（对）
+
+        所以正确策略不是「全局开」或「全局关」，而是**按任务开**：
+        普通问答关掉（省 token、防污染），遇到聚合计算打开（要算得准）。
+        本方法让调用方做这个切换，而不是把策略硬编码在 Provider 里。
+
+        副本共享同一个 httpx 客户端，不额外占连接。
+        """
+        return OpenAICompatibleProvider(
+            self.base_url,
+            self.model,
+            self._api_key,
+            timeout=self.timeout,
+            max_retries=self.max_retries,
+            context_window=self.context_window,
+            max_output_tokens=self.max_output_tokens,
+            client=self._client,
+            thinking=thinking,
+        )
+
     def chat(
         self,
         messages: Sequence[LLMMessage],
@@ -259,14 +296,23 @@ class OpenAICompatibleProvider(LLMProvider):
                 # 兜底：content 为空说明模型把 token 全花在思维链上了。
                 # 关掉 thinking 再要一次 —— 直接返回空会让上层静默退回模板，
                 # 用户看到的是「回答总是那几句」而不是「这次没答上来」。
-                if not parsed.content.strip() and not payload.get("thinking"):
+                # ★ 这里必须同时看 ``from_reasoning``。
+                #   只判断 ``content`` 为空是不够的：``_parse`` 已经把思维链填进了 content，
+                #   于是 content 非空、这个分支永远不成立，「关闭 thinking 重试」的保护
+                #   形同虚设 —— 用户拿到的就是一段模型的自言自语。
+                #   实测：穷举类问题开启推理链后推理过程吃掉全部额度，
+                #   M19/M20 的回答直接变成思维链（相关性从 25 掉到 5）。
+                if (not parsed.content.strip() or parsed.from_reasoning) and not payload.get("thinking"):
                     disabled = _thinking_payload(self.model, self.base_url)
                     if disabled:
-                        logger.warning("LLM 返回空 content（第 %s 次），关闭 thinking 重试", attempt + 1)
+                        logger.warning(
+                            "LLM 未返回正经 content（第 %s 次），关闭 thinking 重试", attempt + 1
+                        )
                         payload = {**payload, **disabled}
                         continue
                 return parsed
-            except LLMException as exc:
+            except LLMException:
+                # 业务异常直接上抛，不参与重试（下面的分支只处理网络/解析类错误）。
                 raise
             except httpx.TimeoutException as exc:
                 last_exc = exc
@@ -304,21 +350,23 @@ class OpenAICompatibleProvider(LLMProvider):
             raise LLMException("大模型返回了空的 choices", details={"body": _clip(response.text)})
         message = choices[0].get("message") or {}
         content = message.get("content") or ""
+        from_reasoning = False
         if not content:
-            # 到这里说明「关闭 thinking」也没能拿到 content（厂商不支持该字段，
-            # 或 thinking="enabled" 被显式打开）。此时回退到 reasoning_content，
-            # 至少拿回模型产出的内容，不再静默丢失。
-            # 注意：这是**最后兜底**，内容是思维链而非面向用户的答案，
-            # 因此必须留日志，否则线上只会表现为「回答莫名其妙」，无从定位。
             content = message.get("reasoning_content") or ""
             if content:
+                from_reasoning = True
                 logger.warning("LLM 返回空 content，已回退到 reasoning_content（思维链）")
         raw_usage = data.get("usage") or {}
         usage = LLMUsage(
             input_tokens=int(raw_usage.get("prompt_tokens") or 0),
             output_tokens=int(raw_usage.get("completion_tokens") or 0),
         )
-        return LLMResponse(content=str(content), model=str(data.get("model") or ""), usage=usage)
+        return LLMResponse(
+            content=str(content),
+            model=str(data.get("model") or ""),
+            usage=usage,
+            from_reasoning=from_reasoning,
+        )
 
 
 def _clip(text: str, limit: int = 500) -> str:

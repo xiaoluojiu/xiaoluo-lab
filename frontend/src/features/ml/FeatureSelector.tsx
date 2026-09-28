@@ -1,7 +1,10 @@
 import type { SchemaColumn } from "../../types/dataset";
+import { recommendTargetColumn } from "./modelMeta";
 
-// Prompt 172：特征 / 目标列选择器（增强版 — 带推荐徽章）。
-// target：目标列（聚类任务不需要）；excluded：不参与训练的列。
+// Prompt 172：特征 / 目标列选择器。
+// target：目标列（聚类任务不需要）；excluded：不参与训练的列；
+// suggestedExcluded：页面算好的「建议排除」高基数列（本组件不再自行推断，
+// 避免与页面两处各写一套启发式、给出互相矛盾的徽章）。
 export function FeatureSelector({
   columns,
   task,
@@ -9,6 +12,7 @@ export function FeatureSelector({
   onTargetChange,
   excluded,
   onExcludedChange,
+  suggestedExcluded = [],
 }: {
   columns: SchemaColumn[];
   task?: string;
@@ -16,6 +20,7 @@ export function FeatureSelector({
   onTargetChange: (col: string | null) => void;
   excluded: string[];
   onExcludedChange: (cols: string[]) => void;
+  suggestedExcluded?: string[];
 }) {
   function toggleExclude(col: string) {
     if (excluded.includes(col)) {
@@ -25,57 +30,16 @@ export function FeatureSelector({
     }
   }
 
-  // ===== 推荐逻辑 =====
-  const numericCols = columns.filter(
-    (c) =>
-      c.dtype.toLowerCase().includes("int") || c.dtype.toLowerCase().includes("float"),
-  );
-
-  // 推荐的 target 列
-  let recommendedTarget: SchemaColumn | undefined;
-  if (task === "classification") {
-    recommendedTarget = columns.find(
-      (c) => c.unique_count <= 20 && !c.dtype.toLowerCase().includes("float"),
-    );
-  } else if (task === "regression") {
-    recommendedTarget =
-      columns.find(
-        (c) =>
-          c.dtype.toLowerCase().includes("float") &&
-          /target|label|price|score|amount|y/i.test(c.column),
-      ) ?? numericCols[0];
-  }
-
-  // 推荐排除：高基数（>100）的非数值列 + 非数值且非 target 的列（粗略启发式）
-  const autoExcludedSet = new Set<string>();
-  for (const c of columns) {
-    const isHighCardinality = c.unique_count > 100 || c.unique_count === columns.length;
-    const isNonNumeric = !c.dtype.toLowerCase().includes("int") && !c.dtype.toLowerCase().includes("float");
-    if (isHighCardinality && isNonNumeric) {
-      autoExcludedSet.add(c.column);
-    }
-  }
-
-  // 推荐特征：数值列且不是 target、没被排除
-  const recommendedFeatureSet = new Set<string>();
-  for (const c of numericCols) {
-    if (c.column !== target && !autoExcludedSet.has(c.column)) {
-      recommendedFeatureSet.add(c.column);
-    }
-  }
-
-  // target 推荐依据说明
+  // 目标列的推荐与提示来自唯一事实源（modelMeta.recommendTargetColumn），
+  // 页面自动选中与此处文案因此必然一致 —— 这里只负责把结论说出来。
+  const rec = recommendTargetColumn(columns, task ?? "classification");
   let targetHint = "";
-  if (task === "classification") {
-    targetHint = recommendedTarget
-      ? `💡 已自动选中「${recommendedTarget.column}」—— 低基数（unique=${recommendedTarget.unique_count}）非浮点列，适合作为分类标签`
-      : "💡 建议选择低基数（unique_count ≤ 20）的非浮点列作为 target";
-  } else if (task === "regression") {
-    targetHint = recommendedTarget
-      ? `💡 已自动选中「${recommendedTarget.column}」—— 数值型且名称匹配常见 target 关键词`
-      : "💡 建议选择数值型列作为 target，优先选名称含 target/label/price/score 的列";
-  } else if (task === "clustering") {
-    targetHint = "💡 聚类任务不需要 target 列";
+  if (task === "clustering") {
+    targetHint = `💡 ${rec.reason}`;
+  } else {
+    targetHint = rec.column
+      ? `💡 已自动选中「${rec.column}」——${rec.reason}`
+      : `💡 ${rec.reason}`;
   }
 
   const featureCount = columns.filter((c) => c.column !== target && !excluded.includes(c.column)).length;
@@ -104,13 +68,17 @@ export function FeatureSelector({
       {targetHint && (
         <div className="muted" style={{ fontSize: 12, marginTop: "var(--space-1)" }}>{targetHint}</div>
       )}
+      {target && rec.column && target !== rec.column && (
+        <div className="ml-tuner-warn" style={{ fontSize: 12, marginTop: "var(--space-1)" }}>
+          系统推荐的目标是「{rec.column}」，当前选择不同，请再次确认。
+        </div>
+      )}
       <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)", marginTop: "var(--space-2)" }}>
         {columns.map((c) => {
           const isTarget = c.column === target;
           const isExcluded = excluded.includes(c.column);
           const disabled = isTarget;
-          const isSuggestedExclude = autoExcludedSet.has(c.column);
-          const isSuggestedFeature = recommendedFeatureSet.has(c.column) && !isExcluded;
+          const isSuggestedExclude = suggestedExcluded.includes(c.column);
           return (
             <label
               key={c.column}
@@ -146,20 +114,6 @@ export function FeatureSelector({
                     }}
                   >
                     💡 建议排除
-                  </span>
-                )}
-                {!isTarget && !isExcluded && isSuggestedFeature && (
-                  <span
-                    style={{
-                      marginLeft: 6,
-                      fontSize: 11,
-                      padding: "1px 5px",
-                      background: "var(--c-green-weak)",
-                      color: "var(--c-green)",
-                      borderRadius: 4,
-                    }}
-                  >
-                    ✓ 推荐特征
                   </span>
                 )}
               </span>

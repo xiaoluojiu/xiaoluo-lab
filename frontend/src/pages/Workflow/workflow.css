@@ -22,3 +22,5 @@
 .workflow-explorer>.workflow-panel-title{margin-bottom:9px}
 .workflow-explorer>.workflow-current-outline+.workflow-panel-title{margin-top:12px}
 .workflow-panel-collapse{flex:0 0 auto}
+/* 运行阶段反馈（通用 <TaskProgress>）：夹在头部与建议条之间，留出上下呼吸位 */
+.workflow-run-task{margin:0 0 12px}

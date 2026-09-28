@@ -576,6 +576,33 @@ def render(
     return content, answer_source_llm(response.model or getattr(provider, "model", ""))
 
 
+#: 需要「真算」而不是「估」的聚合口径关键词。
+#:
+#: 为什么单列这些词：它们出现意味着答案是一个**由多个数推出来的值**。
+#: 这类题交给没有推理链的 LLM 心算，实测三次全部算错（10 个数求平均给出
+#: 14400 / 14740 / 14218，真值 15440），而且每次错得都不一样 ——
+#: 不是理解问题，是它没有地方做中间步骤。
+_ARITHMETIC_HINTS = (
+    "平均", "均值", "求和", "总和", "合计", "总计", "占比", "百分比",
+    "中位数", "标准差", "方差", "最大", "最小", "最高", "最低", "一共",
+)
+
+#: 穷举类请求。这类题的失败模式不是「算错」而是「没找全」——
+#: 实测函数依赖题：一轮列出全部 7 条，下一轮只列了最先想到的 5 条，
+#: 漏掉「部门经理→部门」「部门经理→工位区」。模型是想到哪写到哪，
+#: 没有「把所有候选对过一遍」的动作。
+_ENUMERATION_HINTS = ("所有", "全部", "列出", "找出", "哪些", "逐一", "每个")
+
+
+def _needs_deep_reasoning(text: str) -> bool:
+    """请求是否需要推理链：多步数值聚合，或穷举式查找。
+
+    两类任务的共同点是**答案不能一步想到**，必须有中间过程：
+    前者要逐项累加，后者要逐对排查。关掉推理链时两者都会退化成「凭印象给答案」。
+    """
+    return any(h in text for h in _ARITHMETIC_HINTS) or any(h in text for h in _ENUMERATION_HINTS)
+
+
 def render_chat(
     user_request: str,
     *,
@@ -584,6 +611,11 @@ def render_chat(
     history: list[dict[str, str]] | None = None,
     context: str = "",
     timeout: float = 30.0,
+    #: 当前数据集的真实列名。对话路径原本**没有**这份清单 —— 而它恰恰是幻觉高发区：
+    #: 用户随口问一个表里不存在的列，模型手里没有任何「可用范围」的锚，
+    #: 就会照着训练语料编一个列名出来。工具路径（:func:`render`）早就用这条钉死了
+    #: 可用范围（那里的第 10 条硬要求），两条出口必须同口径。
+    columns: list[str] | None = None,
 ) -> tuple[str, AnswerSource]:
     """纯对话渲染。无 LLM 时给一条诚实的说明，不假装回答。
 
@@ -637,6 +669,35 @@ def render_chat(
         "需要选参数时，直接按一个合理的默认值给出结论，并补一句"
         "「我按 X 做的，要改成 Y 说一声」；确实必须人来定的，"
         "也要先给结论再问，并附上你的推荐值。"
+        # ★ 列名护栏（与 render() 的第 10 条同口径）：把真实列名摆进 prompt，
+        #   用户问到不存在的列时，模型只能答「没有这一列」，没有编造的余地。
+        #   实测：问「绩效评分列的平均值」，没有这条护栏时模型会顺着编一个数。
+        + (
+            f"7. 数据集里真实存在的列只有：{'、'.join(columns)}；"
+            "任何举例、建议里出现的列名都必须来自这份清单，清单外的列名一律不许写；"
+            "用户问到清单外的列时，直接说明该列不存在，不要替他猜一个值。"
+            if columns else ""
+        )
+        # ★ 多步数值聚合的严谨性约束。实测：10 个工资求平均，模型心算给出
+        #   14740.00（真值 15440.00）—— 差了整整一个量级的中间项。
+        #   这是 LLM 心算的典型失效，不是理解问题。要求逐项累加复核，
+        #   同时明确计算过程不写进回答，避免与「只回答数字」的格式要求打架。
+        + (
+            "8. 涉及多个数值的求和 / 平均 / 占比等聚合计算时，"
+            "必须先把每一项逐一累加并复核，再给出最终结果；"
+            "不要凭印象直接报一个数，也不要把计算过程写进回答。"
+        )
+        # ★ 穷举类问题的系统遍历要求。
+        #   实测两轮两种失败，正好是集合任务的两头：
+        #   - 召回侧（函数依赖）：一轮列出 7 条，下一轮只列最先想到的 5 条
+        #   - 精确侧（算术关系）：把只在**第一行**成立的「原价=2*总价」当成普遍规律列出来
+        #     （B 行 60 ≠ 2*24=48，压根不成立）—— 等于编造了一条关系
+        #   所以既要逼它遍历（防漏），又要钉死判定口径（防编）。
+        + (
+            "9. 问题要求「找出所有 / 全部 / 列出」时，必须先把候选组合**逐对或逐项过一遍**再给清单，"
+            "不要想到几条就写几条；清单里的每一项都必须在该表的**所有数据行**上都成立，"
+            "只在部分行成立的不要列，也不要把某几行的巧合当成普遍规律。"
+        )
     )
     messages: list[LLMMessage] = [LLMMessage(role="system", content=system)]
     if context.strip():
@@ -647,8 +708,25 @@ def render_chat(
         if role in ("user", "assistant") and content:
             messages.append(LLMMessage(role=role, content=content[:_CHAT_HISTORY_ITEM_CHARS]))
     messages.append(LLMMessage(role="user", content=user_request))
+    # ★ 按任务开关推理链：需要真算的请求才打开。
+    #   用 hasattr 做鸭子类型判断而不是 isinstance —— 测试里的假 Provider
+    #   不必实现这个能力，有就用，没有就照旧，不把策略强塞给所有实现。
+    chat_provider = provider
+    budget = 600
+    # ★ temperature 也要跟着降。对话路径原本固定 0.4（照顾开放聊天的多样性），
+    #   但「找出所有 X」「求平均值」这类题要的是**唯一正确答案**，
+    #   用 0.4 去采样等于主动制造方差 —— 实测函数依赖题同一份输入
+    #   这轮列 7 条、下轮列 5 条，就是这个温度带来的抖动。
+    temperature = 0.4
+    if provider is not None and _needs_deep_reasoning(user_request) and hasattr(provider, "with_thinking"):
+        chat_provider = provider.with_thinking("enabled")
+        # 推理链要占预算，一并放宽，否则算完了却没额度写答案
+        budget = 1200
+        temperature = 0.0
     try:
-        response = provider.chat(messages, temperature=0.4, max_tokens=600, timeout=timeout)
+        response = chat_provider.chat(
+            messages, temperature=temperature, max_tokens=budget, timeout=timeout
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("对话渲染失败：%s", exc)
         return (

@@ -3,16 +3,23 @@ import { PageHeader } from "../../components/PageHeader";
 import { DatasetSelector } from "../../features/merge/DatasetSelector";
 import { edaCorrelation, edaDescriptive, edaDistribution, edaOutlier, type VisualizeChart } from "../../api/analysis";
 import { getSchema, previewDataset } from "../../api/datasets";
-import { describeAnalysisError as describeError } from "../../lib/analysisError";
+import { formatError, withPrefix, type AnalysisError } from "../../lib/analysisError";
 import type { SchemaColumn } from "../../types/dataset";
 import { ProfilePanel } from "../../features/eda/ProfilePanel";
 import { CorrelationPanel } from "../../features/eda/CorrelationPanel";
 import { DistributionChart } from "../../features/eda/DistributionChart";
 import { OutlierPanel } from "../../features/eda/OutlierPanel";
 import { VisualizationPanel, isNumericColumn, isTemporalColumn } from "../../features/eda/VisualizationPanel";
+import { isContinuousNumeric } from "../../lib/edaColumns";
 import { PreviewTable } from "../../features/dataset/PreviewTable";
 import { Skeleton } from "../../components/StateBlock";
+import { ErrorNotice } from "../../components/ErrorNotice";
 import { Icon, type IconName } from "../../components/icons/Icon";
+
+/** 把一次子分析的失败包成「带上下文前缀」的标准错误对象。 */
+function sectionError(error: unknown, label: string): AnalysisError {
+  return withPrefix(formatError(error), `${label}：`);
+}
 
 /* 数据分析页的空状态：带插画图标 + 明确的引导文案与下一步动作，
    替代原先只有一句灰字的「暂无数据 / 至少需要 N 个字段」。 */
@@ -39,12 +46,15 @@ const ANALYSIS_TABS: Array<{ key: AnalysisTab; label: string }> = [
 export default function Analysis() {
   const [datasetIds, setDatasetIds] = useState<number[]>([]);
   const [columns, setColumns] = useState<SchemaColumn[]>([]);
+  // /schema 返回的行数：低基数判定（isContinuousNumeric）需要它才能与后端口径对齐。
+  const [rowCount, setRowCount] = useState(0);
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const [distributionColumn, setDistributionColumn] = useState("");
+  const [corrMethod, setCorrMethod] = useState<"pearson" | "spearman" | "auto">("auto");
   const [chart, setChart] = useState<VisualizeChart>("histogram");
   const [activeTab, setActiveTab] = useState<AnalysisTab>("preview");
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AnalysisError[]>([]);
   const [profile, setProfile] = useState<Parameters<typeof ProfilePanel>[0]["data"]>(null);
   const [corr, setCorr] = useState<Parameters<typeof CorrelationPanel>[0]["data"]>(null);
   const [dist, setDist] = useState<Parameters<typeof DistributionChart>[0]["data"]>(null);
@@ -57,7 +67,14 @@ export default function Analysis() {
 
   const datasetId = datasetIds[0];
   const colNames = useMemo(() => columns.map((c) => c.column), [columns]);
+  // numericNames：dtype 事实（指标卡「数值字段」展示用，含 Month 这类编码列）。
   const numericNames = useMemo(() => columns.filter(isNumericColumn).map((c) => c.column), [columns]);
+  // continuousNames：与后端 continuous_columns 同口径的「连续数值列」，
+  // 用于「能不能做相关性」这类需要与后端判据一致的场景。
+  const continuousNames = useMemo(
+    () => columns.filter((c) => isContinuousNumeric(c, rowCount)).map((c) => c.column),
+    [columns, rowCount],
+  );
   const temporalNames = useMemo(() => columns.filter(isTemporalColumn).map((c) => c.column), [columns]);
   const categoricalNames = useMemo(() => columns.filter((c) => !isNumericColumn(c) && !isTemporalColumn(c)).map((c) => c.column), [columns]);
   // 只保留仍存在于当前数据集 schema 中的已选列。
@@ -72,16 +89,17 @@ export default function Analysis() {
     [colNames, selectedColumns],
   );
   const selectedColsParam = validSelectedColumns.length ? validSelectedColumns : undefined;
-  const selectedNumericCount = validSelectedColumns.length ? validSelectedColumns.filter((name) => numericNames.includes(name)).length : numericNames.length;
+  const selectedNumericCount = validSelectedColumns.length ? validSelectedColumns.filter((name) => continuousNames.includes(name)).length : continuousNames.length;
 
   useEffect(() => {
     if (!datasetId) {
-      setColumns([]); setSelectedColumns([]); setDistributionColumn(""); setSampleRows([]); setActiveTab("preview");
+      setColumns([]); setRowCount(0); setSelectedColumns([]); setDistributionColumn(""); setCorrMethod("auto"); setSampleRows([]); setActiveTab("preview");
       return;
     }
-    setSelectedColumns([]); setError(null); setProfile(null); setCorr(null); setDist(null); setOutlier(null); setActiveTab("preview");
+    setSelectedColumns([]); setError([]); setProfile(null); setCorr(null); setDist(null); setOutlier(null); setCorrMethod("auto"); setActiveTab("preview");
     getSchema(datasetId).then((schema) => {
       setColumns(schema.columns);
+      setRowCount(schema.row_count);
       const numeric = schema.columns.filter(isNumericColumn).map((c) => c.column);
       const temporal = schema.columns.filter(isTemporalColumn).map((c) => c.column);
       const categorical = schema.columns.filter((c) => !isNumericColumn(c) && !isTemporalColumn(c)).map((c) => c.column);
@@ -108,33 +126,37 @@ export default function Analysis() {
 
   async function runAll() {
     if (!datasetId) return;
-    setError(null); setProfile(null); setCorr(null); setDist(null); setOutlier(null);
+    setError([]); setProfile(null); setCorr(null); setDist(null); setOutlier(null);
     // 冻结本次运行的目标数据集：await 期间用户可能切换数据集，
     // 若不加这个守卫，切回时会用新 datasetId 去解释旧响应，或把旧错误写进新数据集的界面。
     const targetDatasetId = datasetId;
     const stale = () => targetDatasetId !== datasetIdRef.current;
-    const errors: string[] = [];
+    const errors: AnalysisError[] = [];
     const cols = selectedColsParam;
     const distColumn = distributionColumn.trim();
-    const count = validSelectedColumns.length ? validSelectedColumns.filter((name) => numericNames.includes(name)).length : numericNames.length;
+    // 与后端 continuous_columns 同口径：只有「连续数值列」才可能参与相关性，
+    // 低基数编码列（Month/DayOfWeek 等）不算，勾选它们不会把相关性分析带起来。
+    const count = validSelectedColumns.length ? validSelectedColumns.filter((name) => continuousNames.includes(name)).length : continuousNames.length;
     try { setBusy("描述性统计"); const data = await edaDescriptive(targetDatasetId, { columns: cols }); if (!stale()) setProfile(data as never); }
-    catch (e) { if (!stale()) errors.push(`描述性统计：${describeError(e)}`); }
-    if (count >= 2) { try { setBusy("相关性分析"); const data = await edaCorrelation(targetDatasetId, { columns: cols, method: "pearson" }); if (!stale()) setCorr(data as never); } catch (e) { if (!stale()) errors.push(`相关性：${describeError(e)}`); } }
-    if (distColumn) { try { setBusy("分布分析"); const data = await edaDistribution(targetDatasetId, distColumn); if (!stale()) setDist(data as never); } catch (e) { if (!stale()) errors.push(`分布分析：${describeError(e)}`); } }
-    if (count >= 1) { try { setBusy("异常值分析"); const data = await edaOutlier(targetDatasetId, { columns: cols }); if (!stale()) setOutlier(data as never); } catch (e) { if (!stale()) errors.push(`异常值：${describeError(e)}`); } }
+    catch (e) { if (!stale()) errors.push(sectionError(e, "描述性统计")); }
+    // strict=true：相关性只用显式勾选的字段，后端不再静默补齐其它列；
+    // 勾选里有效数值列不足 2 个时后端返回中文 422（说明哪列因低基数被剔除）。
+    if (count >= 2) { try { setBusy("相关性分析"); const data = await edaCorrelation(targetDatasetId, { columns: cols, method: corrMethod, strict: true }); if (!stale()) setCorr(data as never); } catch (e) { if (!stale()) errors.push(sectionError(e, "相关性分析")); } }
+    if (distColumn) { try { setBusy("分布分析"); const data = await edaDistribution(targetDatasetId, distColumn); if (!stale()) setDist(data as never); } catch (e) { if (!stale()) errors.push(sectionError(e, "分布分析")); } }
+    if (count >= 1) { try { setBusy("异常值分析"); const data = await edaOutlier(targetDatasetId, { columns: cols }); if (!stale()) setOutlier(data as never); } catch (e) { if (!stale()) errors.push(sectionError(e, "异常值分析")); } }
     if (stale()) return;
-    setBusy(null); if (errors.length) setError(errors.join("；")); else if (activeTab === "preview") setActiveTab("profile");
+    setBusy(null); if (errors.length) setError(errors); else if (activeTab === "preview") setActiveTab("profile");
   }
 
   function renderResult() {
     if (!datasetId) return null;
     switch (activeTab) {
-      case "preview": return <><div className="analysis-result-header"><div><h3 style={{ margin: 0 }}>数据预览</h3><div className="muted">快速检查样本与字段，不修改数据版本。</div></div></div><div className="analysis-preview-wrap"><PreviewTable datasetId={datasetId} pageSize={20} /></div></>;
+      case "preview": return <><div className="analysis-result-header"><div><h3 style={{ margin: 0 }}>数据预览</h3><div className="muted">快速检查样本与字段，不修改数据版本。</div></div></div><div className="analysis-preview-wrap"><PreviewTable datasetId={datasetId} pageSize={20} columns={selectedColsParam} /></div></>;
       case "profile": return busy === "描述性统计" ? <Skeleton lines={3} /> : <ProfilePanel data={profile} />;
-      case "correlation": return selectedNumericCountForView(columns, validSelectedColumns) < 2 ? <AnalysisEmpty icon="chart" title="还差一个数值字段" hint="相关性分析需要至少 2 个数值字段。当前数据集里的数值字段不够，去左侧勾选更多字段，或换个数据更完整的数据集。" /> : busy === "相关性分析" ? <Skeleton lines={3} /> : <CorrelationPanel data={corr} scatterPoints={sampleRows} />;;
+      case "correlation": return selectedNumericCount < 2 ? <AnalysisEmpty icon="chart" title="还差一个数值字段" hint="相关性分析需要至少 2 个数值字段。当前数据集里的数值字段不够，去左侧勾选更多字段，或换个数据更完整的数据集。" /> : busy === "相关性分析" ? <Skeleton lines={3} /> : <CorrelationPanel data={corr} scatterPoints={sampleRows} />;
       case "distribution": return busy === "分布分析" ? <Skeleton lines={3} /> : <DistributionChart data={dist} />;
       case "outlier": return busy === "异常值分析" ? <Skeleton lines={3} /> : <OutlierPanel data={outlier} />;
-      case "visualization": return <VisualizationPanel datasetId={datasetId} columns={columns} selectedColumns={validSelectedColumns} chart={chart} onChartChange={setChart} />;
+      case "visualization": return <VisualizationPanel datasetId={datasetId} columns={columns} selectedColumns={validSelectedColumns} chart={chart} onChartChange={setChart} rowCount={rowCount} />;
     }
   }
 
@@ -143,7 +165,7 @@ export default function Analysis() {
       <PageHeader
         breadcrumbs={<>数据中心 / <b>数据分析</b></>}
         title="数据分析"
-        description="描述统计、相关性、分布与离群检测，结果可随所选字段实时刷新。"
+        description="勾选字段后运行分析；可视化页签随字段与图表类型自动刷新。"
       />
 
       <section className="card analysis-toolbar">
@@ -169,9 +191,16 @@ export default function Analysis() {
             <div className="analysis-field-actions"><button className="btn" type="button" onClick={selectAllColumns}>全选</button><button className="btn" type="button" onClick={clearColumns}>清空</button><span className="muted" style={{ marginLeft: "auto", fontSize: 12 }}>{selectedColumns.length ? `${selectedColumns.length} 已选` : "全部"}</span></div>
             <div className="analysis-field-list">{columns.map((item) => <label className="analysis-field-item" key={item.column}><input type="checkbox" checked={selectedColumns.includes(item.column)} onChange={() => toggleColumn(item.column)} /><span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{item.column}</span><span className="analysis-field-type">{item.dtype}</span></label>)}</div>
             <label className="field" style={{ marginTop: 14 }}>分布字段<select value={distributionColumn} onChange={(e) => setDistributionColumn(e.target.value)}><option value="">不运行分布</option>{colNames.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+            <label className="field" style={{ marginTop: 10 }}>相关性方法<select value={corrMethod} onChange={(e) => setCorrMethod(e.target.value as "pearson" | "spearman" | "auto")}><option value="auto">自动（按列类型）</option><option value="pearson">Pearson（线性）</option><option value="spearman">Spearman（秩相关）</option></select></label>
             <button className="btn primary analysis-run" type="button" disabled={!datasetId || busy !== null} onClick={() => void runAll()}>{busy ? `正在${busy}…` : "运行分析"}</button>
           </> : <div className="analysis-empty" style={{ minHeight: 180, padding: "var(--space-3)" }}>{datasetId ? "正在读取字段…" : "选择数据集后显示字段。"}</div>}
-          {error && <div style={{ marginTop: "var(--space-3)", color: "var(--danger)", lineHeight: 1.6 }}>{error}</div>}
+          {error.length > 0 && (
+            <div style={{ display: "grid", gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
+              {error.map((item, index) => (
+                <ErrorNotice key={`${item.what}-${index}`} error={item} title="分析没能全部完成" compact />
+              ))}
+            </div>
+          )}
         </aside>
 
         <section className="analysis-results">
@@ -186,4 +215,3 @@ export default function Analysis() {
 }
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="card" style={{ padding: "12px 14px" }}><div className="muted" style={{ fontSize: 12 }}>{label}</div><strong style={{ display: "block", marginTop: "var(--space-1)", fontSize: 18 }}>{value}</strong></div>; }
-function selectedNumericCountForView(columns: SchemaColumn[], selected: string[]) { const numeric = new Set(columns.filter(isNumericColumn).map((c) => c.column)); return selected.length ? selected.filter((name) => numeric.has(name)).length : numeric.size; }

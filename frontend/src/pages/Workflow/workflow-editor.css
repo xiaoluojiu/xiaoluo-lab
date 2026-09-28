@@ -1327,3 +1327,64 @@
   line-height: 1;
   cursor: pointer;
 }
+
+/* 运行阶段反馈（通用 <TaskProgress>）：位于执行抽屉顶部，与下方运行详情拉开间距 */
+.wf-editor-run-task{margin-bottom:12px}
+
+/* 运行失败：结构化错误列表 */
+.wf-editor-errors {
+  position: absolute;
+  left: 50%;
+  top: 60px;
+  z-index: 11;
+  transform: translateX(-50%);
+  width: min(620px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--danger-weak);
+  box-shadow: var(--shadow);
+}
+.wf-editor-errors-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--danger);
+}
+.wf-editor-errors-head strong { font-size: 13px; }
+.wf-editor-errors-head button {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--danger);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.wf-editor-error-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  text-align: left;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.wf-editor-error-item span { color: var(--danger); flex: none; }
+.wf-editor-error-item em {
+  margin-left: auto;
+  flex: none;
+  font-style: normal;
+  color: var(--primary);
+  font-size: 12px;
+}

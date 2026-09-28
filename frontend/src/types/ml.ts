@@ -109,12 +109,27 @@ export interface CompareEntry {
   parameters?: Record<string, unknown>;
 }
 
+/**
+ * 两个 run 的**配对**差异：同一份测试集上同步重采样，抵消「样本本身难易」的影响。
+ * CI 跨 0 ⇒ 差异不显著（significant=false），不能下「谁更好」的结论。
+ */
+export interface PairedDelta {
+  run_a: number;
+  run_b: number;
+  rows?: number;
+  n_bootstrap?: number;
+  note?: string;
+  metrics: { metric: string; delta: number; lower: number; upper: number; significant: boolean }[];
+}
+
 export interface CompareResult {
   entries?: CompareEntry[];
   best?: Record<string, number>;
   best_by_metric?: Record<string, number>;
   parameter_diff?: Record<string, Record<number, unknown>>;
   runtime_ranking?: number[];
+  /** 仅两运行对比且两者用同一份切分时才有值。 */
+  paired_delta?: PairedDelta | null;
   [key: string]: unknown;
 }
 
@@ -288,6 +303,38 @@ export interface MlThresholdCurve {
   suggested_f1?: number | null;
 }
 
+/**
+ * 调参信号的判定阈值（后端 `metadata.SIGNAL_RULES`，由 /ml/catalog 透出）。
+ *
+ * 硬编码在前端的话，「说明文字里写的 0.1」和「实际按 0.1 判定」迟早会分家；
+ * 现在判定只读这里，后端改阈值前端立刻跟着变。
+ */
+export type MlSignalRules = Partial<Record<string, Record<string, number>>>;
+
+/**
+ * 自动超参搜索结果（`POST /experiments/{id}/optimize`）。
+ *
+ * `best_params` 的键是**可直接回填给训练接口**的参数名（后端已去掉 model__ 前缀），
+ * 与参数面板的 name 一一对应 —— 「应用最佳参数」因此只是一次普通的参数补丁。
+ */
+export interface MlHpoResult {
+  model: string;
+  task?: string;
+  experiment_id?: number;
+  n_iter: number;
+  folds: number;
+  metric: string;
+  best_params: Record<string, unknown>;
+  best_score: number;
+  top_results: {
+    rank: number;
+    mean_score: number;
+    std_score: number;
+    params: Record<string, unknown>;
+  }[];
+  note?: string;
+}
+
 export interface MlCatalog {
   pipeline_steps: MlPipelineStep[];
   preprocessing_params: MlParamSpec[];
@@ -295,6 +342,10 @@ export interface MlCatalog {
   models: MlModelGuide[];
   metrics: Record<string, MlMetricGuide>;
   tuning_playbook?: MlTuningRule[];
+  /** 每个 signal 的判定阈值，供 detectSignals 使用。 */
+  signal_rules?: MlSignalRules;
+  /** 自动超参搜索：模型 -> 参与搜索的参数名（候选值只在后端 cv.SEARCH_SPACES）。 */
+  search_spaces?: Record<string, string[]>;
   param_combos?: MlParamCombo[];
   /** 训练后才生效的旋钮（决策阈值等），与 models[].params 分开返回。 */
   inference_params?: MlInferenceParam[];
@@ -328,6 +379,56 @@ export interface ModelSummary {
   fit_seconds?: number;
 }
 
+/** 二分类概率校准结果（留出测试集口径）。 */
+export interface CalibrationData {
+  basis: "holdout_test";
+  positive_class?: string | null;
+  n_bins: number;
+  total?: number;
+  /** 期望校准误差（越小越好）。 */
+  ece: number;
+  /** 最大校准误差。 */
+  mce: number;
+  points: {
+    bin_start: number;
+    bin_end: number;
+    mean_predicted: number;
+    observed_frequency: number;
+    count: number;
+  }[];
+}
+
+/** 学习曲线结果（固定留出测试集，逐点真实拟合）。 */
+export interface LearningCurveData {
+  basis: "holdout_test";
+  metric: "accuracy" | "r2";
+  points: {
+    fraction: number;
+    rows: number;
+    train_score: number;
+    test_score: number;
+  }[];
+  note?: string;
+}
+
+/** 单个指标的 95% Bootstrap 置信区间（测试集上重采样得到）。 */
+export interface MetricInterval {
+  lower: number;
+  median: number;
+  upper: number;
+  n_repeats?: number;
+}
+
+/** 勾选「5 折交叉验证」时存在：各折指标 + 均值/标准差。 */
+export interface CrossValidationData {
+  folds: number;
+  mean: Record<string, number>;
+  std: Record<string, number>;
+  per_fold: { metric: string; values: number[] }[];
+  seed: number;
+  note?: string;
+}
+
 /** 训练产物里与「怎么做的」相关的部分（用于结果区的透明化展示）。 */
 export interface TrainArtifacts {
   model?: string;
@@ -345,6 +446,17 @@ export interface TrainArtifacts {
   dropped_rows?: number;
   /** 分类任务是否按类别分层切分。 */
   stratified?: boolean;
+  /**
+   * 训练数据预算与抽样结果（剔除空标签之后、train/test split 之前的口径）。
+   * sampled=true 表示实际训练数据经过随机抽样；limit_source: user=用户指定，default=系统上限。
+   */
+  sampling?: {
+    sampled: boolean;
+    original_rows: number;
+    used_rows: number;
+    sample_rate: number;
+    limit_source?: "user" | "default";
+  };
   preprocessing_report?: PreprocessingReport;
   model_summary?: ModelSummary;
   feature_importance?: { method?: string; importances?: { feature: string; importance: number }[] } | null;
@@ -368,6 +480,27 @@ export interface TrainArtifacts {
    * 它是「阈值定多少」的选型依据，口径为正类，与 run.metrics 的 macro 不同。
    */
   threshold_curve?: MlThresholdCurve | null;
+  /** 二分类概率校准（可靠性曲线 + ECE），非二分类为 null/缺省。 */
+  calibration?: CalibrationData | null;
+  /** 勾选「生成学习曲线」时存在。 */
+  learning_curve?: LearningCurveData | null;
+  /** 勾选「5 折交叉验证」时存在；未勾选为 null（与 learning_curve 同一套路）。 */
+  cv?: CrossValidationData | null;
+  /**
+   * 测试集指标的 95% 置信区间。键是指标名；值里混着 `n_bootstrap`（次数）与
+   * `basis`（口径标记），所以取值前要按对象判定。
+   */
+  metric_ci?: Record<string, MetricInterval | number | string | null>;
+  /** 测试集预测留痕（供置信区间与两个 run 的配对差异使用）。 */
+  test_predictions?: {
+    rows: number;
+    y_true: (number | string)[];
+    y_pred: (number | string)[];
+    y_pos_proba?: number[];
+    positive_class?: number | string;
+    sampled?: boolean;
+    note?: string;
+  } | null;
   residual_stats?: {
     count?: number;
     mean?: number | null;

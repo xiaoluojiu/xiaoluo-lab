@@ -55,11 +55,12 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     id: "filter-aggregate",
     name: "筛选与聚合",
     category: "数据清洗",
-    description: "按条件筛选行，再按分组字段做统计聚合，输出汇总表。",
+    description: "按条件筛选行，再按分组字段做统计聚合，输出汇总表。聚合列需在生成后指定。",
     nodes: [
       { id: "load", type: "data.load", config: { dataset_id: null } },
-      { id: "filter", type: "data.filter", config: { params: { conditions: [], logic: "and" } } },
-      { id: "aggregate", type: "data.aggregate", config: { params: { group_by: [], aggregations: {} } } },
+      { id: "filter", type: "data.filter",
+        config: { params: { conditions: [{ column: "", op: "eq", value: "" }], logic: "and" } } },
+      { id: "aggregate", type: "data.aggregate", config: { params: { group_by: [], aggregations: [{ column: "", func: "mean" }] } } },
     ],
     edges: [
       { source: "load", target: "filter" },
@@ -132,7 +133,7 @@ export function applyTemplate(
   datasetId: number | null,
 ): { nodes: WorkflowNode[]; edges: WorkflowEdge[] } {
   const nodes: WorkflowNode[] = template.nodes.map((node) => {
-    if (node.type === "data.load" && datasetId != null) {
+    if ((node.type === "data.load" || node.type === "dataset.read") && datasetId != null) {
       return { id: node.id, type: node.type, config: { ...node.config, dataset_id: datasetId } };
     }
     return { id: node.id, type: node.type, config: node.config };

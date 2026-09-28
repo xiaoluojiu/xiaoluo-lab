@@ -232,6 +232,9 @@
 }
 .empty-state .empty-title { margin: 0; font-size: 15px; font-weight: 600; color: var(--text); }
 .empty-state .empty-desc { font-size: 13px; color: var(--muted); max-width: 46ch; line-height: 1.7; }
+/* 主操作与次操作同一行：主操作是可点的按钮，次操作是低权重链接（.btn.link），
+   两者共用一条基线，窄屏自动换行。 */
+.empty-state .empty-actions { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; margin-top: var(--space-2); }
 .empty-state .empty-action { margin-top: var(--space-2); }
 
 /* ---------- 工具条（搜索 / 筛选 / 排序 / 计数）---------- */
@@ -923,22 +926,73 @@
   }
 }
 
-/* ---------- 实时训练进度条（POST /ml/train/stream 驱动，非前端伪造） ---------- */
-.ml-training-progress {
+/* ---------- 通用分阶段任务进度（<TaskProgress>） ----------
+   覆盖三条链路：ML 训练（SSE 真实阶段推进）、Agent 执行（事件映射出的阶段）、
+   Workflow 运行 / 实验重跑（同步接口，只给不确定进度）。
+   颜色一律走 Token，浅色 / 深色主题自动跟随。 */
+.task-progress {
   padding: 12px 14px;
   background: var(--surface-muted);
   border: 1px solid var(--border);
   border-radius: 8px;
+  font-size: 13px;
 }
 
-.ml-tp-head {
+.task-progress.is-success {
+  border-color: color-mix(in srgb, var(--success) 35%, var(--border));
+}
+
+.task-progress.is-error {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+}
+
+.task-progress-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   margin-bottom: 8px;
 }
 
-.ml-progress-track {
+.task-progress-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.task-progress.is-success .task-progress-title {
+  color: var(--success);
+}
+
+.task-progress.is-error .task-progress-title {
+  color: var(--danger);
+}
+
+/* 标题里的转圈比通用 .spinner 小一号：它是行内元素，18px 会把行高顶起来 */
+.task-progress-title .spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}
+
+.task-progress-meta {
+  flex: 0 0 auto;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.task-progress-note {
+  margin: -2px 0 8px;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-progress-track {
   height: 8px;
   border-radius: 999px;
   background: var(--surface);
@@ -946,36 +1000,91 @@
   overflow: hidden;
 }
 
-.ml-progress-fill {
+.task-progress-fill {
   height: 100%;
   border-radius: 999px;
   background: var(--primary);
   transition: width 0.35s ease;
 }
 
-.ml-tp-steps {
+.task-progress.is-success .task-progress-fill {
+  background: var(--success);
+}
+
+.task-progress.is-error .task-progress-fill {
+  background: var(--danger);
+}
+
+/* 不确定进度：高亮段来回移动，不表示任何百分比（同步接口没有进度可报） */
+.task-progress-track.is-running .task-progress-fill {
+  width: 35%;
+  transition: none;
+  animation: task-progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes task-progress-indeterminate {
+  0% {
+    margin-left: -35%;
+  }
+  100% {
+    margin-left: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-progress-track.is-running .task-progress-fill {
+    animation-duration: 3s;
+  }
+}
+
+.task-progress-steps {
   margin: 10px 0 0;
   padding-left: 18px;
   line-height: 1.9;
   font-size: 13px;
   list-style: decimal;
-}
-
-.ml-tp-steps li {
   color: var(--muted);
 }
 
-.ml-tp-steps li.is-done {
+.task-progress-steps li.is-done {
   color: var(--text);
 }
 
-.ml-tp-steps li.is-current {
-  color: var(--text);
+.task-progress-steps li.is-current {
+  color: var(--primary);
   font-weight: 600;
 }
 
-.ml-tp-name {
+.task-progress.is-error .task-progress-steps li.is-current {
+  color: var(--danger);
+}
+
+.task-progress-step-name {
   margin-right: 6px;
+}
+
+.task-progress-step-detail {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.task-progress-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.task-progress-error {
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
+.inline-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* ---------- 流程与参数说明面板 ---------- */
@@ -1254,6 +1363,78 @@
 .ml-threshold-table tr.is-current td {
   background: var(--brand-weak, var(--surface-muted));
   font-weight: 600;
+}
+
+/* 分区导航：这一页有六屏，没有目录就只能靠滚轮找。
+   href="#id" 走浏览器原生锚点，不引入滚动监听，也不和路由抢历史栈。 */
+.ml-anchor-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: var(--space-3) 0;
+  padding: 6px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.ml-anchor-link {
+  padding: 4px 10px;
+  border-radius: 6px;
+  color: var(--text-2);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.ml-anchor-link:hover,
+.ml-anchor-link:focus-visible {
+  background: var(--brand-weak, var(--surface-muted));
+  color: var(--text-1, var(--text-2));
+}
+
+/* 锚点跳转后标题要留在可视区，否则会被顶部栏盖住 */
+.ml-section {
+  scroll-margin-top: 72px;
+}
+
+/* 抽样口径徽标：抽没抽样决定了指标能不能代表全量数据 */
+.ml-sampling-badge {
+  font-variant-numeric: tabular-nums;
+}
+
+.ml-sampling-note {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* 推理结果的导出控件：与「执行推理」同排，但要视觉上分开，
+   免得把「跑一次推理」和「导出全量结果」当成同一个动作 */
+.ml-infer-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 自动超参搜索的 Top10：参数列是「可直接回填」的真实值，用等宽字体避免
+   null / 0.05 这类取值被看错 */
+.ml-hpo {
+  margin-top: var(--space-2);
+}
+.ml-hpo .data-table {
+  margin: var(--space-2) 0;
+  font-size: 13px;
+}
+.ml-hpo code {
+  font-size: 12px;
+  word-break: break-all;
+}
+
+/* 交叉验证表：每折的原始数值必须留着（均值会掩盖「某一折特别差」） */
+.ml-cv .data-table {
+  margin: var(--space-2) 0 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 不用重训的替代路径：与 escalate 视觉分开，但同属「接下来该怎么办」 */

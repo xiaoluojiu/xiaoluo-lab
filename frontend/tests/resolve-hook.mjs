@@ -11,7 +11,7 @@
  * 不如在测试入口挂一个解析钩子 —— 只作用于 `npm test`，不碰主构建。
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -67,6 +67,23 @@ function patchSource(source) {
 }
 
 export async function load(url, context, nextLoad) {
+  // `.tsx` 不在 `--experimental-strip-types` 的支持列表里（JSX 需要真正的转译，
+  // 不是「擦掉类型」）。它连 `nextLoad` 都过不去，必须先在这里转成 JS。
+  // 转译器复用 vite 自带的 esbuild，不为测试引入新依赖。
+  if (url.endsWith(".tsx")) {
+    const { transformSync } = await import("esbuild");
+    const raw = readFileSync(fileURLToPath(url), "utf8");
+    const patched = patchSource(raw) ?? raw;
+    const out = transformSync(patched, {
+      loader: "tsx",
+      format: "esm",
+      target: "node22",
+      // 源码里没有 `import React`，走自动运行时（与 Vite 构建一致）
+      jsx: "automatic",
+      jsxImportSource: "react",
+    });
+    return { format: "module", source: out.code, shortCircuit: true };
+  }
   const loaded = await nextLoad(url, context);
   const patched = loaded.source ? patchSource(loaded.source) : null;
   return patched === null ? loaded : { ...loaded, source: patched };

@@ -62,6 +62,7 @@ def _register_builtins(registry: ModelRegistry) -> None:
     """注册内置模型。"""
     from app.ml_engine.classification import (
         DecisionTreeClassifierAdapter,
+        HistGradientBoostingClassifierAdapter,
         KNNClassifierAdapter,
         LogisticRegressionAdapter,
         RandomForestClassifierAdapter,
@@ -80,6 +81,7 @@ def _register_builtins(registry: ModelRegistry) -> None:
         KNNClassifierAdapter,
         DecisionTreeClassifierAdapter,
         RandomForestClassifierAdapter,
+        HistGradientBoostingClassifierAdapter,
         LinearRegressionAdapter,
         KNNRegressorAdapter,
         DecisionTreeRegressorAdapter,

@@ -14,7 +14,7 @@ interface DistributionData {
   type: string;
   column: string;
   bins?: { label: string; count: number }[];
-  counts?: { value: string; count: number }[];
+  values?: { value: string; count: number; ratio: number }[];
   missing: number;
 }
 
@@ -26,7 +26,7 @@ export function DistributionChart({ data }: { data: DistributionData | null }) {
   const rows =
     data.type === "numeric"
       ? (data.bins ?? []).map((b) => ({ name: b.label, count: b.count }))
-      : (data.counts ?? []).map((c) => ({ name: c.value, count: c.count }));
+      : (data.values ?? []).map((c) => ({ name: c.value, count: c.count }));
   if (!rows.length) return <div className="muted">该列无可用分布数据（可能为常数列或空列）</div>;
 
   return (

@@ -84,10 +84,17 @@ export interface PreviewParams {
   version?: number;
   sort_column?: string;
   sort_desc?: boolean;
+  /** 只看这些列（后端约定：逗号分隔列名；缺省=全部列）。 */
+  columns?: string[];
 }
 
 export function previewDataset(datasetId: number, params: PreviewParams = {}) {
+  // columns 用逗号分隔字符串传（与 /eda/* 的列参数同一约定），
+  // 空数组视作「未指定」，避免发出 columns= 这种空值。
+  const { columns, ...rest } = params;
   return unwrap<PreviewData>(
-    client.get(`/datasets/${datasetId}/preview`, { params }),
+    client.get(`/datasets/${datasetId}/preview`, {
+      params: { ...rest, columns: columns?.length ? columns.join(",") : undefined },
+    }),
   );
 }

@@ -7,9 +7,14 @@ import type { Dataset } from "../../types/dataset";
 import { DataTable, type DataTableColumn } from "../../components/DataTable";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { PageHeader } from "../../components/PageHeader";
-import { Panel, SectionHeader } from "../../components/viz/Blocks";
+import { EmptyState, Panel, SectionHeader } from "../../components/viz/Blocks";
 import { KpiCard } from "../../components/viz/KpiCard";
 import { Icon } from "../../components/icons/Icon";
+import { ErrorNotice } from "../../components/ErrorNotice";
+import { clientError, formatError, type AnalysisError } from "../../lib/analysisError";
+// 列表已经拿到全部名称，顺手灌进面包屑的名称缓存：之后点进详情 / 分析页
+// 时，面包屑可以直接显示「数据集A」而不必再为一个 id 发一次请求。
+import { forgetDatasetName, primeDatasetNames } from "../../lib/datasetNames";
 
 /** 数据资产浏览器：列表负责发现，详情/其他模块负责深入处理。 */
 export default function Datasets() {
@@ -23,7 +28,7 @@ export default function Datasets() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<AnalysisError | null>(null);
   const [uploadName, setUploadName] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -36,7 +41,10 @@ export default function Datasets() {
     setLoading(true);
     setError(null);
     listDatasets(1, 200)
-      .then((r) => setDatasets(r.items))
+      .then((r) => {
+        primeDatasetNames(r.items);
+        setDatasets(r.items);
+      })
       .catch((e) => setError(e instanceof Error ? e.message : "加载失败"))
       .finally(() => setLoading(false));
   }, [reloadKey]);
@@ -59,11 +67,19 @@ export default function Datasets() {
     if (!file) return;
     const ext = (file.name.match(/\.[^.]+$/)?.[0] ?? "").toLowerCase();
     if (!ext || !FILE_ALLOWED_EXTENSIONS.includes(ext as (typeof FILE_ALLOWED_EXTENSIONS)[number])) {
-      setUploadError(`不支持的文件类型 ${ext || "（无扩展名）"}，仅支持 ${FILE_ALLOWED_EXTENSIONS.join(" / ")}`);
+      setUploadError(clientError(
+        `不支持的文件类型 ${ext || "（无扩展名）"}`,
+        `请另存为支持的类型后再上传：${FILE_ALLOWED_EXTENSIONS.join(" / ")}。`,
+        "文件没有被上传，数据集尚未创建。",
+      ));
       return;
     }
     if (file.size > maxUploadSize) {
-      setUploadError(`文件过大：${formatFileSize(file.size)}，上限 ${formatFileSize(maxUploadSize)}`);
+      setUploadError(clientError(
+        `文件过大：${formatFileSize(file.size)}，超过上限 ${formatFileSize(maxUploadSize)}`,
+        "请先压缩或切分文件，也可以只保留需要的行列后再上传。",
+        "文件没有被上传，数据集尚未创建。",
+      ));
       return;
     }
     setUploadError(null);
@@ -82,7 +98,7 @@ export default function Datasets() {
 
   const handleUpload = async () => {
     if (!selectedFile) {
-      setUploadError("请先选择文件");
+      setUploadError(clientError("还没有选择文件", "请拖入或点击选择一个数据文件后再上传。"));
       return;
     }
     setUploading(true);
@@ -96,7 +112,7 @@ export default function Datasets() {
       setUploadOpen(false);
       setReloadKey((k) => k + 1);
     } catch (e) {
-      setUploadError(e instanceof Error ? e.message : "上传失败");
+      setUploadError(formatError(e));
     } finally {
       setUploading(false);
     }
@@ -211,16 +227,65 @@ export default function Datasets() {
 
       <SectionHeader title="全部数据集" description="支持按名称或描述搜索，表格可点击列头排序。" />
       <Panel>
-        <div className="toolbar" style={{ marginBottom: "var(--space-4)" }}>
-          <input type="text" placeholder="搜索数据集名称 / 描述..." value={keyword} onChange={(e) => setKeyword(e.target.value)} style={{ width: 280 }} />
-          <label className="inline-check">
-            <input type="checkbox" checked={onlyWithVersion} onChange={(e) => setOnlyWithVersion(e.target.checked)} />
-            仅显示已有版本
-          </label>
-          <button className="btn" type="button" onClick={() => setSortRecent((v) => !v)}>{sortRecent ? "最近创建" : "原始顺序"}</button>
-          <span className="toolbar-spacer toolbar-count">{filtered.length} 个数据集</span>
-        </div>
-        <DataTable columns={columns} rows={filtered} rowKey={(d) => d.id} loading={loading} error={error} emptyText="暂无数据集，点击右上角上传你的第一个数据集" />
+        {/* 一个数据集都没有时，搜索/筛选条没有可作用的对象，先收起，把位置让给引导。 */}
+        {datasets.length > 0 && (
+          <div className="toolbar" style={{ marginBottom: "var(--space-4)" }}>
+            <input type="text" placeholder="搜索数据集名称 / 描述..." value={keyword} onChange={(e) => setKeyword(e.target.value)} style={{ width: 280 }} />
+            <label className="inline-check">
+              <input type="checkbox" checked={onlyWithVersion} onChange={(e) => setOnlyWithVersion(e.target.checked)} />
+              仅显示已有版本
+            </label>
+            <button className="btn" type="button" onClick={() => setSortRecent((v) => !v)}>{sortRecent ? "最近创建" : "原始顺序"}</button>
+            <span className="toolbar-spacer toolbar-count">{filtered.length} 个数据集</span>
+          </div>
+        )}
+        <DataTable
+          columns={columns}
+          rows={filtered}
+          rowKey={(d) => d.id}
+          loading={loading}
+          error={error}
+          empty={
+            datasets.length === 0 ? (
+              <EmptyState
+                icon="database"
+                title="你还没有上传任何数据集"
+                description="上传一份 CSV / Excel / JSON 文件，系统会自动生成第一个数据版本；之后的数据处理、分析与机器学习都可以直接选它。"
+                action={
+                  <button className="btn primary" type="button" onClick={() => setUploadOpen(true)}>
+                    上传数据集
+                  </button>
+                }
+                secondary={
+                  /* 项目里没有「示例数据集」页面（只有 backend/scripts/demo_data.py 这个离线生成脚本），
+                     所以次操作改指真实存在、且无需上传数据就能跑通的内置实验（学习中心）。 */
+                  <Link className="btn link" to="/learning">
+                    先看内置示例
+                  </Link>
+                }
+              />
+            ) : (
+              /* 有数据但筛不出结果：重点是「让用户回到有数据的视图」，而不是劝他上传。 */
+              <EmptyState
+                icon="search"
+                title="没有匹配的数据集"
+                description="当前搜索词或筛选条件没有命中任何数据集，换个关键词或取消筛选试试。"
+                action={
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => {
+                      setKeyword("");
+                      setOnlyWithVersion(false);
+                    }}
+                  >
+                    清空筛选条件
+                  </button>
+                }
+              />
+            )
+          }
+        />
       </Panel>
 
       {uploadOpen && (
@@ -233,13 +298,17 @@ export default function Datasets() {
             </div>
             <div style={{ marginTop: "var(--space-4)" }}><label className="field">数据集名称<input type="text" placeholder="留空使用文件名" value={uploadName} onChange={(e) => setUploadName(e.target.value)} /></label></div>
             {(uploading || progress > 0) && <div style={{ marginTop: "var(--space-3)" }}><div className="progress-bar"><div style={{ width: `${progress}%` }} /></div><div className="muted" style={{ fontSize: 12, marginTop: "var(--space-1)" }}>{uploading ? `上传中… ${progress}%` : "处理中…"}</div></div>}
-            {uploadError && <div className="alert alert-error" style={{ marginTop: "var(--space-3)" }}>{uploadError}</div>}
+            {uploadError && (
+              <div style={{ marginTop: "var(--space-3)" }}>
+                <ErrorNotice error={uploadError} title="上传没有成功" compact />
+              </div>
+            )}
             <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-5)" }}><button className="btn btn-primary" disabled={uploading || !selectedFile} onClick={() => void handleUpload()}>{uploading ? "上传中…" : "上传并创建数据集"}</button><button className="btn" disabled={uploading} onClick={resetSelection}>重新选择</button></div>
           </div>
         </div>
       )}
 
-      <ConfirmDialog open={pendingDelete !== null} title="删除数据集" message={`确定删除「${pendingDelete?.name}」？版本快照、数据操作记录，以及绑定在该数据集上的建模实验（含运行记录与模型产物）都会一并清理，不可恢复。`} confirmText="删除" danger onCancel={() => setPendingDelete(null)} onConfirm={() => { if (pendingDelete) void deleteDataset(pendingDelete.id).then(() => { setPendingDelete(null); setReloadKey((k) => k + 1); }); }} />
+      <ConfirmDialog open={pendingDelete !== null} title="删除数据集" message={`确定删除「${pendingDelete?.name}」？版本快照、数据操作记录，以及绑定在该数据集上的建模实验（含运行记录与模型产物）都会一并清理，不可恢复。`} confirmText="删除" danger onCancel={() => setPendingDelete(null)} onConfirm={() => { if (pendingDelete) void deleteDataset(pendingDelete.id).then(() => { forgetDatasetName(pendingDelete.id); setPendingDelete(null); setReloadKey((k) => k + 1); }); }} />
     </div>
   );
 }

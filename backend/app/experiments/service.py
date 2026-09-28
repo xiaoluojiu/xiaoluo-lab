@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import math
@@ -24,11 +25,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.exceptions import NotFoundException, ValidationException
+from app.ml_engine.cv import SEARCH_SPACES, cv_evaluate, random_search
 from app.ml_engine.evaluation import (
+    bootstrap_confidence_interval,
+    calibration_analysis,
     classification_report,
     confusion_matrix,
     evaluate_clustering,
+    learning_curve_scores,
+    macro_f1_from_codes,
+    class_codes,
     regression_residuals,
+    roc_auc_fast,
 )
 from app.ml_engine.evaluation import (
     evaluate_classification as eval_classification,
@@ -197,6 +205,10 @@ class ExperimentService:
         description: str = "",
         target_column: str | None = None,
         test_size: float | None = None,
+        max_rows: int | None = None,
+        train_fraction: float | None = None,
+        enable_learning_curve: bool = False,
+        enable_cv: bool = False,
     ) -> Experiment:
         if task not in TASKS:
             raise ValidationException(
@@ -209,6 +221,20 @@ class ExperimentService:
         if test_size is not None and not (0 < float(test_size) < 1):
             raise ValidationException(
                 "test_size 必须在 (0, 1) 区间", details={"test_size": test_size}
+            )
+        if max_rows is not None and train_fraction is not None:
+            raise ValidationException(
+                "max_rows 与 train_fraction 只能二选一",
+                details={"max_rows": max_rows, "train_fraction": train_fraction},
+            )
+        if max_rows is not None and int(max_rows) <= 0:
+            raise ValidationException(
+                "max_rows 必须为正整数", details={"max_rows": max_rows}
+            )
+        if train_fraction is not None and not (0 < float(train_fraction) <= 1):
+            raise ValidationException(
+                "train_fraction 必须在 (0, 1] 区间",
+                details={"train_fraction": train_fraction},
             )
         MODEL_REGISTRY.get(model)  # 未注册模型直接报错
         version = self.db.get(DatasetVersion, dataset_version_id)
@@ -224,6 +250,20 @@ class ExperimentService:
         # 防御：parameters 中残留的 excluded_columns 必须剥离（兼容旧前端请求）
         params = dict(parameters or {})
         params.pop("excluded_columns", None)
+        # 训练数据预算与 test_size 一样复用 preprocessing JSON 承载，
+        # 避免新增 ORM 字段 / 迁移
+        pp_final = dict(pp)
+        if max_rows is not None:
+            pp_final["max_rows"] = int(max_rows)
+        if train_fraction is not None:
+            pp_final["train_fraction"] = float(train_fraction)
+        if test_size is not None:
+            pp_final["test_size"] = float(test_size)
+        if enable_learning_curve:
+            # 复用 preprocessing JSON 承载，避免新增 ORM 字段 / 迁移
+            pp_final["enable_learning_curve"] = True
+        if enable_cv:
+            pp_final["enable_cv"] = True
         exp = Experiment(
             dataset_id=dataset_id,
             dataset_version_id=dataset_version_id,
@@ -231,13 +271,10 @@ class ExperimentService:
             model=model,
             target_column=target_column,
             parameters=params,
-            preprocessing=pp,
+            preprocessing=pp_final,
             seed=seed,
             description=description,
         )
-        if test_size is not None:
-            # 复用既有 JSON 列承载切分比例，避免为单个数值新增 ORM 字段/迁移
-            exp.preprocessing = {**pp, "test_size": float(test_size)}
         self.db.add(exp)
         self.db.commit()
         return exp
@@ -317,33 +354,83 @@ class ExperimentService:
     # ------------------------------------------------------------------
     # delete：先清理 runs 产物（model/pipeline），再依赖 ORM 级联删除
     # ------------------------------------------------------------------
-    def _delete_run_artifacts(self, experiment: Experiment) -> None:
-        if self.dataset_service is None:
+    def _delete_run_artifacts(self, run: ExperimentRun) -> None:
+        """删除**单次运行**在存储层的产物（model.pkl / pipeline.pkl）。
+
+        刻意做成「按 run」而不是「按 experiment」：实验历史里需要支持
+        「只清掉跑废的某一次运行」，若沿用实验级的写法（内联 `for run in
+        experiment.runs`），删单条 run 就会留下孤儿 pkl，两条删除路径必然分叉。
+        """
+        storage = getattr(self.dataset_service, "storage", None)
+        if storage is None:
             return
-        storage = self.dataset_service.storage
+        artifacts = run.artifacts or {}
+        for key_name in ("model_key", "pipeline_key"):
+            key = artifacts.get(key_name)
+            if isinstance(key, str) and key:
+                try:
+                    storage.delete(key)
+                except Exception:  # noqa: BLE001 - 存储清理失败不阻断删除
+                    pass
+
+    def _delete_experiment_artifacts(self, experiment: Experiment) -> None:
         for run in experiment.runs:
-            artifacts = run.artifacts or {}
-            for key_name in ("model_key", "pipeline_key"):
-                key = artifacts.get(key_name)
-                if isinstance(key, str) and key:
-                    try:
-                        storage.delete(key)
-                    except Exception:  # noqa: BLE001 - 存储清理失败不阻断删除
-                        pass
+            self._delete_run_artifacts(run)
 
     def delete(self, experiment_id: int) -> None:
         exp = self.get(experiment_id)
-        self._delete_run_artifacts(exp)
+        self._delete_experiment_artifacts(exp)
         self.db.delete(exp)
         self.db.commit()
+
+    def delete_experiments(self, experiment_ids: list[int]) -> int:
+        """批量删除实验（前端「删除选中」）。
+
+        不存在的 id 直接跳过：批量操作面向的是用户界面上的快照，期间别处删掉
+        其中一条属于正常竞态，不该让整批失败并回滚。
+        """
+        ids = list(dict.fromkeys(int(x) for x in experiment_ids))
+        if not ids:
+            return 0
+        experiments = list(
+            self.db.scalars(select(Experiment).where(Experiment.id.in_(ids)))
+        )
+        for exp in experiments:
+            self._delete_experiment_artifacts(exp)
+            self.db.delete(exp)
+        self.db.commit()
+        return len(experiments)
 
     def delete_all(self) -> int:
         experiments = list(self.db.scalars(select(Experiment)))
         for exp in experiments:
-            self._delete_run_artifacts(exp)
+            self._delete_experiment_artifacts(exp)
             self.db.delete(exp)
         self.db.commit()
         return len(experiments)
+
+    # ------------------------------------------------------------------
+    # delete run：实验历史里「只删掉某一次运行」，实验本身保留
+    # ------------------------------------------------------------------
+    def delete_run(self, run_id: int) -> None:
+        run = self.get_run(run_id)
+        self._delete_run_artifacts(run)
+        self.db.delete(run)
+        self.db.commit()
+
+    def delete_runs(self, run_ids: list[int]) -> int:
+        """批量删除运行记录（含各自的模型产物），返回实际删除条数。"""
+        ids = list(dict.fromkeys(int(x) for x in run_ids))
+        if not ids:
+            return 0
+        runs = list(
+            self.db.scalars(select(ExperimentRun).where(ExperimentRun.id.in_(ids)))
+        )
+        for run in runs:
+            self._delete_run_artifacts(run)
+            self.db.delete(run)
+        self.db.commit()
+        return len(runs)
 
     # ------------------------------------------------------------------
     # run：加载数据 -> 预处理（防泄漏） -> 训练 -> 评估 -> 记录
@@ -391,7 +478,9 @@ class ExperimentService:
             if self.dataset_service is not None and model is not None:
                 base = f"experiments/{exp.id}/runs/{run.id}"
                 model_key = f"{base}/model.pkl"
-                self.dataset_service.storage.save(model_key, model.to_bytes())
+                # 落盘走带完整性信封的格式：推理时会先验签，文件被顶替/损坏
+                # 会直接报「签名不对」，而不是给出一份莫名其妙的预测结果。
+                self.dataset_service.storage.save(model_key, model.to_signed_bytes())
                 artifacts["model_key"] = model_key
                 if pipeline is not None:
                     pipe_key = f"{base}/pipeline.pkl"
@@ -418,12 +507,21 @@ class ExperimentService:
         self.db.commit()
         return run
 
-    def _execute(
+    def _prepare_xy(
         self,
         exp: Experiment,
-        on_progress: Callable[[str, str], None] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any], Any, Any]:
-        emit = on_progress or (lambda stage_id, detail="": None)
+        emit: Callable[..., Any] | None = None,
+    ) -> tuple[pl.DataFrame, pl.Series | None, list[str], int, dict[str, Any]]:
+        """加载数据 → 排除列 → 剔除空标签 → 规模治理，返回 (X, y, excluded, dropped_rows, sampling)。
+
+        `_execute`（训练）与 `optimize`（超参搜索）共用这一套口径：
+        排除列、空标签剔除、抽样预算只要有一处不一致，搜索出来的参数
+        就不是在同一种数据上评估出来的，用户会看到「按建议改了反而更差」。
+
+        返回的 X 已经是抽样后的小表；整表 df 在函数内显式释放
+        （1000 万行 × 10 列约 1.3 GB，与下游预处理矩阵叠加会吃掉一份内存预算）。
+        """
+        emit = emit or (lambda stage_id, detail="": None)
         df = self._load_data(exp)
         emit("load", f"加载 {df.height} 行 × {df.width} 列")
         if exp.target_column and exp.target_column not in df.columns:
@@ -448,9 +546,6 @@ class ExperimentService:
             )
             # 只改**本次运行的局部副本**，绝不回写 exp.preprocessing：
             # Experiment 是用户定义的实验配置，Run 是某一次执行过程，两者不能互相污染。
-            # （曾在这里赋值 exp.preprocessing，导致「跑一次实验」顺带把实验定义里的
-            #   excluded_columns 永久改掉 —— 用户再次编辑或对比历史时会看到被改写过的配置。）
-            # 规范化后的实际生效值照旧记进 artifacts["excluded_columns"]。
             excluded = [c for c in excluded if c != target]
         missing_cols = [c for c in excluded if c not in df.columns]
         if missing_cols:
@@ -481,33 +576,66 @@ class ExperimentService:
             + (f"，剔除空标签 {dropped_rows} 行" if dropped_rows else ""),
         )
 
-        # ---- 训练集规模治理：超过 ML_MAX_TRAIN_ROWS 时随机抽样 ----
-        # sklearn 的估计器都要求稠密矩阵，1000 万行 × one-hot 展开后的列数
-        # 会直接把 numpy 撑爆（实测 57.1 GiB）。抽样是**有损**的，
-        # 因此必须 emit 出去并写进 artifacts，绝不静默。
-        X, y, sampling = cap_training_rows(X, y, seed=exp.seed)
-        # 到这里 X 已经是抽样后的小表（训练全程只用 X / y，本方法不再触碰整表 df）。
-        # 显式释放 df：1000 万行 × 10 列常驻约 1.3 GB，与下游预处理矩阵的峰值叠加
-        # 会白白吃掉一份内存预算 —— 在 16 GB 机器上直接决定「跑得通 / 跑不通」。
-        # 聚类场景此前 X is df，正是它让整表在 fit 期间一直活着。
+        # ---- 训练集规模治理 ----
+        # sklearn 估计器要求稠密矩阵，超大数据 × one-hot 展开会把 numpy 撑爆。
+        # 数据预算三档：用户显式行数 / 用户显式占比 / 缺省回落 ML_MAX_TRAIN_ROWS。
+        # 抽样是**有损**的，因此必须 emit 出去并写进 artifacts，绝不静默。
+        budget = exp.preprocessing or {}
+        user_limit: int | None = None
+        if budget.get("max_rows") is not None:
+            user_limit = max(1, int(budget["max_rows"]))
+        elif budget.get("train_fraction") is not None:
+            # 在「剔除空标签之后」的当前行数上换算占比
+            user_limit = max(1, round(X.height * float(budget["train_fraction"])))
+        X, y, sampling = cap_training_rows(
+            X, y, seed=exp.seed, max_rows=user_limit,
+        )
         del df
         if sampling["sampled"]:
+            source_note = "用户指定" if sampling["limit_source"] == "user" else "系统安全上限"
             emit(
                 "sample",
-                f"数据量 {sampling['original_rows']:,} 行，超过单次训练上限，"
+                f"数据量 {sampling['original_rows']:,} 行，超过{source_note}，"
                 f"已随机抽样 {sampling['used_rows']:,} 行"
                 f"（{sampling['sample_rate']:.1%}）用于训练",
             )
+        return X, y, excluded, dropped_rows, sampling
+
+    @staticmethod
+    def _pipeline_config(exp: Experiment) -> dict[str, Any]:
+        """从 preprocessing JSON 里剥掉「不是预处理」的键后交给管道。
+
+        preprocessing JSON 同时承载排除列 / 切分比例 / 数据预算 / 诊断开关，
+        这些键都不是 ColumnTransformer 的配置，混进去虽然被忽略，
+        但会让「这份配置到底做了什么预处理」变得无法一眼看明白。
+        """
+        return {
+            k: v
+            for k, v in (exp.preprocessing or {}).items()
+            if k
+            not in (
+                "excluded_columns", "test_size", "max_rows", "train_fraction",
+                "enable_learning_curve", "enable_cv",
+            )
+        }
+
+    def _execute(
+        self,
+        exp: Experiment,
+        on_progress: Callable[[str, str], None] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any], Any, Any]:
+        emit = on_progress or (lambda stage_id, detail="": None)
+        # 数据准备（加载 → 排除列 → 剔除空标签 → 规模治理）抽成 _prepare_xy：
+        # 「自动超参搜索」要在**不训练**的前提下拿到同一份 X / y，
+        # 若在这里另写一套，两边的排除列与抽样口径迟早会分家。
+        X, y, excluded, dropped_rows, sampling = self._prepare_xy(exp, emit)
 
         # ---- T0-3: 训练前 preflight 校验 ----
         self._preflight(exp.task, X, y)
 
         # ---- T0-2: 默认预处理（用户未提供配置时自动套用）----
         # test_size 共用 preprocessing JSON 承载，需从预处理配置中剥离后再交给管道
-        pp_cfg = {
-            k: v for k, v in (exp.preprocessing or {}).items()
-            if k not in ("excluded_columns", "test_size")
-        }
+        pp_cfg = self._pipeline_config(exp)
         test_size = float((exp.preprocessing or {}).get("test_size") or 0.2)
         pipeline = build_pipeline(pp_cfg, X)
         model = self._build_model(exp)
@@ -544,7 +672,7 @@ class ExperimentService:
             stratify = exp.task == "classification" and self._can_stratify(y)
             # 分层切分的硬约束：每类至少要能分到 1 个测试样本，否则 sklearn 抛
             # "The test_size = N should be greater or equal to the number of classes = M"
-            # 这类难懂英文错。此处提前转成可操作的中文提示（与 step_runner 同口径）。
+            # 这类难懂英文错。此处提前转成可操作的中文提示。
             # 注意：sklearn 内部按 ceil(N * test_size) 计算测试集大小，这里必须同样向上取整，
             # 否则 N=8/test_size=0.2（实际测试集 2 个）会被 int() 截断成 1 而误判为不足。
             if stratify and y is not None:
@@ -593,6 +721,7 @@ class ExperimentService:
                 # 决策阈值的依据：y_proba 上面已经算好了，扫一遍阈值几乎不增加成本，
                 # 却能把「阈值该定多少」从拍脑袋变成看曲线选。
                 details["threshold_curve"] = self._threshold_basis(y_test, y_proba, model)
+                details["calibration"] = self._calibration_basis(y_test, y_proba, model)
             else:
                 metrics = eval_regression(y_test, y_pred)
                 details["residual_stats"] = regression_residuals(y_test, y_pred)
@@ -600,6 +729,22 @@ class ExperimentService:
             # （判断依据是 train/test 指标差距，而不是单看测试集绝对值）。
             # 它不参与 run.metrics，因此不改变任何既有指标口径。
             details["train_metrics"] = self._train_metrics(model, Xtr, y_train, exp.task)
+            if bool((exp.preprocessing or {}).get("enable_learning_curve")):
+                details["learning_curve"] = self._learning_curve(
+                    Xtr, Xte, y_train, y_test, model, exp.task, emit
+                )
+            # 交叉验证：与上面那次 holdout 评估是**两个独立口径**，
+            # 它回答的是「换个切分还稳不稳」，不是「测试集上多少分」。
+            if bool((exp.preprocessing or {}).get("enable_cv")):
+                details["cv"] = self._cross_validate(exp, X, y, pp_cfg, emit)
+            # 测试集预测留痕：置信区间与「两个 run 的配对差异」都要它，
+            # 事后再补就只能重新训练一次。
+            details["test_predictions"] = self._test_predictions(
+                y_test, y_pred, y_proba, model, exp.seed,
+            )
+            details["metric_ci"] = self._metric_confidence_intervals(
+                exp.task, details["test_predictions"], seed=exp.seed,
+            )
             emit("evaluate", _metric_summary(exp.task, metrics))
             train_rows, test_rows = X_train.height, X_test.height
             stratified = stratify
@@ -691,6 +836,293 @@ class ExperimentService:
             return None
         curve["basis"] = "inference_data"
         return curve
+
+    @staticmethod
+    def _calibration_basis(
+        y_test: pl.Series, y_proba: pl.DataFrame | None, model: Any
+    ) -> dict[str, Any] | None:
+        """二分类留出测试集上的概率校准（可靠性曲线 + ECE）。
+
+        仅二分类；非二分类或计算失败一律返回 None，不影响训练结果。
+        """
+        if y_proba is None:
+            return None
+        classes = model_classes(model)
+        if not is_binary(classes):
+            return None
+        try:
+            return calibration_analysis(
+                y_test,
+                y_proba.to_numpy()[:, 1],
+                positive_label=classes[1],
+            )
+        except Exception as exc:  # noqa: BLE001 - 诊断失败不阻断训练
+            logger.info(
+                "概率校准不可用 model=%s: %s", getattr(model, "name", "?"), exc
+            )
+            return None
+
+    @staticmethod
+    def _learning_curve(
+        Xtr: pl.DataFrame,
+        Xte: pl.DataFrame,
+        y_train: pl.Series,
+        y_test: pl.Series,
+        model: Any,
+        task: str,
+        emit: Callable[..., Any],
+    ) -> dict[str, Any] | None:
+        """学习曲线诊断；训练样本过少或失败时返回 None，不阻断训练。"""
+        if Xtr.height < 10:
+            return None
+        try:
+            # 提前告知：额外拟合期间进度条看起来像「停住」，必须解释在做什么
+            emit("learning_curve", "学习曲线：最多额外 5 次拟合，请稍候")
+            return learning_curve_scores(
+                Xtr.to_numpy(),
+                y_train.to_numpy(),
+                Xte.to_numpy(),
+                y_test.to_numpy(),
+                model.estimator,
+                task=task,
+            )
+        except Exception as exc:  # noqa: BLE001 - 诊断失败不阻断训练
+            logger.info(
+                "学习曲线不可用 model=%s: %s", getattr(model, "name", "?"), exc
+            )
+            return None
+
+    def _cross_validate(
+        self,
+        exp: Experiment,
+        X: pl.DataFrame,
+        y: pl.Series | None,
+        pp_cfg: dict[str, Any],
+        emit: Callable[..., Any],
+    ) -> dict[str, Any] | None:
+        """K 折交叉验证（预处理在折内拟合）；失败返回 None，不阻断训练。
+
+        用的是**切分前**的全量 X / y：CV 自己会做切分，外面再套一层
+        holdout 只会让每折的训练数据变少、结论更难解释。
+
+        与 run.metrics 的关系是「两个独立口径」而不是「谁替代谁」：
+        metrics 是一次固定切分上的得分，cv 回答的是「换个切分还稳不稳」。
+        """
+        if y is None or X.height < 10:
+            return None
+        try:
+            emit("cv", "交叉验证：5 折 × 每折重新拟合预处理与模型，请稍候")
+            # 管道与 estimator 都必须**未拟合**：拟合交给 cross_validate 在折内完成
+            pipeline = build_pipeline(pp_cfg, X)
+            estimator = self._build_model(exp).new_estimator()
+            result = cv_evaluate(
+                pipeline,
+                estimator,
+                X,
+                y,
+                task=exp.task,
+                folds=5,
+                seed=exp.seed or 42,
+            )
+            logger.info(
+                "交叉验证完成 experiment_id=%s 均值=%s", exp.id, result["mean"]
+            )
+            return result
+        except Exception as exc:  # noqa: BLE001 - 诊断失败不阻断训练
+            logger.info("交叉验证不可用 model=%s: %s", exp.model, exc)
+            return None
+
+    # 留存的测试集预测行数上限：几十万个浮点数进 artifacts 会把运行记录撑到几 MB，
+    # 而置信区间在这个规模上早已收敛（区间宽度对 n 的敏感度远低于 √n）。
+    TEST_PREDICTION_CAP = 50_000
+
+    @classmethod
+    def _test_predictions(
+        cls,
+        y_test: pl.Series | None,
+        y_pred: pl.Series | None,
+        y_proba: pl.DataFrame | None,
+        model: Any,
+        seed: int | None,
+    ) -> dict[str, Any] | None:
+        """留一份测试集预测（y_true / y_pred / 二分类正类概率），供 CI 与配对差异复用。
+
+        事后想算置信区间就得重新训练一次 —— 预测本身很便宜，重训很贵，
+        所以这里在训练流程里顺手留一份。超过上限时存随机抽样版并写明 note：
+        静默换样本等于让「区间」建立在一份没交代过的子集上。
+        """
+        if y_test is None or y_pred is None or y_test.len() == 0:
+            return None
+        n = int(y_test.len())
+        idx: np.ndarray | None = None
+        if n > cls.TEST_PREDICTION_CAP:
+            rng = np.random.default_rng(seed)
+            idx = np.sort(
+                rng.choice(n, size=cls.TEST_PREDICTION_CAP, replace=False)
+            )
+        y_true_arr = np.asarray(y_test.to_numpy())
+        y_pred_arr = np.asarray(y_pred.to_numpy())
+        if idx is not None:
+            y_true_arr, y_pred_arr = y_true_arr[idx], y_pred_arr[idx]
+        out: dict[str, Any] = {
+            "rows": int(y_true_arr.size),
+            "y_true": [_jsonable(v) for v in y_true_arr.tolist()],
+            "y_pred": [_jsonable(v) for v in y_pred_arr.tolist()],
+        }
+        if y_proba is not None and y_proba.width >= 2:
+            try:
+                classes = model_classes(model)
+            except Exception:  # noqa: BLE001 - 拿不到类别就跳过概率列
+                classes = []
+            if is_binary(classes):
+                proba = np.asarray(y_proba.to_numpy()[:, 1], dtype="float64")
+                if idx is not None:
+                    proba = proba[idx]
+                out["y_pos_proba"] = [round(float(x), 6) for x in proba.tolist()]
+                out["positive_class"] = _jsonable(classes[1])
+        if idx is not None:
+            out["sampled"] = True
+            out["note"] = (
+                f"测试集 {n:,} 行超过 {cls.TEST_PREDICTION_CAP:,} 行上限，"
+                f"此处留存随机抽样的 {int(y_true_arr.size):,} 行"
+                f"（置信区间与配对差异均基于该样本）"
+            )
+        return out
+
+    @staticmethod
+    def _bootstrap_repeats(n: int) -> int:
+        """Bootstrap 次数：按样本量自适应。
+
+        固定 1000 次在 5 万行上要跑上亿次比较，为一个诊断项把训练拖慢几十秒
+        不值得；小样本上 1000 次几乎不花钱，而它恰恰最需要区间（点估计最不稳）。
+        """
+        if n <= 5_000:
+            return 1000
+        if n <= 20_000:
+            return 400
+        return 200
+
+    @staticmethod
+    def _r2(yt: "np.ndarray", yp: "np.ndarray") -> float:
+        ss_tot = float(((yt - yt.mean()) ** 2).sum())
+        if ss_tot <= 0:
+            return float("nan")
+        return 1.0 - float(((yt - yp) ** 2).sum()) / ss_tot
+
+    @staticmethod
+    def _rmse(yt: "np.ndarray", yp: "np.ndarray") -> float:
+        return float(np.sqrt(float(((yt - yp) ** 2).mean())))
+
+    def _metric_confidence_intervals(
+        self,
+        task: str,
+        preds: dict[str, Any] | None,
+        *,
+        seed: int | None = None,
+    ) -> dict[str, Any]:
+        """测试集指标的 95% Bootstrap 置信区间。
+
+        点估计看不出「稳不稳」：0.83 与 0.85 的差距在 200 行测试集上
+        大概率是噪声。区间跨不跨 0（或与对方重叠）才是能不能下结论的依据。
+        """
+        if not isinstance(preds, dict) or not preds.get("y_true"):
+            return {}
+        y_true = np.asarray(preds["y_true"])
+        y_pred = np.asarray(preds["y_pred"])
+        n = int(y_true.size)
+        # 30 行以下区间宽到没有参考价值，不如不给（给了反而像精确结论）
+        if n < 30 or int(y_pred.size) != n:
+            return {}
+        repeats = self._bootstrap_repeats(n)
+        seed_value = int(seed) if seed is not None else 42
+        raw: dict[str, Any] = {}
+        if task == "classification":
+            yt_c, yp_c, k = class_codes(y_true, y_pred)
+            raw["accuracy"] = bootstrap_confidence_interval(
+                values_for_indices=yt_c,
+                metric_fn=lambda idx: float((yt_c[idx] == yp_c[idx]).mean()),
+                n_repeats=repeats,
+                seed=seed_value,
+            )
+            raw["f1"] = bootstrap_confidence_interval(
+                values_for_indices=yt_c,
+                metric_fn=lambda idx: macro_f1_from_codes(yt_c[idx], yp_c[idx], k),
+                n_repeats=repeats,
+                seed=seed_value,
+            )
+            proba = preds.get("y_pos_proba")
+            if k == 2 and proba is not None and len(proba) == n:
+                p = np.asarray(proba, dtype="float64")
+                raw["roc_auc"] = bootstrap_confidence_interval(
+                    values_for_indices=yt_c,
+                    metric_fn=lambda idx: roc_auc_fast(yt_c[idx], p[idx]),
+                    n_repeats=repeats,
+                    seed=seed_value,
+                )
+        elif task == "regression":
+            yt = np.asarray(y_true, dtype="float64")
+            yp = np.asarray(y_pred, dtype="float64")
+            raw["r2"] = bootstrap_confidence_interval(
+                values_for_indices=yt,
+                metric_fn=lambda idx: self._r2(yt[idx], yp[idx]),
+                n_repeats=repeats,
+                seed=seed_value,
+            )
+            raw["rmse"] = bootstrap_confidence_interval(
+                values_for_indices=yt,
+                metric_fn=lambda idx: self._rmse(yt[idx], yp[idx]),
+                n_repeats=repeats,
+                seed=seed_value,
+            )
+        clean = {
+            name: ci
+            for name, ci in raw.items()
+            if isinstance(ci, dict) and ci.get("lower") is not None
+        }
+        if clean:
+            clean["n_bootstrap"] = repeats
+            clean["basis"] = "holdout_test_bootstrap"
+        return clean
+
+    def optimize(self, experiment_id: int, *, n_iter: int = 20) -> dict[str, Any]:
+        """对实验做一次随机搜索，返回最佳参数与 Top10 —— **不自动覆盖**实验配置。
+
+        刻意不写回：搜索是在「切分前全量数据 + K 折」上评估出来的，
+        把它悄悄变成实验配置，用户就分不清「我设的」和「机器搜出来的」；
+        而且一次搜索的训练量是普通训练的 n_iter × folds 倍，静默重训不可接受。
+        界面上给出 Top10 与「应用最佳参数」按钮，采纳与否由人决定。
+        """
+        exp = self.get(experiment_id)
+        if exp.task not in ("classification", "regression"):
+            raise ValidationException(
+                f"自动超参搜索仅支持分类 / 回归任务，当前为 {exp.task!r}"
+            )
+        if exp.model not in SEARCH_SPACES:
+            raise ValidationException(
+                f"模型 {exp.model!r} 暂无内置搜索空间"
+                f"（当前支持：{'、'.join(sorted(SEARCH_SPACES))}）"
+            )
+        X, y, _excluded, _dropped, _sampling = self._prepare_xy(exp)
+        if y is None:
+            raise ValidationException("该实验没有目标列，无法做超参搜索")
+        pipeline = build_pipeline(self._pipeline_config(exp), X)
+        result = random_search(
+            pipeline,
+            exp.model,
+            X,
+            y,
+            task=exp.task,
+            folds=5,
+            seed=exp.seed or 42,
+            n_iter=max(1, int(n_iter)),
+            params=self._build_model(exp).params,
+        )
+        result["experiment_id"] = exp.id
+        logger.info(
+            "超参搜索完成 experiment_id=%s 最佳=%s 分数=%.4f",
+            exp.id, result["best_params"], result["best_score"],
+        )
+        return result
 
     @staticmethod
     def _train_metrics(
@@ -795,17 +1227,19 @@ class ExperimentService:
     # ------------------------------------------------------------------
     # 推理：加载训练产物（model.pkl + pipeline.pkl）对新数据做预测
     # ------------------------------------------------------------------
-    def predict(
+    def _predict_full(
         self,
         run_id: int,
         df: pl.DataFrame | None = None,
         *,
         dataset_id: int | None = None,
         version: int | None = None,
-        limit: int | None = 200,
         threshold: float | None = None,
     ) -> dict[str, Any]:
-        """用一次成功运行的模型做批量推理。
+        """执行一次完整推理，返回**全量**结果（不做预览切片）。
+
+        `predict`（界面预览）与 `export_predictions`（全量导出）都建立在这里：
+        两条路径各自跑一遍模型既浪费算力，也可能因为随机性给出两份对不上的结果。
 
         threshold 是**训练后**参数：作用在模型输出的类别概率上，不动模型本身，
         因此改它不需要重新训练。只对二分类有意义（多分类单个阈值语义不明），
@@ -847,21 +1281,15 @@ class ExperimentService:
         prediction = batch_predict(model, X_raw, pipeline=pipeline)
         elapsed = round(time.perf_counter() - started, 6)
 
-        probabilities: list[dict[str, Any]] | None = None
         probability_columns: list[str] = []
         proba_frame: pl.DataFrame | None = None
         rows = df.height
-        preview = int(limit) if limit and limit > 0 else rows
         if exp.task == "classification":
             try:
                 proba_frame = batch_predict_proba(model, X_raw, pipeline=pipeline)
                 probability_columns = list(proba_frame.columns)
-                # 只物化要返回的前 preview 行：整表 to_dicts() 会为百万行数据集构造等量 Python dict，
-                # 而下面只有前 preview 行被写进 payload。
-                probabilities = proba_frame.head(preview).to_dicts()
             except MLEngineException:
                 proba_frame = None
-                probabilities = None
 
         # ---- 训练后参数：决策阈值 ----
         # 模型负责输出概率，阈值负责决定「概率多少算正类」。两者分开的好处是
@@ -901,17 +1329,69 @@ class ExperimentService:
                 df, exp.target_column, proba_frame, classes
             )
 
-        payload = df.head(preview).to_dicts()
+        logger.info(
+            "推理完成 run_id=%s 模型=%s 行数=%s 耗时=%.3fs",
+            run_id, exp.model, rows, elapsed,
+        )
+        return {
+            "run": run,
+            "experiment": exp,
+            "df": df,
+            "model": model,
+            "feature_columns": feature_columns,
+            "prediction": prediction,
+            "proba_frame": proba_frame,
+            "probability_columns": probability_columns,
+            "row_count": rows,
+            "runtime": elapsed,
+            "classes": classes,
+            "binary": binary,
+            "positive_class": positive_class,
+            "threshold": applied_threshold,
+            "threshold_default": DEFAULT_THRESHOLD,
+            "threshold_supported": binary and proba_frame is not None,
+            "label_changed_ratio": shift_ratio,
+            "threshold_curve": inference_curve,
+            "pipeline_applied": pipeline is not None,
+        }
+
+    def predict(
+        self,
+        run_id: int,
+        df: pl.DataFrame | None = None,
+        *,
+        dataset_id: int | None = None,
+        version: int | None = None,
+        limit: int | None = 200,
+        threshold: float | None = None,
+    ) -> dict[str, Any]:
+        """批量推理的**预览**视图：模型对全量数据只跑一次，返回前 limit 行。
+
+        预览只截断返回给界面的行数（`limit` 上限 5000 是界面语义，不是数据上限）。
+        要拿完整结果请走 `export_predictions`，不要把 limit 调到几千去硬取。
+        """
+        full = self._predict_full(
+            run_id, df, dataset_id=dataset_id, version=version, threshold=threshold
+        )
+        run = full["run"]
+        exp = full["experiment"]
+        rows = full["row_count"]
+        prediction = full["prediction"]
+        proba_frame = full["proba_frame"]
+
+        preview = int(limit) if limit and limit > 0 else rows
+        # 只物化要返回的前 preview 行：整表 to_dicts() 会为百万行数据集构造等量
+        # Python dict，而下面只有前 preview 行被写进 payload。
+        probabilities = (
+            proba_frame.head(preview).to_dicts() if proba_frame is not None else None
+        )
+        payload = full["df"].head(preview).to_dicts()
         for i, value in enumerate(prediction.head(preview).to_list()):
             payload[i]["prediction"] = _jsonable(value)
             if probabilities is not None and i < preview:
                 for col, v in probabilities[i].items():
                     payload[i][col] = _jsonable(v)
 
-        logger.info(
-            "推理完成 run_id=%s 模型=%s 行数=%s 耗时=%.3fs",
-            run_id, exp.model, rows, elapsed,
-        )
         return {
             "run_id": run.id,
             "experiment_id": exp.id,
@@ -919,22 +1399,63 @@ class ExperimentService:
             "task": exp.task,
             "row_count": rows,
             "prediction_column": "prediction",
-            "probability_columns": probability_columns,
-            "feature_columns": feature_columns,
-            "model_features": list(model.feature_names_),
-            "pipeline_applied": pipeline is not None,
-            "runtime": elapsed,
+            "probability_columns": full["probability_columns"],
+            "feature_columns": full["feature_columns"],
+            "model_features": list(full["model"].feature_names_),
+            "pipeline_applied": full["pipeline_applied"],
+            "runtime": full["runtime"],
             "preview": payload,
             # ---- 推理阶段参数的回执 ----
             # 回执而非「悄悄生效」：界面上必须能看出这次推理用的是哪个阈值、
             # 正类是哪个类别、以及换阈值到底改动了多少样本的标签。
-            "threshold_supported": binary and proba_frame is not None,
-            "threshold": applied_threshold,
-            "threshold_default": DEFAULT_THRESHOLD,
-            "positive_class": _jsonable(positive_class),
-            "label_changed_ratio": shift_ratio,
-            "threshold_curve": inference_curve,
+            "threshold_supported": full["threshold_supported"],
+            "threshold": full["threshold"],
+            "threshold_default": full["threshold_default"],
+            "positive_class": _jsonable(full["positive_class"]),
+            "label_changed_ratio": full["label_changed_ratio"],
+            "threshold_curve": full["threshold_curve"],
         }
+
+    def export_predictions(
+        self,
+        run_id: int,
+        df: pl.DataFrame | None = None,
+        *,
+        dataset_id: int | None = None,
+        version: int | None = None,
+        threshold: float | None = None,
+        format: str = "csv",
+    ) -> tuple[bytes, str]:
+        """导出**全量**推理结果：原始列 + prediction 列 + 概率列，逐行对齐。
+
+        返回 `(字节内容, 扩展名)`，文件名与 Content-Disposition 由 API 层补。
+
+        为什么不直接调大 `predict(limit=...)`：limit 是预览语义（≤5000），
+        而批量推理的价值就在于「每一行都要有结果」；把几十万行塞进 JSON 再
+        让浏览器拼一个 CSV，既慢又容易在网关层被截断。列式文件才是对的格式。
+        """
+        fmt = str(format or "csv").lower()
+        if fmt not in ("csv", "parquet"):
+            raise ValidationException(
+                f"不支持的导出格式 {format!r}，仅支持 csv / parquet"
+            )
+        full = self._predict_full(
+            run_id, df, dataset_id=dataset_id, version=version, threshold=threshold
+        )
+        frame = full["df"]
+        # 用 with_columns 而不是横向 concat：原始表里若已有同名列（例如恰好叫
+        # prediction），覆盖掉只会覆盖一列，concat 则会因重名直接报错。
+        extra = [full["prediction"]]
+        if full["proba_frame"] is not None:
+            extra += [full["proba_frame"][c] for c in full["proba_frame"].columns]
+        frame = frame.with_columns(extra)
+
+        buf = io.BytesIO()
+        if fmt == "parquet":
+            frame.write_parquet(buf)
+        else:
+            frame.write_csv(buf)
+        return buf.getvalue(), fmt
 
     def explain(self, run_id: int) -> dict[str, Any]:
         """解释一次成功运行的模型：优先复用训练时落库的特征重要性。"""
@@ -961,7 +1482,23 @@ class ExperimentService:
                 details={"run_id": run.id},
             )
         try:
-            return MODEL_REGISTRY.get(exp.model).from_bytes(storage.read(model_key))
+            raw = storage.read(model_key)
+            adapter_cls = MODEL_REGISTRY.get(exp.model)
+            return adapter_cls.from_signed_bytes(raw)
+        except MLEngineException as exc:
+            # 升级前保存的裸 pickle 没有信封，仍然要能读 —— 否则历史运行会集体失效。
+            # 但「有信封却对不上」是真被改动过，绝不能退回裸 pickle 去赌一把。
+            if exc.code != "MODEL_ARTIFACT_UNSIGNED":
+                raise MLEngineException(
+                    f"模型产物签名校验失败，已拒绝加载：{exc.message}",
+                    code="MODEL_ARTIFACT_TAMPERED",
+                    details={"run_id": run.id, "model_key": model_key},
+                ) from exc
+            logger.warning(
+                "模型产物无完整性签名，按旧格式加载 run_id=%s（重新训练后会自动带签名）",
+                run.id,
+            )
+            return adapter_cls.from_bytes(raw)
         except FileNotFoundError as exc:
             raise MLEngineException(
                 "模型产物文件已丢失，请重新训练",

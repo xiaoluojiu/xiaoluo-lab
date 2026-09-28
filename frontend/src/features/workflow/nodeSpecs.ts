@@ -17,7 +17,9 @@ import type { IconName } from "../../components/icons/Icon";
 
 export type NodeCategory = "数据" | "机器学习" | "AI" | "报告";
 
-export type ParamKind = "string" | "number" | "boolean" | "enum" | "columns" | "json";
+export type ParamKind =
+  | "string" | "number" | "boolean" | "enum" | "columns" | "json"
+  | "dataset" | "conditions" | "aggregations";
 
 export interface ParamSpec {
   key: string;
@@ -54,43 +56,41 @@ export interface NodeSpec {
 
 const MISSING_STRATEGIES: ParamSpec["options"] = [
   { value: "drop", label: "删除含缺失的行" },
-  { value: "fill", label: "填充固定值" },
+  { value: "constant", label: "填充固定值" },
   { value: "mean", label: "用均值填充（仅数值列）" },
   { value: "median", label: "用中位数填充（仅数值列）" },
   { value: "mode", label: "用众数填充" },
-  { value: "ffill", label: "用前一个有效值填充" },
-  { value: "bfill", label: "用后一个有效值填充" },
 ];
 
 const STRING_OPS: ParamSpec["options"] = [
+  { value: "trim", label: "去除首尾空白" },
   { value: "lower", label: "转小写" },
   { value: "upper", label: "转大写" },
-  { value: "strip", label: "去除首尾空白" },
   { value: "replace", label: "替换子串" },
-  { value: "contains", label: "包含匹配" },
-  { value: "startswith", label: "前缀匹配" },
-  { value: "endswith", label: "后缀匹配" },
-  { value: "slice", label: "按位置截取" },
+  { value: "regex", label: "正则替换" },
 ];
 
-const AGG_FUNCS: ParamSpec["options"] = [
-  { value: "mean", label: "均值" },
-  { value: "sum", label: "求和" },
+/** data.aggregate 的 func 白名单（逐字对齐后端 AGG_FUNCTIONS）。 */
+export const AGGREGATION_FUNCS: NonNullable<ParamSpec["options"]> = [
   { value: "count", label: "计数" },
+  { value: "sum", label: "求和" },
+  { value: "mean", label: "均值" },
+  { value: "median", label: "中位数" },
   { value: "min", label: "最小值" },
   { value: "max", label: "最大值" },
-  { value: "median", label: "中位数" },
   { value: "std", label: "标准差" },
-  { value: "nunique", label: "去重计数" },
 ];
 
 const ML_MODELS: ParamSpec["options"] = [
   { value: "linear_regression", label: "线性回归" },
+  { value: "knn_regressor", label: "K近邻回归" },
+  { value: "decision_tree_regressor", label: "决策树回归" },
   { value: "random_forest_regressor", label: "随机森林回归" },
-  { value: "logistic_regression", label: "逻辑回归（分类）" },
+  { value: "logistic_regression", label: "逻辑回归" },
+  { value: "knn_classifier", label: "K近邻分类" },
+  { value: "decision_tree_classifier", label: "决策树分类" },
   { value: "random_forest_classifier", label: "随机森林分类" },
-  { value: "kmeans", label: "K-Means 聚类" },
-  { value: "pca", label: "主成分分析" },
+  { value: "hist_gradient_boosting_classifier", label: "直方图梯度提升" },
 ];
 
 const AGG_OPTIONS: ParamSpec["options"] = [
@@ -99,6 +99,14 @@ const AGG_OPTIONS: ParamSpec["options"] = [
   { value: "count", label: "计数" },
   { value: "min", label: "最小值" },
   { value: "max", label: "最大值" },
+];
+
+/** data.load 与语义别名 dataset.read 共用的参数规格（单一事实源）。 */
+const LOAD_PARAMS: ParamSpec[] = [
+  { key: "dataset_id", label: "数据集", kind: "dataset", required: true,
+    hint: "选择要加载的数据集；下游节点的可选列由它决定。" },
+  { key: "version", label: "版本", kind: "number",
+    hint: "留空则使用最新版本。数据集采用不可变版本快照，指定版本可复现历史结果。" },
 ];
 
 /**
@@ -125,21 +133,7 @@ export const NODE_SPECS: Record<string, NodeSpec> = {
     icon: "database",
     description: "从数据集读取一张表，作为整条流程的起点。",
     registeredRunner: true,
-    params: [
-      {
-        key: "dataset_id",
-        label: "数据集",
-        kind: "enum",
-        required: true,
-        hint: "选择要加载的数据集；下游节点的可选列由它决定。",
-      },
-      {
-        key: "version",
-        label: "版本",
-        kind: "number",
-        hint: "留空则使用最新版本。数据集采用不可变版本快照，指定版本可复现历史结果。",
-      },
-    ],
+    params: LOAD_PARAMS,
   },
   "data.clean": {
     type: "data.clean",
@@ -169,8 +163,8 @@ export const NODE_SPECS: Record<string, NodeSpec> = {
         key: "value",
         label: "填充值",
         kind: "string",
-        // 条件依赖：只有选「填充固定值」才需要填。
-        visibleWhen: { key: "strategy", equals: "fill" },
+        // 条件依赖：只有选「填充固定值」才需要填。后端按 strategy=constant + value 处理。
+        visibleWhen: { key: "strategy", equals: "constant" },
         placeholder: "例如 0 或 未知",
       },
     ],
@@ -191,7 +185,6 @@ export const NODE_SPECS: Record<string, NodeSpec> = {
         options: [
           { value: "first", label: "保留第一条" },
           { value: "last", label: "保留最后一条" },
-          { value: "none", label: "全部删除" },
         ],
         default: "first",
       },
@@ -219,7 +212,7 @@ export const NODE_SPECS: Record<string, NodeSpec> = {
     params: [
       { key: "column", label: "目标列", kind: "columns", columnFilter: "any", required: true },
       { key: "op", label: "操作", kind: "enum", options: STRING_OPS, required: true },
-      { key: "params", label: "操作参数", kind: "json", placeholder: '{ "old": " ", "new": "" }', hint: "随所选操作而变，例如 replace 需要 old / new。" },
+      { key: "params", label: "操作参数", kind: "json", placeholder: '{ "old": " ", "new": "" }', hint: "随操作而变：trim 无参数；replace 需要 {old, new}；regex 需要 {pattern, replacement}。" },
     ],
   },
   "data.filter": {
@@ -230,7 +223,7 @@ export const NODE_SPECS: Record<string, NodeSpec> = {
     description: "按条件过滤数据行。",
     registeredRunner: false,
     params: [
-      { key: "conditions", label: "条件", kind: "json", required: true, placeholder: '[{ "column": "DepDelay", "op": ">", "value": 0 }]' },
+      { key: "conditions", label: "条件", kind: "conditions", required: true },
       {
         key: "logic",
         label: "组合方式",
@@ -265,7 +258,8 @@ export const NODE_SPECS: Record<string, NodeSpec> = {
     registeredRunner: false,
     params: [
       { key: "group_by", label: "分组列", kind: "columns", multi: true, columnFilter: "categorical" },
-      { key: "aggregations", label: "聚合方式", kind: "json", required: true, placeholder: '{ "DepDelay": ["mean", "max"] }', hint: "键为列名，值为聚合函数数组。" },
+      { key: "aggregations", label: "聚合方式", kind: "aggregations", required: true,
+        hint: "每行选择一列与一个聚合函数；count 允许列留空表示统计总行数。" },
     ],
   },
   "data.pivot": {
@@ -319,7 +313,6 @@ export const NODE_SPECS: Record<string, NodeSpec> = {
     description: "用已训练的模型对新数据打分。",
     registeredRunner: true,
     params: [
-      { key: "target_column", label: "目标列", kind: "columns", columnFilter: "any", required: true },
       { key: "output_column", label: "预测结果列名", kind: "string", default: "prediction" },
     ],
   },
@@ -331,8 +324,8 @@ export const NODE_SPECS: Record<string, NodeSpec> = {
     description: "计算模型的评估指标。",
     registeredRunner: true,
     params: [
-      { key: "target_column", label: "目标列", kind: "columns", columnFilter: "any", required: true },
-      { key: "metrics", label: "指标", kind: "json", placeholder: '["r2", "rmse", "mae"]' },
+      { key: "target_column", label: "目标列", kind: "columns", columnFilter: "any",
+        required: true, hint: "与训练时一致的目标列；指标由系统按任务类型自动给出。" },
     ],
   },
   "ml.cluster": {
@@ -369,6 +362,62 @@ export const NODE_SPECS: Record<string, NodeSpec> = {
     description: "让大模型基于上游结果生成结论文本。",
     registeredRunner: true,
     params: [{ key: "prompt", label: "分析要求", kind: "string", required: true, placeholder: "请总结这个流程的主要发现与下一步建议。" }],
+  },
+  "dataset.read": {
+    type: "dataset.read", label: "读取数据集（语义）", category: "数据",
+    icon: "database", registeredRunner: true, params: LOAD_PARAMS,
+    description: "data.load 的语义别名，按 dataset_id 载入版本快照。",
+  },
+  "data.quality_check": {
+    type: "data.quality_check", label: "质量核查", category: "数据",
+    icon: "wand", registeredRunner: true,
+    description: "行数、重复行、缺失值与唯一键核查；不改变数据并透传给下游。",
+    params: [
+      { key: "checks", label: "检查项", kind: "enum", multi: true,
+        options: [
+          { value: "row_count", label: "行数" },
+          { value: "duplicate_rows", label: "重复行" },
+          { value: "missing_values", label: "缺失值" },
+          { value: "unique_keys", label: "唯一键" },
+        ],
+        hint: "勾 unique_keys 时需在下方指定唯一键字段；留空用默认三项。" },
+      { key: "key_column", label: "唯一键字段", kind: "columns", columnFilter: "any",
+        hint: "仅在检查项含 unique_keys 时需要。" },
+    ],
+  },
+  "data.statistics": {
+    type: "data.statistics", label: "描述统计", category: "数据",
+    icon: "chart", registeredRunner: true,
+    description: "逐列计算描述性统计；不改变数据并透传给下游。",
+    params: [
+      { key: "columns", label: "统计列", kind: "columns", multi: true, columnFilter: "any",
+        hint: "留空表示所有列。" },
+      { key: "metrics", label: "统计量", kind: "enum", multi: true,
+        options: [
+          { value: "count", label: "计数" },
+          { value: "mean", label: "均值" },
+          { value: "median", label: "中位数" },
+          { value: "min", label: "最小值" },
+          { value: "max", label: "最大值" },
+          { value: "std", label: "标准差" },
+          { value: "value_counts", label: "值频次" },
+        ],
+        hint: "mean/median/min/max/std 仅对数值列生效；留空用默认集。" },
+    ],
+  },
+  "report.summary": {
+    type: "report.summary", label: "报告摘要", category: "报告",
+    icon: "grid", registeredRunner: true,
+    description: "把上游各节点的关键结论压缩成结构化摘要。",
+    params: [
+      { key: "sections", label: "摘要区块", kind: "enum", multi: true,
+        options: [
+          { value: "data_quality", label: "数据质量" },
+          { value: "key_statistics", label: "关键统计" },
+          { value: "issues", label: "问题清单" },
+        ],
+        hint: "留空用默认三项。" },
+    ],
   },
 };
 

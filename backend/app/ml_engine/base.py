@@ -9,11 +9,18 @@
 - y: pl.Series | None（目标；聚类 / 降维为 None）
 - fit 返回 self，支持链式调用
 - save/load 通过 pickle 序列化（bytes），可对接 Storage 层
+
+持久化带一层 HMAC 签名（见 `to_signed_bytes`）：模型产物是 pickle，
+反序列化即执行代码，一旦被别的文件顶替或传输出错，症状会是「推理结果莫名其妙」
+而不是「文件坏了」。签名把这类问题在加载时就变成一条明确报错。
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import inspect
+import os
 import pickle
 import time
 from abc import ABC, abstractmethod
@@ -24,6 +31,32 @@ from typing import Any
 import polars as pl
 
 from app.ml_engine.exceptions import MLEngineException
+
+
+# ----------------------------------------------------------------------
+# 模型产物的完整性信封
+#
+# 格式：magic(4) + hmac_sha256(32) + payload
+# magic 同时承担「这是不是签名过的产物」的判定 —— 没有它就无法区分
+# 「签名不匹配」和「旧版本留下的裸 pickle」，后者必须继续能读。
+# ----------------------------------------------------------------------
+_MAGIC = b"XLB1"
+_DIGEST_SIZE = hashlib.sha256().digest_size  # 32
+
+# 没配置环境变量时用的固定密钥。它**不是**安全边界：只保证「文件被截断 /
+# 被别的 pickle 顶替 / 传输中损坏」能被发现，防不住知道这个常量的人伪造。
+# 真正要防篡改时设置环境变量 ML_MODEL_SIGNING_SECRET（改密钥后旧产物需要重训）。
+_DEFAULT_SIGNING_SECRET = b"xiaoluo-lab-model-artifact-v1"
+
+
+def _signing_secret() -> bytes:
+    """模型签名密钥：优先环境变量 `ML_MODEL_SIGNING_SECRET`，否则回落内置常量。"""
+    raw = os.environ.get("ML_MODEL_SIGNING_SECRET") or ""
+    return raw.encode("utf-8") if raw else _DEFAULT_SIGNING_SECRET
+
+
+def _digest_for(payload: bytes) -> bytes:
+    return hmac.new(_signing_secret(), payload, hashlib.sha256).digest()
 
 
 class ModelAdapter(ABC):
@@ -73,6 +106,14 @@ class ModelAdapter(ABC):
             p.kind is inspect.Parameter.VAR_KEYWORD
             for p in signature.parameters.values()
         )
+
+    def new_estimator(self) -> Any:
+        """构造一份**未拟合**的底层 estimator（交叉验证 / 超参搜索用）。
+
+        这两个场景都要自己掌握 fit 的时机（必须在每折的训练部分里 fit），
+        因此不能复用 ``fit`` 创建的 ``self.estimator`` —— 那是已经拟合过的。
+        """
+        return self._make_estimator(self.params)
 
     @property
     def trained(self) -> bool:
@@ -190,6 +231,50 @@ class ModelAdapter(ABC):
         instance.n_samples_ = payload.get("n_samples_")
         instance.fit_seconds_ = payload.get("fit_seconds_")
         return instance
+
+    # ---- 带完整性信封的存取（存储层一律用它，裸 pickle 仅供向后兼容） ----
+    def to_signed_bytes(self) -> bytes:
+        """序列化为「magic + HMAC + payload」，供存储层落盘。"""
+        payload = self.to_bytes()
+        return _MAGIC + _digest_for(payload) + payload
+
+    @classmethod
+    def from_signed_bytes(cls, data: bytes) -> ModelAdapter:
+        """按信封格式解析并**先验签**再反序列化。
+
+        两种失败给出可区分的原因，上层据此决定「拒绝」还是「按旧格式重试」：
+        - 不是签名格式（无 magic）→ `MODEL_ARTIFACT_UNSIGNED`
+        - 是签名格式但摘要对不上 → `MODEL_ARTIFACT_TAMPERED`（绝不解 pickle）
+        """
+        if not isinstance(data, (bytes, bytearray)):
+            raise MLEngineException(
+                "模型产物不是字节流，无法解析",
+                code="MODEL_ARTIFACT_TAMPERED",
+                details={"type": type(data).__name__},
+            )
+        raw = bytes(data)
+        if len(raw) < len(_MAGIC) + _DIGEST_SIZE:
+            raise MLEngineException(
+                "模型产物长度不足，可能已被截断",
+                code="MODEL_ARTIFACT_TAMPERED",
+                details={"size": len(raw)},
+            )
+        if raw[: len(_MAGIC)] != _MAGIC:
+            raise MLEngineException(
+                "模型产物缺少完整性签名（可能是升级前保存的旧产物）",
+                code="MODEL_ARTIFACT_UNSIGNED",
+                details={"size": len(raw)},
+            )
+        payload = raw[len(_MAGIC) + _DIGEST_SIZE :]
+        expected = raw[len(_MAGIC) : len(_MAGIC) + _DIGEST_SIZE]
+        if not hmac.compare_digest(_digest_for(payload), expected):
+            raise MLEngineException(
+                "模型产物签名校验失败：文件被改动过或与保存时的密钥不一致，"
+                "为避免加载不可信内容已拒绝反序列化（请重新训练该运行）",
+                code="MODEL_ARTIFACT_TAMPERED",
+                details={"size": len(payload)},
+            )
+        return cls.from_bytes(payload)
 
     @classmethod
     def load(cls, path: str | Path) -> ModelAdapter:

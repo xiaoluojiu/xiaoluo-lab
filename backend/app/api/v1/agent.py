@@ -28,7 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.agent.channels import CHANNELS, EMPTY, is_terminal_event, sse_frame, wait_deadline
+from app.agent.channels import CHANNELS, EMPTY, RunChannel, is_terminal_event, sse_frame, wait_deadline
 from app.agent.engine import MAX_LLM_CALLS, MAX_STEPS
 from app.agent.intents import is_abandonment
 from app.agent.models import AgentRun, EventType, RunStatus
@@ -531,10 +531,6 @@ async def _event_stream(run_id: str, session_id: str, channel: RunChannel, store
         CHANNELS.discard(run_id)
     # 控制帧：前端收到即停止读取
     yield sse_frame("done", "{}")
-
-
-async def _noop() -> None:
-    return None
 
 
 def _frame(event: Any) -> str:

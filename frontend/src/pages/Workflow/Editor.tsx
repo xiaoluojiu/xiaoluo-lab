@@ -21,8 +21,8 @@ import { WorkflowHealthPanel } from "../../features/workflow/WorkflowHealthPanel
 import { WorkflowRunPanel } from "../../features/workflow/WorkflowRunPanel";
 import { WorkflowStudio, nodeSummary } from "../../features/workflow/WorkflowStudio";
 import { applyTemplate, generateSuggestedWorkflow, WORKFLOW_TEMPLATES } from "../../features/workflow/WorkflowCanvas";
-import { runPreflight } from "../../features/workflow/configView";
-import { metricsFromOutputs } from "../../features/workflow/nodeStatus";
+import { extractRunErrors, runPreflight } from "../../features/workflow/configView";
+import { metricsFromOutputs, workflowStages } from "../../features/workflow/nodeStatus";
 import {
   clearDraft,
   formatSavedAt,
@@ -38,9 +38,11 @@ import {
   listWorkflows,
   runWorkflow,
   updateWorkflow,
+  WORKFLOW_RUN_ESTIMATE,
 } from "../../api/workflow";
 import type { SchemaColumn } from "../../types/dataset";
 import type { WorkflowEdge, WorkflowNode, WorkflowRun, WorkflowSummary } from "../../types/workflow";
+import { TaskProgress } from "../../components/TaskProgress";
 // 沉浸页用自足样式，不复用 workflow.css（那张表里藏了会把三栏压成手机版的媒体查询）。
 import "./workflow-editor.css";
 
@@ -66,6 +68,11 @@ export default function WorkflowEditorPage() {
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [drawer, setDrawer] = useState<DrawerTab | null>(null);
+  // 运行任务的分阶段反馈：run 走同步接口，只能给不确定进度，
+  // 但「在跑 / 成功 / 失败 + 原因」必须在抽屉里说清楚（否则只剩按钮变灰）。
+  const [runStatus, setRunStatus] = useState<"idle" | "running" | "success" | "error">("idle");
+  const [runError, setRunError] = useState<string | null>(null);
+  const [runErrors, setRunErrors] = useState<import("../../features/workflow/configView").RunErrorItem[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [list, setList] = useState<WorkflowSummary[]>([]);
   const [dirty, setDirty] = useState(false);
@@ -204,7 +211,7 @@ export default function WorkflowEditorPage() {
   /* ---------------------------------------------------------------- */
 
   const loadNodeDatasetId = useMemo(() => {
-    const node = nodes.find((item) => item.type === "data.load");
+    const node = nodes.find((item) => item.type === "data.load" || item.type === "dataset.read");
     const config = node?.config as { dataset_id?: unknown; params?: { dataset_id?: unknown } } | undefined;
     const raw = config?.dataset_id ?? config?.params?.dataset_id;
     const numeric = typeof raw === "string" ? Number(raw) : raw;
@@ -340,12 +347,19 @@ export default function WorkflowEditorPage() {
     if (targetId == null) return;
     setBusy(true);
     setError(null);
+    setRunError(null);
+    setRunStatus("running");
     try {
       const nextRun = await runWorkflow(targetId);
       setRun(nextRun);
       setDrawer("execution");
+      setRunStatus("success");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "运行失败");
+      const errors = extractRunErrors(e);
+      setRunStatus("error");
+      setRunError(errors.map((item) => item.message).join("；"));
+      setRunErrors(errors);
+      setDrawer("execution");
     } finally {
       setBusy(false);
     }
@@ -617,6 +631,20 @@ export default function WorkflowEditorPage() {
             </button>
           </div>
           <div className="wf-editor-drawer-body">
+            {/* 阶段清单取画布节点顺序：进度条里的阶段名与用户搭的流程一致 */}
+            {drawer === "execution" && runStatus !== "idle" && (
+              <TaskProgress
+                className="wf-editor-run-task"
+                stages={workflowStages(nodes)}
+                status={runStatus}
+                indeterminate={runStatus === "running"}
+                title="流程运行中"
+                estimate={WORKFLOW_RUN_ESTIMATE}
+                error={runError}
+                onViewResult={() => setDrawer("execution")}
+                onRetry={() => void doRun()}
+              />
+            )}
             {drawer === "execution" ? (
               <WorkflowRunPanel run={run} onCancel={() => void cancelRun()} onSelectNode={setSelectedNodeId} />
             ) : (
@@ -683,6 +711,31 @@ export default function WorkflowEditorPage() {
               恢复
             </button>
           </div>
+        </div>
+      )}
+
+      {runErrors.length > 0 && (
+        <div className="wf-editor-errors" role="alert">
+          <div className="wf-editor-errors-head">
+            <strong>运行被拦截：{runErrors.length} 个问题</strong>
+            <button type="button" aria-label="关闭" onClick={() => setRunErrors([])}>×</button>
+          </div>
+          {runErrors.map((item, index) => (
+            <button
+              key={`${item.nodeId ?? "unknown"}-${index}`}
+              type="button"
+              className="wf-editor-error-item"
+              onClick={() => {
+                if (!item.nodeId) return;
+                setSelectedNodeId(item.nodeId);
+                setInspectorOpen(true);
+                setRunErrors([]);
+              }}
+            >
+              <span>×</span>{item.message}
+              {item.nodeId && <em>去修复 ›</em>}
+            </button>
+          ))}
         </div>
       )}
 

@@ -1399,6 +1399,10 @@ class CorrelationAnalyzer(EdaModule):
     name = "correlation"
 
     def analyze(self, df: pl.DataFrame, **options: Any) -> dict[str, Any]:
+        # strict=True：只使用调用方显式点名的字段，不足 2 个有效数值列时直接报错，
+        # 不自动补齐数据集里其它连续数值列。默认 False，保证 Agent 口语场景
+        # （「计算所有特征与 Churn 的相关系数」只抽到一列）的自动补齐行为不变。
+        strict = bool(options.get("strict", False))
         method = options.get("method", "auto")
         if method not in CORRELATION_METHODS:
             raise ValidationException(
@@ -1436,7 +1440,7 @@ class CorrelationAnalyzer(EdaModule):
             # 剔除后不够 2 列就别剔：宁可给出噪声，也不能让一次本来能跑的分析失败
             if len(kept) >= 2:
                 numeric_cols = kept
-        if len(numeric_cols) < 2 and columns:
+        if len(numeric_cols) < 2 and columns and not strict:
             # ★ 只点名了一列（「计算所有特征与 Churn 的相关系数」里只抽到 Churn）
             #   ⇒ 直接报「至少需要 2 个数值字段」，一次本可行的分析白失败了。
             #   补上数据集里其它连续数值列：用户要看的那一列仍在第一位。
@@ -1668,7 +1672,6 @@ class DistributionAnalyzer(EdaModule):
             return {"type": "numeric", "column": column, "bins": [], "missing": missing}
 
         clipped = False
-        clip_value: float | None = None
         # 长尾裁剪：当指定 clip_quantile 且数据确有长尾（max 远大于该分位）时，
         # 把超过分位的值截到分位值再分桶，避免极端值把正常值全挤进第一个 bin
         # （回归：trip_distance 直方图横轴标到 26060/52120，正常行程全堆在首 bin 不可读）。
@@ -1678,7 +1681,6 @@ class DistributionAnalyzer(EdaModule):
             if mx_raw > q * 3:  # 明显长尾才裁剪，避免对正常分布误伤
                 clean = clean.clip(upper_bound=q)
                 clipped = True
-                clip_value = q
 
         mn, mx = float(clean.min()), float(clean.max())
         if mn == mx:
@@ -2061,22 +2063,9 @@ class VisualizationBuilder(EdaModule):
             "chart": "line",
             "x": [json_safe(v) for v in grouped[x].to_list()],
             "y": [json_safe(v) for v in grouped["__mean"].to_list()],
-            "downsampled": downsampled,
-            "original_count": int(original_points),
-        }
-        original_points = grouped.height
-        max_points = int(options.get("max_points", 1000))
-        downsampled = False
-        if max_points > 0 and grouped.height > max_points:
-            # 等间隔抽稀：gather_every 保证均匀取样（原先用 `col == col // step` 比较浮点，
-            # 会漏点且不保证首末点）。
-            step = max(1, grouped.height // max_points)
-            grouped = grouped.gather_every(step)
-            downsampled = True
-        return {
-            "chart": "line",
-            "x": [json_safe(v) for v in grouped[x].to_list()],
-            "y": [json_safe(v) for v in grouped["__mean"].to_list()],
+            # 轴字段名：前端据此显示真实列名（此前只能显示 x / y）。
+            "x_label": x,
+            "y_label": y,
             "downsampled": downsampled,
             "original_count": int(original_points),
         }
@@ -2101,6 +2090,9 @@ class VisualizationBuilder(EdaModule):
             "chart": "scatter",
             "x": [json_safe(v) for v in data[x].to_list()],
             "y": [json_safe(v) for v in data["__scatter_y"].to_list()],
+            # 轴字段名：前端据此显示真实列名，Tooltip 也用真实字段而不是 x / y。
+            "x_label": x,
+            "y_label": y,
             # 复用已算出的行数，不再为这一个布尔值重复做一次投影 + drop_nulls。
             "sampled": data.height < original_count,
             "original_count": int(original_count),
@@ -2313,7 +2305,10 @@ class VisualizationBuilder(EdaModule):
             "x": cats,
             "groups": groups,
             "series": series,
+            # y_label 沿用聚合方式（既有语义），另补两个真实列名供前端显示标题。
             "y_label": agg,
+            "column_label": column,
+            "group_label": group_by,
             "truncated": truncated,
             "dropped_categories": dropped_categories,
         }

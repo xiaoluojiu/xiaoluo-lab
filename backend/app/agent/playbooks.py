@@ -86,10 +86,6 @@ class Playbook:
     #: 无工具（纯对话）
     chat_only: bool = False
 
-    @property
-    def step_count(self) -> int:
-        return len(self.steps)
-
 
 def _p(intent: Intent, title: str, *steps: PlaybookStep) -> Playbook:
     return Playbook(intent=intent, title=title, steps=steps)

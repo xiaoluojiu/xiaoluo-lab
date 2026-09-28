@@ -18,6 +18,8 @@ dependencies = [
     "polars>=1.0",
     "pyarrow>=16.0",
     "scikit-learn>=1.5",
+    # 训练报告（HTML）内嵌的图表由 matplotlib 渲染（Agg 后端，无 GUI 依赖）。
+    "matplotlib>=3.8",
     "fastexcel>=0.10",
     "fpdf2>=2.7",
     "python-multipart>=0.0.9",

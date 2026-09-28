@@ -304,3 +304,79 @@ a.card:hover,
   .topbar-center { display: none; }
   .topbar-crumbs { font-size: var(--fs-muted); }
 }
+
+/* ---------- 层级路径条（Topbar 之下，2026-09-27 重建） ----------
+   sticky 吸在顶栏下方，与顶栏同底色同内边距；参与正常流不遮挡内容。 */
+.shell-breadcrumb {
+  position: sticky;
+  top: var(--topbar-h);
+  z-index: 55;
+  padding: var(--space-2) var(--space-5);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: saturate(140%) blur(10px);
+  -webkit-backdrop-filter: saturate(140%) blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+.shell-breadcrumb-list {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.shell-breadcrumb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-muted);
+  color: var(--text-2);
+  min-width: 0;
+}
+.shell-breadcrumb-item a {
+  color: var(--text-2);
+  text-decoration: none;
+}
+.shell-breadcrumb-item a:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.shell-breadcrumb-current {
+  color: var(--text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shell-breadcrumb-sep { color: var(--muted); user-select: none; }
+@media (max-width: 760px) {
+  .shell-breadcrumb { padding: var(--space-2) var(--space-3); }
+}
+
+/* =============================================================
+   布局变体：对话（2026-09-27 新增；同日更新）
+   -------------------------------------------------------------
+   曾有 standard / full / chat 三种外壳；FullWidthLayout（.layout-full）
+   已随「统一侧栏形态」修复退役，全站只剩 standard / chat，
+   共用同一套零件（顶栏、面包屑、侧栏、命令面板），差别只在内容区留白。
+   选择器一律带 `.layout-xxx` 前缀（0,2,0），比 design-foundation.css 的
+   `.content`（0,1,0）高一档，与加载顺序无关；同时也压得住 ui-overrides 与 theme.css
+   里的 `.content` 媒体查询，故下面必须自带一套窄屏档位，不能靠它们兜底。
+   ============================================================= */
+
+/* 对话布局：侧栏折叠状态与标准布局同源（全局持久化偏好，不再强制收起）；
+   内容区留白收窄，把宽度让给对话流与运行面板。 */
+.layout-chat .content {
+  max-width: none;
+  margin-inline: 0;
+  padding: var(--space-4) var(--space-5) var(--space-5);
+}
+
+@media (max-width: 1280px) {
+  .layout-chat .content { padding-inline: var(--space-4); }
+}
+@media (max-width: 760px) {
+  .layout-chat .content { padding: var(--space-4) var(--space-3) var(--space-6); }
+}

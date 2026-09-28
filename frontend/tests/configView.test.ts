@@ -72,13 +72,13 @@ test("data.clean 缺 strategy 会被判定为缺失", () => {
   assert.equal(missing[0].paramLabel, "处理策略");
 });
 
-test("条件隐藏的参数不计入缺失：data.clean 的 value 只在 strategy=fill 时出现", () => {
+test("条件隐藏的参数不计入缺失：data.clean 的 value 只在 strategy=constant 时出现", () => {
   // 注意：nodeSpecs 里 data.clean 的填充值键名是 `value`（不是 `fill_value`），
   // 且它不是必填项 —— 因此无论 strategy 取什么值，都不该报它缺失。
   const drop = collectMissingConfig([node("c1", "data.clean", { params: { strategy: "drop" } })]);
   assert.deepEqual(drop, []);
-  const fill = collectMissingConfig([node("c2", "data.clean", { params: { strategy: "fill" } })]);
-  assert.deepEqual(fill, []);
+  const constant = collectMissingConfig([node("c2", "data.clean", { params: { strategy: "constant" } })]);
+  assert.deepEqual(constant, []);
 });
 
 test("ml.cluster 的 n_clusters 只在 kmeans 下有效，但不参与缺失判定", () => {

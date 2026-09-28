@@ -281,9 +281,11 @@ export default function Home() {
           </div>
         ) : feed.length === 0 ? (
           <EmptyState
+            icon="clipboard"
             title="还没有最近工作"
             description="创建或上传一个数据集，之后的处理会显示在这里。"
             action={<Link className="btn primary" to="/datasets">进入数据中心</Link>}
+            secondary={<Link className="btn link" to="/learning">看看内置示例</Link>}
           />
         ) : (
           <div className="activity-list">

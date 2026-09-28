@@ -170,14 +170,12 @@ def _chart_columns(
     column: str | None,
     x: str | None,
     y: str | None,
-    columns: str | None,
     group_by: str | None,
 ) -> list[str] | None:
     """按图表类型推断真正要读取的列，用于 Parquet 列裁剪。
 
     返回 ``None`` 表示无法安全推断（比如 heatmap 需要全部数值列），此时读完整个表。
     """
-    cols = _columns(columns)
     if chart == "heatmap":
         # 不裁剪：heatmap 的失败提示要告诉用户「这个数据集还有哪些可用数值列」，
         # 若只加载用户点名的那几列（很可能全是分类列），提示里的可用列会变成空 ——
@@ -227,11 +225,16 @@ def correlation(
         pattern="^(pearson|spearman|auto)$",
         description="pearson=线性相关；spearman=秩相关（单调关系更稳健）；auto=按列类型自动选择",
     ),
+    strict: bool = Query(
+        False,
+        description="True=仅使用显式勾选字段，不足时直接报错，不自动补齐其他列",
+    ),
     service: DataEngineService = Depends(get_data_engine_service),
 ) -> ApiResponse[dict]:
     cols = _columns(columns)
     df, v = _load_df(service, dataset_id, version, cols)
     options: dict[str, Any] = {"method": method}
+    options["strict"] = strict
     if cols:
         options["columns"] = cols
     data = CorrelationAnalyzer().analyze(df, **options)
@@ -338,7 +341,7 @@ def visualize(
     service: DataEngineService = Depends(get_data_engine_service),
 ) -> ApiResponse[dict]:
     # 按图表类型推断实际需要的列，做最小列裁剪（做不到就不裁剪，交给 DatasetService 判断）。
-    needed = _chart_columns(chart, column, x, y, columns, group_by)
+    needed = _chart_columns(chart, column, x, y, group_by)
     df, v = _load_df(service, dataset_id, version, needed)
     options: dict[str, Any] = {"chart": chart}
     if column:

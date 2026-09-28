@@ -56,12 +56,18 @@ function buildCrumbs(pathname: string): { label: string; to?: string }[] {
 }
 
 /**
+ * 顶栏左侧按钮：切换侧栏折叠（全局 `store/ui.ts` 的持久化偏好）。
+ * 2026-09-27：FullWidthLayout 退役后所有外壳都有侧栏，`command` 分支随之移除。
+ */
+export type TopbarNavAction = "sidebar" | "none";
+
+/**
  * 吸顶顶栏：折叠按钮 + 面包屑 + 全局搜索（唤起命令面板）+ 主题切换 + 通知占位。
  * 不改变整体布局（侧栏 + 内容列），仅在内容列顶部叠加一个 sticky 头部。
  */
-export function Topbar() {
+export function Topbar({ navAction = "sidebar" }: { navAction?: TopbarNavAction } = {}) {
   const location = useLocation();
-  const toggleNav = useUiShell((s) => s.toggleNav);
+  const toggleSidebar = useUiShell((s) => s.toggleSidebar);
   const openCommand = useUiShell((s) => s.openCommand);
   const crumbs = buildCrumbs(location.pathname);
   const [theme, setTheme] = useState<"light" | "dark">(() =>
@@ -79,27 +85,29 @@ export function Topbar() {
   return (
     <header className="topbar">
       <div className="topbar-left">
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={toggleNav}
-          aria-label="折叠或展开导航"
-          title="折叠或展开导航"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            width="18"
-            height="18"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
+        {navAction !== "none" && (
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={toggleSidebar}
+            aria-label="折叠或展开导航"
+            title="折叠或展开导航"
           >
-            <path d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
-        </button>
+            <svg
+              viewBox="0 0 24 24"
+              width="18"
+              height="18"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+        )}
         <nav className="crumbs topbar-crumbs" aria-label="面包屑">
           {crumbs.map((c, i) => (
             <span key={i} className="crumb">

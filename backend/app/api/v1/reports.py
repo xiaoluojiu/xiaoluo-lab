@@ -3,6 +3,7 @@
 - POST /reports/generate  生成结构化报告（概览/质量/EDA/ML/结论）
 - POST /reports/export    导出 markdown / html / pdf
 - GET/DELETE /reports/saved  管理已保存报告
+- POST /reports/saved/batch-delete  批量删除（删除选中 / 一键删除全部）
 """
 
 from __future__ import annotations
@@ -48,6 +49,16 @@ class GenerateRequest(BaseModel):
 class ExportRequest(BaseModel):
     report: dict[str, Any]
     format: Literal["markdown", "html", "pdf"] = "markdown"
+
+
+class BatchDeleteRequest(BaseModel):
+    """批量删除已保存报告的入参。
+
+    「删除选中」与「一键删除全部」共用这一个端点：后者把当前列表里所有 key 传进来，
+    不必再维护第二条清空路径（两条路径迟早分叉，见 ``_delete_saved_report_files``）。
+    """
+
+    keys: list[str] = Field(default_factory=list)
 
 
 def _section_from_dict(item: Any) -> ReportSection:
@@ -192,6 +203,28 @@ def _meta_key(report_key: str) -> str:
     return meta_key(report_key)
 
 
+def _delete_saved_report_files(storage: StorageService, key: str) -> None:
+    """删掉一份报告的正文 + 元数据副本（key 合法性由调用方先行校验）。
+
+    单条删除与批量删除**共用这一份实现**：早先「正文删了、.meta.json 留着」
+    这类分叉会让列表接口读到幽灵条目（缓存签名变了、文件却还在）。
+    元数据副本不存在时忽略 —— 兼容没有副本的历史报告。
+
+    ⚠️ 存在性必须先探再删，不能靠捕获 ``FileNotFoundError``：存储层
+    （``LocalStorage.delete``）在对象不存在时抛的是 ``StorageException(code="NOT_FOUND")``，
+    于是「再删一次同一份报告」原本会返回 500 而不是 404 —— 一个真实存在过、
+    但只在重复删除时才暴露的缺陷。这里统一成显式 ``FileNotFoundError``，
+    让两条调用路径都能按「不存在」处理。
+    """
+    if not storage.exists(key):
+        raise FileNotFoundError(key)
+    storage.delete(key)
+    try:
+        storage.delete(_meta_key(key))
+    except Exception:  # noqa: BLE001 - 副本缺失/清理失败不影响正文已删除的事实
+        pass
+
+
 @router.get("/saved", response_model=ApiResponse[list[dict[str, Any]]])
 def list_saved_reports(
     storage: StorageService = Depends(get_storage_service),
@@ -213,9 +246,9 @@ def get_saved_report(
     try:
         payload = json.loads(storage.read(key).decode("utf-8"))
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="报告不存在")
+        raise HTTPException(status_code=404, detail="报告不存在") from None
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"报告读取失败：{exc}")
+        raise HTTPException(status_code=400, detail=f"报告读取失败：{exc}") from exc
     return ApiResponse[dict](data=payload)
 
 
@@ -227,15 +260,51 @@ def delete_saved_report(
     """删除一份已保存的正式报告。"""
     _validate_saved_key(key)
     try:
-        storage.delete(key)
+        _delete_saved_report_files(storage, key)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="报告不存在")
+        raise HTTPException(status_code=404, detail="报告不存在") from None
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"报告删除失败：{exc}")
-    # 同步清理元数据副本（不存在则忽略，兼容历史报告）。
-    try:
-        storage.delete(_meta_key(key))
-    except Exception:
-        pass
+        raise HTTPException(status_code=500, detail=f"报告删除失败：{exc}") from exc
     invalidate_cache()
     return ApiResponse[dict](data={"deleted": True, "key": key})
+
+
+@router.post("/saved/batch-delete", response_model=ApiResponse[dict])
+def delete_saved_reports(
+    body: BatchDeleteRequest,
+    storage: StorageService = Depends(get_storage_service),
+) -> ApiResponse[dict]:
+    """批量删除已保存报告（前端「删除选中」与「一键删除全部」共用）。
+
+    逐条回执而不是「一失败就整批 500」：所选报告里有几条已被别处删掉是常见情况，
+    整批失败会让用户面对一堆「删不掉」却不知道是哪几条、也不知道其余到底删没删。
+    这里返回 ``deleted_keys`` / ``failed`` 两份清单，前端据此提示。
+    """
+    deleted: list[str] = []
+    failed: list[dict[str, str]] = []
+    # dict.fromkeys 去重并保序：前端可能因「先点单条删除再点全选」传入重复 key。
+    for key in dict.fromkeys(body.keys):
+        try:
+            _validate_saved_key(key)
+        except HTTPException as exc:
+            failed.append({"key": str(key), "error": str(exc.detail)})
+            continue
+        try:
+            _delete_saved_report_files(storage, key)
+        except FileNotFoundError:
+            failed.append({"key": key, "error": "报告不存在或已被删除"})
+            continue
+        except Exception as exc:  # noqa: BLE001 - 单条失败不阻断其余
+            failed.append({"key": key, "error": f"删除失败：{exc}"})
+            continue
+        deleted.append(key)
+    if deleted:
+        invalidate_cache()
+    return ApiResponse[dict](
+        data={
+            "deleted": not failed,
+            "count": len(deleted),
+            "deleted_keys": deleted,
+            "failed": failed,
+        }
+    )

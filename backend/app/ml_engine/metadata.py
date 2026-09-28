@@ -16,9 +16,11 @@
   tier（core 最值得先调 / advanced 进阶）/ 步长 / 常用值 / 依赖约束 / 作用与调整建议。
 - 每个流程步骤给：名称 / 输入 / 输出 / 关键行为 / 可核验点（中间结果落在哪里）。
 
-两处超出「参数说明」的增值内容：
+三处超出「参数说明」的增值内容：
 - `PARAM_COMBOS`：参数不是彼此独立的（如 penalty=l1 必须配 liblinear/saga），
   在点训练之前就提示无效组合，而不是等 sklearn 抛英文错。
+- `SIGNAL_RULES`：判定「过拟合 / 欠拟合 / 没信号 / 不均衡 / 簇弱 / 太慢」的阈值，
+  由 `GET /ml/catalog` 透给前端，避免前端与文档各写一份 0.1。
 - `TUNING_PLAYBOOK`：把「指标不理想」翻译成「具体该动哪个参数」，
   让调参从试错变成有方向的动作（overfit / underfit / no_signal / imbalanced / cluster_weak / costly）。
 """
@@ -287,7 +289,7 @@ TRAINING_PARAMS: list[dict[str, Any]] = [
 
 
 # ----------------------------------------------------------------------
-# 四、各模型的关键参数（与 MODEL_REGISTRY 的 11 个模型一一对应）
+# 四、各模型的关键参数（与 MODEL_REGISTRY 的 12 个模型一一对应）
 #     只列真实会透传给 sklearn 的常用参数。
 # ----------------------------------------------------------------------
 # 字段约定（供前端渲染控件、判定依赖、给出「一键应用」的目标值）：
@@ -741,6 +743,130 @@ MODEL_PARAMS: dict[str, dict[str, Any]] = {
                 "step": 0.001,
                 "effect": "训练后按代价复杂度剪掉低收益分支，能压缩模型并缓解过拟合。",
                 "when_to_change": "树数量多、模型体积大且测试集不佳时从 0.001 起逐步试。",
+            },
+        ],
+    },
+    "hist_gradient_boosting_classifier": {
+        "note": "直方图梯度提升（sklearn 的 LightGBM 同族实现）：先把连续特征分箱再找分裂点，表格数据上通常比随机森林更快且略准。",
+        "params": [
+            {
+                "name": "learning_rate",
+                "label": "学习率",
+                "type": "float",
+                "default": 0.1,
+                "sklearn_default": 0.1,
+                "range": "0 ~ 1 的浮点数，常用 0.01 ~ 0.3",
+                "tier": "core",
+                "step": 0.01,
+                "typical": [0.01, 0.05, 0.1, 0.2],
+                "effect": "每棵树对最终预测的贡献被它缩放。调小需要更多棵树才能达到同等拟合（更慢但常更稳），调大收敛快但容易过冲、卡在次优解。",
+                "when_to_change": "它是提升类模型里最有效的一项：测试集不佳时先降到 0.05 并把 max_iter 加倍；只想快速试思路时保持 0.1。",
+            },
+            {
+                "name": "max_iter",
+                "label": "最大提升轮数",
+                "type": "int",
+                "default": 100,
+                "sklearn_default": 100,
+                "range": "正整数，常用 50 ~ 1000",
+                "tier": "core",
+                "step": 50,
+                "typical": [50, 100, 200, 500, 1000],
+                "effect": "最多叠加多少棵树。轮数不足会欠拟合，过多会过拟合且线性变慢；开启 early_stopping 时它只是上限，实际轮数由验证集决定。",
+                "when_to_change": "学习率调小时要同步加大（大致翻倍）；开了 early_stopping 后可以设得宽一些，让模型自己停。",
+            },
+            {
+                "name": "max_leaf_nodes",
+                "label": "单棵树最大叶子数",
+                "type": "int",
+                "default": 31,
+                "sklearn_default": 31,
+                "range": "2 ~ 31（内部用 8 位存叶节点索引，超过 31 会直接报错）",
+                "tier": "core",
+                "typical": [8, 15, 31],
+                "effect": "控制单棵树的复杂度，作用与决策树的 max_depth 同向。它同时决定了模型能表达多少交互：31 叶是最常用的上限，8~15 叶在样本少时更稳。",
+                "when_to_change": "过拟合（训练好、测试差）时调到 15 或 8；样本量大且欠拟合时保持 31。注意它**不是**越大越好，上限就是 31。",
+            },
+            {
+                "name": "min_samples_leaf",
+                "label": "叶节点最小样本数",
+                "type": "int",
+                "default": 20,
+                "sklearn_default": 20,
+                "range": "正整数，常用 5 ~ 100",
+                "tier": "core",
+                "typical": [5, 20, 50, 100],
+                "effect": "每个叶子至少保留多少样本。它比 max_leaf_nodes 更平滑地控制过拟合，也是直方图方法默认就偏大的一项（20，远大于决策树的 1）。",
+                "when_to_change": "数据噪声大或样本少时调大到 50~100；指标明显欠拟合时调小到 5。",
+            },
+            {
+                "name": "l2_regularization",
+                "label": "L2 正则强度",
+                "type": "float",
+                "default": "0.0（不正则）",
+                "sklearn_default": 0.0,
+                "range": "非负浮点数，常用 0.0 ~ 10",
+                "tier": "advanced",
+                "step": 0.1,
+                "typical": [0.0, 0.1, 1.0, 10.0],
+                "effect": "对叶子取值做 L2 惩罚，越大叶子取值越保守、模型越平滑。它等价于给提升过程加一个「别太自信」的约束。",
+                "when_to_change": "测试集明显差于训练集且调小叶子数还不够时，从 1.0 起往上试。",
+            },
+            {
+                "name": "max_features",
+                "label": "每轮随机特征比例",
+                "type": "float",
+                "default": "1.0（全部特征）",
+                "sklearn_default": 1.0,
+                "range": "0 ~ 1 的浮点数",
+                "tier": "advanced",
+                "step": 0.1,
+                "typical": [0.5, 0.8, 1.0],
+                "effect": "每轮分裂只随机考虑这个比例的特征（注意这里是**比例**，不是随机森林的 sqrt/log2 枚举）。调小带来类似随机森林的多样性，能抗过拟合也会略降单轮质量。",
+                "when_to_change": "特征很多且高度相关、模型过拟合时设 0.5~0.8，同时能提速。",
+            },
+            {
+                "name": "early_stopping",
+                "label": "早停",
+                "type": "enum",
+                "default": "auto",
+                "sklearn_default": "auto",
+                "range": "auto（样本 > 10000 时自动开启） / True（总是开启） / False（关闭）",
+                "options": [
+                    {"label": "auto（样本过万时自动开启，默认）", "value": "auto"},
+                    {"label": "True（总是开启）", "value": True},
+                    {"label": "False（关闭，跑满 max_iter）", "value": False},
+                ],
+                "tier": "advanced",
+                "effect": "留出一小部分数据做验证，连续多轮不再变好就提前停下。它不改变模型结构，只决定「什么时候停」，能在不牺牲指标的前提下省掉大量无用轮次。",
+                "when_to_change": "默认 auto 即可（小数据自动不开，避免白扔一部分样本）。想要可复现的固定轮数、或要和学习曲线逐点对比时才设 False。",
+            },
+            {
+                "name": "class_weight",
+                "label": "类别权重",
+                "type": "enum",
+                "default": "None",
+                "sklearn_default": None,
+                "range": "None（每个样本等权） / balanced（按类别样本量反比加权）",
+                "options": [
+                    {"label": "None（每个样本等权）", "value": None},
+                    {"label": "balanced（少数类加权）", "value": "balanced"},
+                ],
+                "tier": "advanced",
+                "effect": "balanced 按类别样本量反比加权，让少数类获得更高权重，缓解类别不均衡时模型偏向多数类。",
+                "when_to_change": "目标列类别明显不均衡、少数类 recall 很低时改用 balanced。",
+            },
+            {
+                "name": "max_bins",
+                "label": "分箱数量",
+                "type": "int",
+                "default": 255,
+                "sklearn_default": 255,
+                "range": "2 ~ 255（含缺失值专用箱）",
+                "tier": "advanced",
+                "typical": [32, 64, 128, 255],
+                "effect": "连续特征被离散成多少个桶，模型只在桶边界上找分裂点 —— 这正是它比随机森林快的原因。桶太少会丢掉精细的分裂位置，桶太多则回到接近精确搜索的耗时。",
+                "when_to_change": "训练太慢时降到 64 或 32（通常指标几乎不变）；指标欠拟合且不在乎耗时时保持 255。",
             },
         ],
     },
@@ -1399,6 +1525,51 @@ PARAM_COMBOS: list[dict[str, Any]] = [
 
 
 # ----------------------------------------------------------------------
+# 六·补、调参信号的判定阈值（单一事实源）
+#
+# 前端 `detectSignals` 判定「这次训练命中了哪类问题」用的就是这些数字。
+# 早先它们硬编码在前端，而 `TUNING_PLAYBOOK.detect` 里的说明文字又各写一遍，
+# 改一个阈值要动两处、且谁都不知道另一处在哪 —— 现在数字只在这里，
+# 说明文字由它拼出来（见下方 `_sr` 用法），`GET /ml/catalog` 一并透出。
+#
+# 键名即语义：`above` / `below` 是严格大于 / 严格小于，`at_most` / `at_least`
+# 是含等号的一端，与前端判定式逐字对应，避免「0.1 到底算不算命中」这种歧义。
+# ----------------------------------------------------------------------
+SIGNAL_RULES: dict[str, dict[str, float]] = {
+    "overfit": {
+        "classification_metric_gap_above": 0.10,
+        "regression_r2_gap_above": 0.15,
+    },
+    "underfit": {
+        "classification_accuracy_below": 0.70,
+        "classification_metric_gap_at_most": 0.05,
+        "regression_r2_below": 0.30,
+        "regression_r2_gap_at_most": 0.10,
+    },
+    "no_signal": {
+        "classification_roc_auc_at_most": 0.55,
+        "regression_r2_at_most": 0.0,
+        "clustering_silhouette_below": 0.10,
+    },
+    "imbalanced": {
+        "classification_majority_ratio_at_least": 0.70,
+    },
+    "cluster_weak": {
+        "clustering_silhouette_below": 0.25,
+        "clustering_cluster_count_equals": 1,
+    },
+    "costly": {
+        "runtime_seconds_above": 30,
+    },
+}
+
+
+def _sr(signal: str, key: str) -> str:
+    """取阈值并格式化成说明文字可用的短串（`0.7` 而不是 `0.7000000001`）。"""
+    return f"{SIGNAL_RULES[signal][key]:g}"
+
+
+# ----------------------------------------------------------------------
 # 七、调参手册（把「指标不理想」翻译成「具体该动哪个参数」）
 #
 # 这是「训练 → 看结果 → 调参」闭环的规则来源：前端拿 run 的指标与产物判定
@@ -1414,7 +1585,11 @@ TUNING_PLAYBOOK: list[dict[str, Any]] = [
         "id": "overfit",
         "title": "过拟合：训练集明显好于测试集",
         "signal": "overfit",
-        "detect": "训练集指标高出测试集较多（分类 accuracy / f1 差 > 0.10；回归 R² 差 > 0.15）。",
+        "detect": (
+            "训练集指标高出测试集较多（分类 accuracy / f1 差 > "
+            f"{_sr('overfit', 'classification_metric_gap_above')}；回归 R² 差 > "
+            f"{_sr('overfit', 'regression_r2_gap_above')}）。"
+        ),
         "why": "模型把训练数据里的噪声也当成规律记住了，换到没见过的数据就失灵。方向上要做的是「降低模型容量」，而不是加参数。",
         "advice": [
             {"param": "max_depth", "op": "halve", "value": 6,
@@ -1442,7 +1617,13 @@ TUNING_PLAYBOOK: list[dict[str, Any]] = [
         "id": "underfit",
         "title": "欠拟合：训练集和测试集都不理想",
         "signal": "underfit",
-        "detect": "训练集与测试集指标都偏低且彼此接近（分类 accuracy < 0.7 且两者差 ≤ 0.05；回归 R² < 0.3 且两者差 ≤ 0.1）。",
+        "detect": (
+            "训练集与测试集指标都偏低且彼此接近（分类 accuracy < "
+            f"{_sr('underfit', 'classification_accuracy_below')} 且两者差 ≤ "
+            f"{_sr('underfit', 'classification_metric_gap_at_most')}；回归 R² < "
+            f"{_sr('underfit', 'regression_r2_below')} 且两者差 ≤ "
+            f"{_sr('underfit', 'regression_r2_gap_at_most')}）。"
+        ),
         "why": "模型表达能力不够，或者特征本身与目标关系太弱。方向上要「放宽限制 / 提升容量」，和过拟合正好相反——先确认不是过拟合再动这些参数。",
         "advice": [
             {"param": "max_depth", "op": "set", "value": 12,
@@ -1466,7 +1647,12 @@ TUNING_PLAYBOOK: list[dict[str, Any]] = [
         "id": "no_signal",
         "title": "基本没学到东西：指标接近「瞎猜」水平",
         "signal": "no_signal",
-        "detect": "分类 ROC-AUC ≤ 0.55；或回归 R² ≤ 0；或聚类轮廓系数 < 0.1。",
+        "detect": (
+            "分类 ROC-AUC ≤ "
+            f"{_sr('no_signal', 'classification_roc_auc_at_most')}；或回归 R² ≤ "
+            f"{_sr('no_signal', 'regression_r2_at_most')}；或聚类轮廓系数 < "
+            f"{_sr('no_signal', 'clustering_silhouette_below')}。"
+        ),
         "why": "这种结果一般不是调参能救回来的——要么特征与目标其实无关，要么关键信息被排除在训练之外（如误把有用列排除、目标列选错）。",
         "advice": [
             {"param": "n_estimators", "op": "set", "value": 200,
@@ -1478,7 +1664,11 @@ TUNING_PLAYBOOK: list[dict[str, Any]] = [
         "id": "imbalanced",
         "title": "类别不均衡：模型偏向多数类",
         "signal": "imbalanced",
-        "detect": "分类任务中多数类样本占比 ≥ 70%，且少数类的 recall 明显低于多数类。",
+        "detect": (
+            "分类任务中多数类样本占比 ≥ "
+            f"{_sr('imbalanced', 'classification_majority_ratio_at_least')}，"
+            "且少数类的 recall 明显低于多数类。"
+        ),
         "why": "模型只要一直预测多数类就能拿到不错的 accuracy，于是「懒得」去学少数类。这时 accuracy 会骗人，要看 f1 / recall。",
         "advice": [
             {"param": "class_weight", "op": "set", "value": "balanced",
@@ -1495,7 +1685,11 @@ TUNING_PLAYBOOK: list[dict[str, Any]] = [
         "id": "cluster_weak",
         "title": "聚类结构弱：簇不清晰或簇数异常",
         "signal": "cluster_weak",
-        "detect": "聚类任务中轮廓系数 < 0.25，或簇数量等于 1，或噪声点占比过高。",
+        "detect": (
+            "聚类任务中轮廓系数 < "
+            f"{_sr('cluster_weak', 'clustering_silhouette_below')}，或簇数量等于 "
+            f"{_sr('cluster_weak', 'clustering_cluster_count_equals')}，或噪声点占比过高。"
+        ),
         "why": "k-means 假设簇是近似球形且规模相近；DBSCAN 依赖密度。结构弱往往是参数没对上数据的真实形态。",
         "advice": [
             {"param": "n_clusters", "op": "halve", "value": 3,
@@ -1515,7 +1709,11 @@ TUNING_PLAYBOOK: list[dict[str, Any]] = [
         "id": "costly",
         "title": "训练/推理成本偏高",
         "signal": "costly",
-        "detect": "训练耗时较长（> 30s），或预处理后特征数远大于训练样本数（特征数 > 样本数）。",
+        "detect": (
+            "训练耗时较长（> "
+            f"{_sr('costly', 'runtime_seconds_above')}s），"
+            "或预处理后特征数远大于训练样本数（特征数 > 样本数）。"
+        ),
         "why": "前者是算力换稳定性的问题，后者是「维度高于样本量」——这种情况下模型很容易找到虚假规律。",
         "advice": [
             {"param": "n_estimators", "op": "halve", "value": 50,
@@ -1591,6 +1789,17 @@ def _params_for_model(model_name: str) -> list[dict[str, Any]]:
     return list(entry.get("params", [])) if entry else []
 
 
+def _search_spaces() -> dict[str, list[str]]:
+    """内置超参搜索空间（模型 -> 参与搜索的参数名）。
+
+    候选值只存在于 ``cv.SEARCH_SPACES``（真正的搜索发生在那里），
+    这里只透出「搜哪些参数」给界面，避免同一份网格出现两个副本。
+    """
+    from app.ml_engine.cv import SEARCH_SPACES
+
+    return {name: sorted(space) for name, space in SEARCH_SPACES.items()}
+
+
 def build_catalog(registry_list: list[dict[str, str]] | None = None) -> dict[str, Any]:
     """构造完整教学目录。
 
@@ -1618,6 +1827,13 @@ def build_catalog(registry_list: list[dict[str, str]] | None = None) -> dict[str
         # 「训练 → 看结果 → 调参」闭环的规则来源：前端按 run 指标命中 signal，
         # 再把 advice 中该模型确实存在的参数渲染成一键应用的建议。
         "tuning_playbook": TUNING_PLAYBOOK,
+        # 上面那些 signal 的判定阈值：前端 detectSignals 直接读它，
+        # 保证「说明文字里写的 0.1」与「实际按 0.1 判定」永远是同一个数。
+        "signal_rules": SIGNAL_RULES,
+        # 自动超参搜索：哪些模型有内置搜索空间、各自搜哪些参数。
+        # 与 cv.SEARCH_SPACES 同源（这里只透出「参数名」，不重复定义候选值），
+        # 前端据此决定「自动搜索」按钮是否可见，避免出现点了才发现不支持。
+        "search_spaces": _search_spaces(),
         # 无效参数组合（如 l1 必须配 liblinear/saga），用于在点训练之前就提示
         "param_combos": PARAM_COMBOS,
         # 训练之后才生效的旋钮（决策阈值等）。与 models[].params 分开返回，

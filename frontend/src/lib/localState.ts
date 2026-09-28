@@ -15,7 +15,7 @@
  * 新增本地存储项时，同步在本清单登记，否则设置页无法展示也无法清理。
  */
 
-export type LocalStateId = "recent" | "ui" | "permissions" | "nav" | "llm";
+export type LocalStateId = "recent" | "context" | "ui" | "permissions" | "nav" | "llm";
 
 export interface LocalStateEntry {
   id: LocalStateId;
@@ -37,6 +37,15 @@ export const LOCAL_STATE_ENTRIES: LocalStateEntry[] = [
     key: "xllab.recent.datasets",
     label: "最近打开的数据集",
     consequence: "命令面板（Ctrl/Cmd + K）的「最近数据集」快捷入口会被清空",
+    defaultChecked: true,
+  },
+  {
+    // 与 store/globalStore.ts 的 GLOBAL_CONTEXT_STORAGE_KEY 保持一致
+    // （tests/globalStore.test.ts 有一条断言钉住这两个字符串不许分叉）。
+    id: "context",
+    key: "xllab.context",
+    label: "跨页面数据上下文",
+    consequence: "数据集、版本、实验与任务的当前选择会被清空，各页面回到「未选择数据集」状态",
     defaultChecked: true,
   },
   {

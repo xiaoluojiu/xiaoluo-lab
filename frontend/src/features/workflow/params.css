@@ -259,3 +259,53 @@
 .wf-param-advanced > summary:hover {
   color: var(--primary);
 }
+
+/* ---------- 结构化构造器 ---------- */
+.wf-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wf-builder-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px minmax(0, 1fr) 24px;
+  gap: 6px;
+  align-items: center;
+}
+.wf-builder-row.no-value {
+  grid-template-columns: minmax(0, 1fr) 92px 24px;
+}
+.wf-builder-row.agg {
+  grid-template-columns: minmax(0, 1fr) 92px 24px;
+}
+.wf-builder-remove {
+  width: 24px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.wf-builder-remove:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.wf-builder-add {
+  align-self: flex-start;
+  padding: 4px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.wf-builder-add:hover {
+  border-style: solid;
+  border-color: var(--primary-border);
+  background: var(--primary-soft);
+}

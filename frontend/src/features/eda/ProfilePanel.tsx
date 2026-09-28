@@ -22,6 +22,8 @@ interface DescriptiveData {
     min?: number;
     max?: number;
     quantiles?: Record<string, number>;
+    /** 数值 dtype 但低基数（VendorID / Month 这类编码列）：均值/标准差无业务意义。 */
+    categorical_encoding?: boolean;
   }[];
 }
 
@@ -111,6 +113,8 @@ export function ProfilePanel({ data }: { data: DescriptiveData | null }) {
                 <th>均值</th>
                 <th>标准差</th>
                 <th>最小</th>
+                <th>P25</th>
+                <th>P75</th>
                 <th>最大</th>
               </tr>
             </thead>
@@ -120,9 +124,12 @@ export function ProfilePanel({ data }: { data: DescriptiveData | null }) {
                   <td>{c.column}</td>
                   <td>{c.dtype}</td>
                   <td>{c.missing_count}</td>
-                  <td>{fmt(c.mean)}</td>
+                  {/* 编码列的均值没有业务意义（如 VendorID 均值 1.754），改为显式标注。 */}
+                  <td>{c.categorical_encoding ? <span className="badge">编码列</span> : fmt(c.mean)}</td>
                   <td>{fmt(c.std)}</td>
                   <td>{fmt(c.min)}</td>
+                  <td>{fmt(c.quantiles?.["0.25"])}</td>
+                  <td>{fmt(c.quantiles?.["0.75"])}</td>
                   <td>{fmt(c.max)}</td>
                 </tr>
               ))}

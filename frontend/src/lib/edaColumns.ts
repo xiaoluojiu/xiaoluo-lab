@@ -22,14 +22,24 @@ import type { SchemaColumn } from "../types/dataset";
 /** 后端同款阈值：低基数判据 n_unique <= 50 且 n_unique * 2 < 行数。 */
 export const MAX_CATEGORICAL_CARDINALITY = 50;
 
-/** 数值类型（与 VisualizationPanel.isNumericColumn 保持一致）。 */
-export function isNumericColumn(c: SchemaColumn): boolean {
-  return /int|float|double|decimal|number/i.test(c.dtype);
+/** 数值 dtype 判定（dtype 字符串口径）。全仓唯一的数值类型正则。 */
+export function isNumericDtype(dtype: string): boolean {
+  return /int|float|double|decimal|number/i.test(dtype);
 }
 
-/** 时间类型。 */
+/** 时间 dtype 判定（dtype 字符串口径）。全仓唯一的时间类型正则。 */
+export function isTemporalDtype(dtype: string): boolean {
+  return /date|time/i.test(dtype);
+}
+
+/** 数值类型列。 */
+export function isNumericColumn(c: SchemaColumn): boolean {
+  return isNumericDtype(c.dtype);
+}
+
+/** 时间类型列。 */
 export function isTemporalColumn(c: SchemaColumn): boolean {
-  return /date|time/i.test(c.dtype);
+  return isTemporalDtype(c.dtype);
 }
 
 function readCardinality(c: SchemaColumn): number | undefined {
@@ -54,7 +64,8 @@ export function isContinuousNumeric(c: SchemaColumn, rowCount?: number): boolean
   const cardinality = readCardinality(c);
   if (cardinality === undefined) return true;
   if (cardinality > MAX_CATEGORICAL_CARDINALITY) return true;
-  // 行数未知时，低基数本身即视为分类编码（与后端 rows 足够大时的结论一致）。
+  // 行数未知（或 rowCount<=0）时信息不足：保守放行（return true），
+  // 由后端 continuous_columns 做权威判定，避免前端在缺信息时误剔用户点名的列。
   if (rowCount === undefined || rowCount <= 0) return true;
   return !(cardinality * 2 < rowCount);
 }

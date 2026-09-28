@@ -204,6 +204,53 @@
   width: auto;
 }
 .toast-close:hover { color: var(--text); }
+
+/* 普通提示的正文 + 可选跳转（如「已生成新版本 v3 / 查看新版本」）。
+   跳转按钮复用 components.css 的 .btn.link 外观，这里只补排布。 */
+.toast-plain-body {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.toast-action-link { white-space: nowrap; }
+
+/* 结构化错误 toast：三层信息（发生了什么 / 影响 / 怎么解决）+ 行动按钮 */
+.toast-error-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.toast-error-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 600;
+  word-break: break-word;
+}
+.toast-error-line {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+.toast-error-line b {
+  margin-right: 6px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.toast-error-action {
+  margin-top: 4px;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }

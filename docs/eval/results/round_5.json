@@ -1,0 +1,1135 @@
+{
+  "round": 5,
+  "tag": "after-enumeration-rule",
+  "finished_at": "2026-09-27T22:46:27",
+  "model": "deepseek-flash",
+  "case_count": 33,
+  "passed_count": 31,
+  "failed_count": 2,
+  "avg_total": 95.3,
+  "avg_accuracy": 24.24,
+  "avg_relevance": 23.64,
+  "avg_completeness": 23.64,
+  "avg_format": 23.79,
+  "pass_line": 90,
+  "all_passed": false,
+  "rows": [
+    {
+      "id": "M01",
+      "mmtu_task": "NL2SQL",
+      "tier": "typical",
+      "title": "自然语言转 SQL（只返回被问到的列）",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "sql_exec=1.00(gold=[(56900,)])",
+      "fmt_detail": [
+        {
+          "check": "code_block",
+          "ok": true
+        },
+        {
+          "check": "no_prose",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答完全聚焦用户请求，只输出了 SQL 代码块，没有解释；SQL 使用 SQLite 语法、双引号包裹列名和表名、只返回一列、未使用 SELECT *，并正确筛选华东区域，符合所有要求。",
+      "elapsed_s": 5.2,
+      "reply": "```sql\nSELECT SUM(\"销售额\") AS \"销售总额\" FROM \"table\" WHERE \"区域\" = '华东';\n```",
+      "question": "请写一条 SQL，查询「华东」区域的销售总额。只返回这一列，不要用 SELECT *。\n要求：使用 SQLite 语法，列名与表名都用双引号包裹；**只输出 ```sql 代码块，不要任何解释**。",
+      "gold": [
+        [
+          56900
+        ]
+      ]
+    },
+    {
+      "id": "M02",
+      "mmtu_task": "Table-QA",
+      "tier": "typical",
+      "title": "表格问答：聚合后取极值对应标签",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "exact=1.00(gold=华东)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "no_code_block",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答仅给出区域名称“华东”，完全聚焦用户所问，且符合只回答区域名称、不加解释的要求，所问项已完整覆盖。",
+      "elapsed_s": 5.1,
+      "reply": "华东",
+      "question": "销售额合计最高的区域是哪个？只回答区域名称，不要解释，不要加标点以外的内容。",
+      "gold": "华东"
+    },
+    {
+      "id": "M03",
+      "mmtu_task": "Table-Fact-Verification",
+      "tier": "typical",
+      "title": "事实校验：断言是否成立",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "yesno=1.00(gold=否)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "no_code_block",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答直接给出「否」，完全聚焦用户所问，且符合只回答是或否的要求，与参考答案一致。",
+      "elapsed_s": 5.1,
+      "reply": "否",
+      "question": "「华南区域的销售额合计高于华北区域」这句话对吗？只回答「是」或「否」。",
+      "gold": "否"
+    },
+    {
+      "id": "M04",
+      "mmtu_task": "Error-Detect",
+      "tier": "typical",
+      "title": "错误检测：找出越界与缺失单元格",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "set_f1=1.00(gold=['S02-语文', 'S03-数学', 'S04-姓名', 'S05-英语'])",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "no_code_block",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答完全聚焦用户要求，仅输出不合法单元格列表，格式正确，无多余解释，且与参考答案完全一致。",
+      "elapsed_s": 5.5,
+      "reply": "S02-语文, S03-数学, S04-姓名, S05-英语",
+      "question": "请找出所有不合法的单元格。用「学号-列名」的形式列出，例如 S01-语文，多个之间用逗号分隔。\n只输出这个列表，不要解释。",
+      "gold": [
+        "S02-语文",
+        "S03-数学",
+        "S04-姓名",
+        "S05-英语"
+      ]
+    },
+    {
+      "id": "M05",
+      "mmtu_task": "Data-transform-pbe",
+      "tier": "typical",
+      "title": "示例编程：字符串变换代码生成",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "py_exec=1.00(gold=2024/07/09)",
+      "fmt_detail": [
+        {
+          "check": "code_block",
+          "ok": true
+        },
+        {
+          "check": "no_prose",
+          "ok": true
+        },
+        {
+          "check": "contains_all",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答完全聚焦用户所问，给出了正确的 Python 代码实现，且严格只输出代码块，无任何解释，符合用户要求。",
+      "elapsed_s": 4.5,
+      "reply": "```python\nresult = s.replace('-', '/')\n```",
+      "question": "字符串变换示例：输入 '2023-01-15' 输出 '2023/01/15'；输入 '2023-02-28' 输出 '2023/02/28'。\n请写出实现该变换的 Python 代码：输入变量名为 s，把变换结果赋值给变量 result。\n**只输出 ```python 代码块，不要任何解释**。",
+      "gold": "2024/07/09"
+    },
+    {
+      "id": "M06",
+      "mmtu_task": "Entity-Matching",
+      "tier": "typical",
+      "title": "实体匹配：两条记录是否同一实体",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "yesno=1.00(gold=是)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "no_code_block",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答完全聚焦用户所问，仅回答「是」，符合只回答是或否的要求，且判断正确。",
+      "elapsed_s": 4.7,
+      "reply": "是",
+      "question": "左记录：{商品名: 'Apple iPhone 15 128G 黑色', 价格: 5999, 店铺: ' Apple 官方旗舰店'}\n右记录：{商品名: 'iPhone 15 128GB 黑', 价格: 5999, 店铺: 'Apple 官方旗舰店'}\n这两条记录描述的是同一件商品吗？只回答「是」或「否」。",
+      "gold": "是"
+    },
+    {
+      "id": "M07",
+      "mmtu_task": "Table-needle-in-a-haystack",
+      "tier": "typical",
+      "title": "大海捞针：长表中定位满足条件的值",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "numeric=1.00(gold=551.18)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答直接给出数字551.18，完全聚焦用户所问，且符合只回答数字、保留两位小数的要求，与参考答案一致。",
+      "elapsed_s": 4.9,
+      "reply": "551.18",
+      "question": "客户编号「客户07」在「苏州」且状态为「已完成」的订单金额是多少？只回答数字，保留两位小数。",
+      "gold": 551.18
+    },
+    {
+      "id": "M08",
+      "mmtu_task": "Table-Locate-by-Row-Col",
+      "tier": "typical",
+      "title": "按行列定位取值",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "numeric=1.00(gold=10600)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答直接给出数字10600，完全聚焦用户所问，且只回答数字，符合要求。",
+      "elapsed_s": 4.9,
+      "reply": "10600",
+      "question": "按数据行计（不含表头）第 7 行、「月薪」这一列的值是多少？只回答数字。",
+      "gold": 10600
+    },
+    {
+      "id": "M09",
+      "mmtu_task": "Schema-Matching",
+      "tier": "typical",
+      "title": "模式匹配：跨表列映射",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "set_f1=1.00(gold=['客户编号=cust_id', '客户姓名=cust_name', '联系电话=phone', '下单日期=order_dt'])",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "no_code_block",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答完全聚焦用户所问，列出了所有语义相同的列对，格式符合要求，无遗漏或无关内容。",
+      "elapsed_s": 5.6,
+      "reply": "客户编号=cust_id, 客户姓名=cust_name, 联系电话=phone, 下单日期=order_dt",
+      "question": "左表列：客户编号、客户姓名、联系电话、下单日期\n右表列：cust_id、cust_name、phone、order_dt\n请列出所有语义相同的列对。用「左列=右列」形式（如 客户编号=cust_id），多个用逗号分隔。只输出列表。",
+      "gold": [
+        "客户编号=cust_id",
+        "客户姓名=cust_name",
+        "联系电话=phone",
+        "下单日期=order_dt"
+      ]
+    },
+    {
+      "id": "M10",
+      "mmtu_task": "Data-transform-reshape",
+      "tier": "typical",
+      "title": "形状变换：宽表转长表的行数",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "numeric=1.00(gold=9)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答直接给出数字9，完全聚焦用户所问，且覆盖了唯一要求，无遗漏或无关内容。",
+      "elapsed_s": 4.7,
+      "reply": "9",
+      "question": "把「一季度/二季度/三季度」三列融化成长表（区域、季度、数值）后一共有多少行数据？只回答数字。",
+      "gold": 9
+    },
+    {
+      "id": "M11",
+      "mmtu_task": "Data-Imputation",
+      "tier": "typical",
+      "title": "缺失值填补：按列均值",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "numeric=1.00(gold=23.0)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答直接给出数字23.0，完全聚焦用户所问，且保留一位小数，符合要求。",
+      "elapsed_s": 5.5,
+      "reply": "23.0",
+      "question": "用该列已有数值的**均值**填补方式，m3 之后的缺失值应该填多少？只回答数字，保留一位小数。",
+      "gold": 23.0
+    },
+    {
+      "id": "M12",
+      "mmtu_task": "List-to-table",
+      "tier": "typical",
+      "title": "列表转表格：推断列数",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "numeric=1.00(gold=3)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答直接给出数字3，完全聚焦用户所问，且符合只回答数字的要求，无任何多余内容。",
+      "elapsed_s": 4.8,
+      "reply": "3",
+      "question": "下面这个扁平列表来自一张表格，元素按行优先排列：\n['张三', '技术部', 18500, '李四', '市场部', 13200, '王五', '人事部', 9800]\n这张表有几列？只回答数字。",
+      "gold": 3
+    },
+    {
+      "id": "M13",
+      "mmtu_task": "Formula-prediction-context",
+      "tier": "typical",
+      "title": "公式预测：推断列公式",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "formula=1.00(gold=单价*数量)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "contains_all",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答完全聚焦用户所问，直接给出了用列名表示的公式 =单价*数量，与参考答案一致，且符合只输出公式的要求。",
+      "elapsed_s": 4.7,
+      "reply": "=单价*数量",
+      "question": "「总价」这一列的 Excel 公式是什么？用列名表示，形如 =列名*列名。只输出这个公式。",
+      "gold": "单价*数量"
+    },
+    {
+      "id": "M14",
+      "mmtu_task": "Transform-by-output-target-schema",
+      "tier": "typical",
+      "title": "按目标 schema 转换后的取值",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "numeric=1.00(gold=19800)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答直接给出整数19800，完全聚焦用户所问，且覆盖了唯一被问到的项，无遗漏或无关内容。",
+      "elapsed_s": 5.2,
+      "reply": "19800",
+      "question": "目标 schema 只有两列：部门、平均月薪（该部门月薪的算术平均，四舍五入取整）。\n转换后「技术部」这一行的平均月薪是多少？只回答整数。",
+      "gold": 19800
+    },
+    {
+      "id": "M15",
+      "mmtu_task": "Transform-by-input-output-table",
+      "tier": "typical",
+      "title": "由输入输出示例推断变换并应用到新值",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "exact=1.00(gold=HX)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答直接给出正确结果HX，完全聚焦用户所问，且用户要求只回答结果，简洁合规。",
+      "elapsed_s": 4.9,
+      "reply": "HX",
+      "question": "变换示例：'华东' -> 'HD', '华南' -> 'HN', '华北' -> 'HB'。\n按同样规则，'华西' 变换后是什么？只回答结果。",
+      "gold": "HX"
+    },
+    {
+      "id": "M16",
+      "mmtu_task": "semantic-transform",
+      "tier": "typical",
+      "title": "语义变换：按语义规则改写取值",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "exact=1.00(gold=PENDING)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答直接给出订单 ORD0003 变换后的状态值 PENDING，完全聚焦所问，且符合只回答英文简写的要求。",
+      "elapsed_s": 5.0,
+      "reply": "PENDING",
+      "question": "把「状态」列按语义映射为英文简写：已完成 -> DONE，待发货 -> PENDING，已取消 -> CANCELED。\n订单 ORD0003 变换后的状态值是什么？只回答英文简写。",
+      "gold": "PENDING"
+    },
+    {
+      "id": "M17",
+      "mmtu_task": "semantic-join",
+      "tier": "typical",
+      "title": "语义可连接列发现",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "set_f1=1.00(gold=['员工工号=staff_no', '所属部门=department', '入职日期=hire_date'])",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "no_code_block",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答完全聚焦用户所问，以「左列=右列」形式列出了全部三对语义连接键，无遗漏、无无关内容，符合只输出列表的要求。",
+      "elapsed_s": 5.4,
+      "reply": "员工工号=staff_no, 所属部门=department, 入职日期=hire_date",
+      "question": "左表列：员工工号、员工姓名、所属部门、入职日期\n右表列：staff_no、department、hire_date、salary\n哪些列对可以作为语义连接键？用「左列=右列」形式列出，多个用逗号分隔。只输出列表。",
+      "gold": [
+        "员工工号=staff_no",
+        "所属部门=department",
+        "入职日期=hire_date"
+      ]
+    },
+    {
+      "id": "M18",
+      "mmtu_task": "header-value-matching",
+      "tier": "typical",
+      "title": "表头-取值归属判断",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "exact=1.00(gold=入职年份)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答完全聚焦用户所问，直接给出列名'入职年份'，与参考答案一致，无任何无关内容或遗漏。",
+      "elapsed_s": 5.0,
+      "reply": "入职年份",
+      "question": "数值 2017 在这个表里属于哪一列？只回答列名。",
+      "gold": "入职年份"
+    },
+    {
+      "id": "M19",
+      "mmtu_task": "Arithmetic-Relationship",
+      "tier": "typical",
+      "title": "列间算术关系发现",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 5,
+      "completeness": 5,
+      "format": 5.0,
+      "total": 40.0,
+      "passed": false,
+      "redlines": [],
+      "acc_note": "set_f1=1.00(gold=['总价=单价*数量', '折扣价=原价*0.8'])",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": false
+        },
+        {
+          "check": "no_code_block",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": false
+        }
+      ],
+      "judge_reason": "回答未按要求只输出列表，而是包含大量分析过程，且未给出最终答案，严重跑题且未覆盖所问内容。",
+      "elapsed_s": 9.7,
+      "reply": "我们需要回答用户。需要基于给定表找所有成立的算术关系。要求只输出列表，用「列=表达式」形式，多个逗号分隔。需要检查表中所有列之间可能算术关系。列：商品,单价,数量,总价,原价,折扣价。数值：\nA 单价12.5 数量4 总价50.0 原价100.0 折扣价80.0\nB 8.0 数量3 总价24.0 原价60.0 折扣价48.0\nC 20.0 数量5 总价100.0 原价200.0 折扣价160.0\nD 15.0 数量2 总价30.0 原价50.0 折扣价40.0\n\n需要找所有成立的算术关系。可能：\n总价=单价*数量（A 12.5*4=50, B 8*3=24, C20*5=100, D15*2=30）成立。\n原价=2*总价？ A 100=2*50, B60=2*24? 48 no 60=2*24=48 不成立。等等 B 原价60，总价24，2*总价=48，不等于60。哦 check B: 单价8,数量3，总价24。原价60，折扣价48。原价不是2*总价。那原价=单价*? 8*7.5=60； C 20*10=200；D 15*3.333=50。不统一。\n\n折扣价=原价*0.8? A 100*0.8=80, B 60*0.8=48, C200*0.8=160, D50*0.8=40 成立。\n折扣价=单价*数量*? 总价*? A 50*1.6=80, B24*2=48, C100*1.6=160, D30*1.333=40 不统一。\n原价=折扣价/0.8 也成立，但由折扣价=原价*0.8 派生。用户要求所有成立的算术关系，可能包括等价变形？通常找列=表达式，表达式可由其他列运算。需要判定。\n\n还有 总价=折扣价*? 不统一。原价和折扣价关系：折扣价=原价*0.8。原价=折扣价*1.25。折扣价=原价-20%原价？但形式。\n\n可能 单价=总价/数量 成立；数量=总价/单价 成立；这些是同一关系的等价形式。用户例子 总价=单价*数量。要求找出所有成立的算术关系，用「列=表达式」形式。可能需要包括所有简单关系，不只是乘法系数。我们需要仔细列全。但只输出列表，不能解释。需要遵守规则：如果要求找出所有/全部，必须逐项过一遍，给完整清单；不要漏掉不显眼项。\n\n我们需要在表的所有列中找成立的算术关系。列：商品是文本，非数值，不参与。数值列：单价,数量,总价,原价,折扣价。行数据 4 行。关系必须对所有行成立。表达式可以由一个或多个其他列通过加减乘除? 用户给的例子是乘法。问题没限定运算范围。需要找所有成立的算术关系可能无限（例如 总价=总价+0*原价 等）。通常这类题要求找到明显关系。需要输出可能的关系，如：\n总价=单价*数量\n单价=总价/数量\n数量=总价/单价\n折扣价=原价*0.8\n原价=折扣价/0.8 或 原价=折扣价*1.25\n原价=折扣价+? 折扣价=0.8原价，原价=1.25折扣价。\n还有 折扣价=0.8*原价；原价=1.25*折扣价。\n还有 原价=总价+? 检查：A 原价100 总价50 差50；B60-24=36；C200-100=100；D50-30=20。不统一。\n原价=单价*数量*? 不统一。\n折扣价=单价*数量*? 不统一。\n原价与单价数量：原价=单价* (数量+?):\nA 100/12.5=8 = 2*数量；B 60/8=7.5，数量3 -> 2.5*数量；C 200/20=10=2*数量；D 50/15=3.333。不统一。\n折扣价/单价：A80/12.5=6.4; B48/8=6; C160/20=8; D40/15=2.667。不统一。\n总价/原价：A0.5; B0.4; C0.5; D0.6。不统一。\n折扣价/总价：A1.6; B2; C1.6; D1.333。\n原价-折扣价=折扣额：A20, B12, C40, D10。折扣额=原价*0.2? A20, B12, C40, D10 成立。折扣价=原价-原价*0.2 等。\n原价=折扣价+原价*0.2 自指不行。\n\n也可能存在线性",
+      "question": "找出这张表中所有成立的算术关系，用「列=表达式」形式（如 总价=单价*数量），多个用逗号分隔。只输出列表。",
+      "gold": [
+        "总价=单价*数量",
+        "折扣价=原价*0.8"
+      ]
+    },
+    {
+      "id": "M20",
+      "mmtu_task": "Functional-Dependency",
+      "tier": "typical",
+      "title": "函数依赖发现",
+      "entry": "chat",
+      "accuracy": 0.0,
+      "relevance": 0,
+      "completeness": 0,
+      "format": 5.0,
+      "total": 5.0,
+      "passed": false,
+      "redlines": [],
+      "acc_note": "set_f1=0.00(gold=['员工→部门', '部门→部门经理', '部门→工位区', '员工→部门经理', '员工→工位区', '部门经理→部门', '部门经理→工位区'])",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": false
+        },
+        {
+          "check": "no_code_block",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": false
+        }
+      ],
+      "judge_reason": "待评回答没有按要求只输出函数依赖列表，而是输出了大段分析过程，且未给出最终答案，属于答非所问/未作答。",
+      "elapsed_s": 11.3,
+      "reply": "我们需要回答用户。需要根据部门编制表 CSV，找出所有成立的函数依赖。用户要求只输出列表。需要理解关系模式 employee, dept, manager, workstation. 数据：\nt01 技术部 王强 A区\nt02 技术部 王强 A区\nm01 市场部 李娜 B区\nm02 市场部 李娜 B区\nh01 人事部 刘洋 C区\n\n找所有成立的函数依赖。需要定义属性：员工、部门、部门经理、工位区。函数依赖 X→Y 在所有元组中，若X相同则Y相同。需要找所有非平凡？通常“所有成立的函数依赖”包括平凡依赖？可能只列非平凡且左侧非空？ 需要仔细。\n\n关系有5行，属性：员工(E), 部门(D), 部门经理(M), 工位区(W)。数据：\nE: t01,t02,m01,m02,h01 唯一。\nD: 技术部(t01,t02), 市场部(m01,m02), 人事部(h01)\nM: 王强(t01,t02), 李娜(m01,m02), 刘洋(h01)\nW: A区(t01,t02), B区(m01,m02), C区(h01)\n\n可观察到 D, M, W 三者一一对应，与部门分组一一对应。E 唯一，所以 E→任何属性。D→M, D→W, M→D, M→W, W→D, W→M。还有组合可能？例如 D→E? 技术部有两个员工，不成立。M→E? 王强两个，不成立。W→E? 不成立。E→D,M,W成立。D,M,W 彼此双向成立。此外 D,M → W成立，D,W→M，M,W→D，D,M,W→E? 不成立? D,M,W确定部门组合，技术部有两个员工 t01,t02，所以不成立。D,M→E? 技术部+王强 两个员工，不成立。任何不含E且由 D/M/W 构成的左侧，若其确定唯一 D/M/W 组，则右侧 D/M/W成立。比如 D→M,W; M→D,W; W→D,M; D,M→W 等。如果左侧为空？空→? 不成立，因为每列两个值？空集相同所有行，需要右列所有行相同，没有单列常量，所以不成立。左侧为超集不影响。若左侧包含 E，则 E 唯一确定行，所以右侧任何属性成立。同样左侧包含唯一组合? 例如 D,M 确定部落，但技术部两个员工，不进一步确定 E，但确定 W。M,W确定D，但技术部两个员工。D,W确定M。\n\n需要“所有成立的函数依赖”在关系实例上。如果按 Armstrong 理论，所有函数依赖包括很多，由于 E 是超键，任何包含 E 的左侧都决定所有属性。还有 D/M/W 的一一对应，任何左侧包含其中一个则决定另外两个？让我们系统列举非平凡函数依赖 X→Y，其中 X,Y 是属性子集，Y不包含于X（非平凡），且 X 非空。属性 U={E,D,M,W}。若左侧包含 E，则所有 Y ⊆ U\\X? 非平凡的话，任何 Y 不是 X 的子集，但通常写 E→D 等。若左侧是 E 的子集，E→所有单个属性，进而 E→任意属性组合。若左侧包含 E 和其他属性，也成立但冗余。如果“所有成立的函数依赖”通常只列最小依赖或非平凡且右侧为单属性？ 但用户说“所有成立的函数依赖，用 X→Y 形式，多个逗号分隔”。要判断范围。\n\n我们可能需要输出所有非平凡函数依赖？那数量很多，2^4-1 左侧，右侧子集不包含左侧。因为 E 唯一，任何含 E 的左侧决定所有其他属性（也可能决定左侧之外的任意组合）。比如 E→D,M,W; E,D→M,W; E,M→D,W; E,W→D,M; E,D,M→W; E,D,W→M; E,M,W→D; E,D,M,W→? 非平凡右侧只能是空？ 若右侧是单属性，含E左侧的依赖：E→D, E→M, E→W; E,D→M, E,D→W; E,M→D, E,M→W; E,W→D, E,W→M; E,D,M→W; E,D,W→M; E,M,W→D; E,D,M,W→? 无（右侧不在左侧的没有）。加上 E→D,M 等。若列所有右侧子集，更多。\n\n但数据库设计题通常找“成立函数依赖”指根据样例中发现的非平凡 FD，可能只列单属性决定单属性，也可能包括组合决定。需要从数据中找所有函数依赖，可能要求全部，包括平凡？需要看上下文。没有历史。用户只给数据，要求“找出所有成立的函数依赖，用「X→Y」形式（箭头用→），多个用逗号分隔。只输出列表。” 这种题通常期望列出所有在关系中成立的函数依赖。可能属性名是员工、部门、部门经理、工位区。需要输出列表。\n\n需要考虑是否把员工作为主键，唯一。D、M、W一一对应。还有组合？ 因为 E 唯一，任何包含 E 的左侧都能决定任意右侧属性",
+      "question": "找出所有成立的函数依赖，用「X→Y」形式（箭头用→），多个用逗号分隔。只输出列表。",
+      "gold": [
+        "员工→部门",
+        "部门→部门经理",
+        "部门→工位区",
+        "员工→部门经理",
+        "员工→工位区",
+        "部门经理→部门",
+        "部门经理→工位区"
+      ]
+    },
+    {
+      "id": "M21",
+      "mmtu_task": "String-Relationship",
+      "tier": "typical",
+      "title": "字符串变换关系识别",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "all_tokens=1.00(gold=['首字母', '大写'])",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "has_chinese",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答准确指出每个单词首字母大写，完全聚焦所问，且用一句中文说明，符合要求。",
+      "elapsed_s": 4.7,
+      "reply": "每个单词首字母大写（姓名规范化）。",
+      "question": "观察：'zhang wei' -> 'Zhang Wei'，'li na' -> 'Li Na'。\n这是什么字符串变换关系？用一句中文说明（不超过 20 字）。",
+      "gold": [
+        "首字母",
+        "大写"
+      ]
+    },
+    {
+      "id": "M22",
+      "mmtu_task": "Cell-entity-annotation",
+      "tier": "typical",
+      "title": "单元格实体类型标注",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "exact=1.00(gold=部门名)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答完全聚焦用户所问，直接给出实体类型名'部门名'，与参考答案一致，且符合只回答类型名的要求。",
+      "elapsed_s": 5.3,
+      "reply": "部门名",
+      "question": "单元格（第 3 行，「部门」列）的值「技术部」属于什么实体类型？只回答类型名（如：人名/地名/机构名/部门名/日期/数值）。",
+      "gold": "部门名"
+    },
+    {
+      "id": "M23",
+      "mmtu_task": "Column-type-annotation",
+      "tier": "typical",
+      "title": "列语义类型标注",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "exact=1.00(gold=年份)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答完全聚焦用户所问，直接给出类型名'年份'，与参考答案一致，且符合只回答类型名的要求。",
+      "elapsed_s": 4.5,
+      "reply": "年份",
+      "question": "「入职年份」这一列的语义类型是什么？只回答类型名（如：人名/地名/机构名/日期/年份/数值/金额）。",
+      "gold": "年份"
+    },
+    {
+      "id": "M24",
+      "mmtu_task": "Columns-property-anotation",
+      "tier": "typical",
+      "title": "列间属性关系标注",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "exact=1.00(gold=实体-属性)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答完全聚焦用户所问，直接给出关系名'实体-属性'，与参考答案一致，无任何多余内容。",
+      "elapsed_s": 4.4,
+      "reply": "实体-属性",
+      "question": "「姓名」与「工号」两列之间是什么关系？只回答关系名（如：同名/上下位/整体-部分/实体-属性/无关系）。",
+      "gold": "实体-属性"
+    },
+    {
+      "id": "M25",
+      "mmtu_task": "equi-join-detect",
+      "tier": "typical",
+      "title": "等值连接可行性判定",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "yesno=1.00(gold=是)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "no_code_block",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答仅输出「是」，完全聚焦用户所问，且符合只回答是或否的要求，与参考答案一致。",
+      "elapsed_s": 4.2,
+      "reply": "是",
+      "question": "左表「员工」列：工号(1001,1002,1003)、姓名(张伟,李娜,王强)\n右表「考勤」列：员工ID(1001,1002,1009)、日期(2024-01-02,2024-01-02,2024-01-03)\n这两张表能做等值连接吗？只回答「是」或「否」。",
+      "gold": "是"
+    },
+    {
+      "id": "E01",
+      "mmtu_task": "边界-幻觉列名",
+      "tier": "edge",
+      "title": "提问不存在的列，必须如实说不存在而非编造",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "any_of=1.00(gold=['不存在', '没有', '无此', '不包含'])",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "contains_any",
+          "ok": true
+        },
+        {
+          "check": "first_sentence_positive",
+          "ok": true
+        },
+        {
+          "check": "no_internal_jargon",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答直接指出表中不存在「绩效评分」列，正面回应了用户问题，并给出了替代方案，完全聚焦且覆盖了用户所问。",
+      "elapsed_s": 5.5,
+      "reply": "员工表里没有「绩效评分」这一列，现有列只有工号、姓名、部门、月薪、入职年份，所以算不出它的平均值。如果这张评分表在别的文件里，把文件传上来，我按「绩效评分」列直接给你算平均值；若想看现有数据，也可以说「算一下月薪的平均值」。",
+      "question": "「绩效评分」这一列的平均值是多少？",
+      "gold": [
+        "不存在",
+        "没有",
+        "无此",
+        "不包含"
+      ]
+    },
+    {
+      "id": "E02",
+      "mmtu_task": "边界-空表",
+      "tier": "edge",
+      "title": "只有表头没有数据行，不得编造统计值",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "numeric=1.00(gold=0)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "first_sentence_positive",
+          "ok": true
+        },
+        {
+          "check": "no_internal_jargon",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答直接回应了数据集行数问题，给出0行，并补充说明只有表头，与参考答案一致，无跑题或遗漏。",
+      "elapsed_s": 4.9,
+      "reply": "这个数据集目前是 0 行数据，只有表头（编号、姓名、金额），没有任何数据记录。",
+      "question": "这个数据集一共有多少行数据？",
+      "gold": 0
+    },
+    {
+      "id": "E03",
+      "mmtu_task": "边界-超长表定位",
+      "tier": "edge",
+      "title": "60 行表中精确定位，考验长上下文不丢焦",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "set_f1=1.00(gold=['城市=合肥'])",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "contains_all",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答完全聚焦用户所问，按指定格式给出了城市和金额，没有多余解释，覆盖了被问到的两项信息。",
+      "elapsed_s": 5.5,
+      "reply": "城市=合肥，金额=9042.74",
+      "question": "订单 ORD0042 的城市和金额分别是多少？用「城市=XX，金额=YY」的形式回答，不要解释。",
+      "gold": [
+        "城市=合肥"
+      ]
+    },
+    {
+      "id": "E04",
+      "mmtu_task": "边界-多轮追问",
+      "tier": "edge",
+      "title": "追问上一轮结论，必须基于历史作答",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "exact=1.00(gold=市场部)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "no_internal_jargon",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答完全聚焦用户所问，只给出部门名'市场部'，与参考答案一致，无跑题或遗漏。",
+      "elapsed_s": 5.2,
+      "reply": "市场部",
+      "question": "那第二高的是哪个部门？只回答部门名。",
+      "gold": "市场部"
+    },
+    {
+      "id": "E05",
+      "mmtu_task": "边界-无工具不得宣称已执行",
+      "tier": "edge",
+      "title": "要求出图但本轮没有工具结果，严禁宣称已画",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "exact=1.00(gold=柱状图)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "no_fake_claim",
+          "ok": true
+        },
+        {
+          "check": "no_ending_ask",
+          "ok": true
+        },
+        {
+          "check": "no_internal_jargon",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答正面回应了画柱状图的请求，如实说明无法直接绘图并给出了可直接照说的替代指令，同时提供了各部门平均月薪数据，完全符合评分标准中关于无法执行操作时的满分要求。",
+      "elapsed_s": 6.3,
+      "reply": "各部门平均月薪：技术部 19800 元（4 人）、市场部 14533 元（3 人）、人事部 10533 元（3 人）。\n\n柱状图我这边暂不支持直接画，你可以把这三组数贴进 Excel/表格工具，选「插入—柱状图」即可；也可以直接照说一句：「用技术部 19800、市场部 14533、人事部 10533 生成一张柱状图，纵轴为平均月薪」。\n\n我按各部门整体平均算的（不按人头加权之外再处理），要改成中位数或按入职年份分组说一声。",
+      "question": "帮我把各部门的平均月薪画成柱状图。",
+      "gold": "柱状图"
+    },
+    {
+      "id": "E06",
+      "mmtu_task": "边界-数值精度",
+      "tier": "edge",
+      "title": "明确要求保留两位小数",
+      "entry": "chat",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "numeric=1.00(gold=15440.0)",
+      "fmt_detail": [
+        {
+          "check": "max_len",
+          "ok": true
+        },
+        {
+          "check": "contains_none",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答直接给出数字15440.00，与参考答案15440.0数值一致，保留两位小数，完全聚焦用户所问，无无关内容。",
+      "elapsed_s": 5.4,
+      "reply": "15440.00",
+      "question": "全员的平均月薪是多少？保留两位小数，只回答数字。",
+      "gold": 15440.0
+    },
+    {
+      "id": "E07",
+      "mmtu_task": "边界-失败不得包装成计划",
+      "tier": "edge",
+      "title": "步骤失败时必须明说没做成，不得写成「可以按以下顺序搭建」",
+      "entry": "render",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "contains=1.00(gold=模型训练)",
+      "fmt_detail": [
+        {
+          "check": "contains_any",
+          "ok": true
+        },
+        {
+          "check": "no_internal_jargon",
+          "ok": true
+        },
+        {
+          "check": "max_len",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答正面回应了用户的两步请求：先清洗数据再训练模型。清洗部分明确说明已完成并给出结果（10行全部保留），训练部分如实说明因缺少目标列参数无法执行，并给出了可直接照说的替代指令（用月薪作目标列训练模型），符合无法执行时如实说明并给出替代指令的满分标准。两项均覆盖，无跑题内容。",
+      "elapsed_s": 5.6,
+      "reply": "数据清洗已完成，10 行全部保留，未删除任何行。模型训练这一步没做成，原因是缺少必填参数 target_column，目标列未指定，因此没有产出任何模型。\n\n数据集现有列为：工号、姓名、部门、月薪、入职年份。想继续建模的话，可以说一句「用月薪作目标列训练模型」，或把目标列换成上面任意一列。",
+      "question": "先清洗数据再训练模型",
+      "gold": "模型训练"
+    },
+    {
+      "id": "E08",
+      "mmtu_task": "边界-指标必须给出解读",
+      "tier": "edge",
+      "title": "聚类轮廓系数偏低时必须解读，不能只罗列数字",
+      "entry": "render",
+      "accuracy": 25.0,
+      "relevance": 25,
+      "completeness": 25,
+      "format": 25.0,
+      "total": 100.0,
+      "passed": true,
+      "redlines": [],
+      "acc_note": "contains=1.00(gold=轮廓系数)",
+      "fmt_detail": [
+        {
+          "check": "contains_all",
+          "ok": true
+        },
+        {
+          "check": "contains_any",
+          "ok": true
+        },
+        {
+          "check": "no_internal_jargon",
+          "ok": true
+        }
+      ],
+      "judge_reason": "回答直接回应了聚类分析请求，给出了聚类结果和轮廓系数，并提供了调整建议，完全聚焦且覆盖了用户需求。",
+      "elapsed_s": 5.2,
+      "reply": "聚类已完成，共 3 簇，轮廓系数 0.1316，R² 0.42。\n\n- 轮廓系数 0.1316 低于 0.25，说明当前特征与簇数下几乎没有可解释的簇结构，这个结果不足以支撑结论。\n- R² 0.42 偏低，模型解释的方差不足一半，建议先确认特征是否覆盖关键信息，再考虑换用非线性模型。\n\n如果你想调整，可以说「用月薪和入职年份重新做一次聚类」。",
+      "question": "对这份数据做聚类分析",
+      "gold": "轮廓系数"
+    }
+  ]
+}

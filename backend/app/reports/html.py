@@ -26,6 +26,8 @@ footer { margin-top: 32px; color: #888; font-size: 0.9em;
 .chart-figure { margin: 18px 0; text-align: center; }
 .chart-figure figcaption { font-size: 0.92em; color: #475569; margin-bottom: 6px; }
 .chart-figure svg { max-width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; }
+/* 位图图（ML 训练报告内嵌的 PNG）：打印时按页宽收缩，避免被裁掉右半边 */
+.chart-figure img { max-width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; }
 .missing-note { background: #fff8e6; border-left: 4px solid #d9a406; padding: 8px 14px;
                 margin: 18px 0; font-size: 0.94em; }
 .missing-note ul { margin: 6px 0 0; padding-left: 20px; }
@@ -78,6 +80,19 @@ def export_html(report: Report) -> str:
             svg = chart.get("svg") or ""
             parts.append(
                 f'<figure class="chart-figure"><figcaption>{title}</figcaption>{svg}</figure>'
+            )
+        # 位图附件（本轮由 ML 训练报告挂上，数据来自 run.artifacts）：
+        # 内联 base64，单文件即可分发；图与上方表格同源，不存在两套数字。
+        for image in getattr(section, "images", None) or []:
+            png = image.get("png_base64") or ""
+            if not png:
+                continue
+            parts.append(
+                '<figure class="chart-figure">'
+                f'<img src="data:image/png;base64,{png}" '
+                f'alt="{_esc(image.get("title", ""))}"/>'
+                f'<figcaption>{_esc(image.get("title", ""))}</figcaption>'
+                "</figure>"
             )
     missing = missing_chapters(report)
     if missing:

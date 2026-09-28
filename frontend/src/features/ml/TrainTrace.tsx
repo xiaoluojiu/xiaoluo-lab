@@ -124,9 +124,22 @@ export function TrainTrace({ artifacts, catalog = null, model }: Props) {
         )}
       </div>
 
-      {/* ③ 训练/测试划分 */}
+      {/* ③ 训练数据使用情况 + 训练/测试划分 */}
       <div className="ml-trace-block">
-        <h5 className="ml-guide-subtitle">③ 训练 / 测试划分</h5>
+        <h5 className="ml-guide-subtitle">③ 数据使用情况与训练 / 测试划分</h5>
+        {artifacts.sampling && artifacts.sampling.sampled ? (
+          <p className="ml-trace-warn" style={{ marginTop: 0 }}>
+            原始 <b>{artifacts.sampling.original_rows.toLocaleString()}</b> 行
+            → 随机抽样 <b>{artifacts.sampling.used_rows.toLocaleString()}</b> 行参与训练
+            （占比 <b>{(artifacts.sampling.sample_rate * 100).toFixed(1)}%</b>
+            ，{artifacts.sampling.limit_source === "user" ? "用户指定" : "系统安全上限"}）
+          </p>
+        ) : (
+          <p style={{ marginTop: 0, color: "var(--color-success, #16a34a)" }}>
+            使用全部数据
+            （<b>{(artifacts.sampling?.used_rows ?? artifacts.train_rows ?? 0).toLocaleString()}</b> 行，未抽样）
+          </p>
+        )}
         <div className="ml-trace-kv">
           <span><b>训练集</b>{show(artifacts.train_rows)} 行</span>
           <span><b>测试集</b>{show(artifacts.test_rows)} 行</span>

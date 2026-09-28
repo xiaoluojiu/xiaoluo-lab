@@ -407,7 +407,7 @@ export function useAgentRun(opts: UseAgentRunOptions) {
         onError(errText(e, "自动放行失败，请手动确认"));
       }
     },
-    [tools, appendMessage, onNotice, onError, setEvents, startPolling],
+    [tools, onNotice, onError, setEvents, startPolling],
   );
 
   const send = useCallback(
@@ -578,7 +578,7 @@ export function useAgentRun(opts: UseAgentRunOptions) {
     } finally {
       setConfirming(false);
     }
-  }, [activeRunId, confirming, appendMessage, onError, onNotice, setEvents, startPolling]);
+  }, [activeRunId, confirming, onError, onNotice, setEvents, startPolling]);
 
   const deny = useCallback(() => {
     // 拒绝必须通知后端终止 run，否则 run 卡在 WAITING_CONFIRMATION，会话被 409 锁死。

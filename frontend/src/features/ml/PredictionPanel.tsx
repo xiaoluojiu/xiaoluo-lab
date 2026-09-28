@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { predictWithRun } from "../../api/ml";
+import { downloadPredictions, predictWithRun, type PredictExportFormat } from "../../api/ml";
 import type {
   ExperimentRun,
   MlCatalog,
@@ -56,6 +56,10 @@ export function PredictionPanel({ runs, datasetId, catalog }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PredictionResult | null>(null);
+  // 全量导出：格式与导出中状态。导出不需要先跑一次预览 —— 它自己会跑完整推理，
+  // 但阈值必须跟着传，否则导出的口径和界面上对不上。
+  const [exportFormat, setExportFormat] = useState<PredictExportFormat>("csv");
+  const [exporting, setExporting] = useState(false);
 
   const activeRunId = runId ?? successRuns[0]?.id ?? null;
   const activeRun = successRuns.find((r) => r.id === activeRunId) ?? null;
@@ -120,6 +124,39 @@ export function PredictionPanel({ runs, datasetId, catalog }: Props) {
       setError(e instanceof Error ? e.message : "推理失败");
     } finally {
       setBusy(false);
+    }
+  }
+
+  /**
+   * 导出全部预测结果。
+   *
+   * 预览面板最多只能看 200 行，而批量推理的价值就在于「每一行都要有结果」；
+   * 没有导出入口，用户只能对着预览表手抄数字，或者把 limit 调到上限再自己拼文件。
+   */
+  async function exportAll() {
+    if (!activeRunId || thresholdInvalid) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const blob = await downloadPredictions(activeRunId, {
+        dataset_id: datasetId ?? undefined,
+        threshold: thresholdUsable ? thresholdValue : null,
+        format: exportFormat,
+      });
+      const ext = exportFormat === "parquet" ? "parquet" : "csv";
+      const mime = exportFormat === "parquet" ? "application/vnd.apache.parquet" : "text/csv;charset=utf-8";
+      const url = URL.createObjectURL(new Blob([blob], { type: mime }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ML-Run${activeRunId}-predictions.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "导出失败，请重试");
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -199,6 +236,27 @@ export function PredictionPanel({ runs, datasetId, catalog }: Props) {
             恢复默认阈值
           </button>
         )}
+
+        {/* 全量导出：预览只是前 N 行，真正要拿走用的是这个文件 */}
+        <span className="ml-infer-export">
+          <select
+            aria-label="推理结果导出格式"
+            value={exportFormat}
+            onChange={(e) => setExportFormat(e.target.value as PredictExportFormat)}
+            style={{ padding: "5px 6px" }}
+          >
+            <option value="csv">CSV</option>
+            <option value="parquet">Parquet</option>
+          </select>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={exporting || !activeRunId || !datasetId || thresholdInvalid}
+            onClick={() => void exportAll()}
+          >
+            {exporting ? "导出中..." : "📥 导出全部预测结果"}
+          </button>
+        </span>
       </div>
 
       {multiclassBlocked && (
@@ -279,7 +337,9 @@ export function PredictionPanel({ runs, datasetId, catalog }: Props) {
             </table>
           </div>
           {result.row_count > result.preview.length && (
-            <p className="muted">仅显示前 {result.preview.length} 行，共 {result.row_count} 行。</p>
+            <p className="muted">
+              仅显示前 {result.preview.length} 行，共 {result.row_count} 行 —— 完整结果请用上方「导出全部预测结果」。
+            </p>
           )}
         </div>
       )}

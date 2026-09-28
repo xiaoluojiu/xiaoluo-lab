@@ -60,7 +60,7 @@ from app.agent.models import (
     ToolCallStatus,
 )
 from app.agent.permission import Permission
-from app.agent.playbooks import SLOT_QUESTIONS, Playbook, PlaybookStep, get_playbook
+from app.agent.playbooks import SLOT_QUESTIONS, PlaybookStep, get_playbook
 from app.agent.slots import extract_slots
 from app.agent.store import AgentStore
 from app.core.exceptions import AppException

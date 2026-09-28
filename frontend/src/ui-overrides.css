@@ -193,6 +193,24 @@ body,
   flex: 0 0 auto;
 }
 
+/* 字段位选择器：X / Y / 分组等槽位，紧跟在图表类型按钮行下方。 */
+.visualization-slots {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin: 12px 0 0;
+}
+
+.visualization-slots .field {
+  flex: 0 1 200px;
+  min-width: 0;
+}
+
+.visualization-slots .field select {
+  width: 100%;
+}
+
 .visualization-selection-note {
   display: flex;
   flex-wrap: wrap;

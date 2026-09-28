@@ -145,20 +145,31 @@ def cap_training_rows(
     y: pl.Series | None = None,
     *,
     seed: int | None = None,
+    max_rows: int | None = None,
 ) -> tuple[pl.DataFrame, pl.Series | None, dict[str, Any]]:
-    """把训练集行数压到 ``ML_MAX_TRAIN_ROWS`` 以内（随机抽样）。
+    """把参与训练的行数压到上限以内（随机抽样，无放回）。
 
-    返回 ``(X, y, info)``，``info`` 形如::
+    ``max_rows`` 为用户显式指定的行数上限；缺省（None）时回落到配置项
+    ``ML_MAX_TRAIN_ROWS``。返回 ``(X, y, info)``，``info`` 形如::
 
-        {"sampled": True, "original_rows": 10_000_000, "used_rows": 200_000}
+        {"sampled": True, "original_rows": 10_000_000,
+         "used_rows": 200_000, "sample_rate": 0.02,
+         "limit_source": "default"}
 
     **抽样是有损的**，所以调用方必须把 ``info`` 透出到结果里 ——
     静默改变训练集规模会让指标无法解释（用户会以为模型是在全量数据上训的）。
     """
-    limit = _max_train_rows()
+    source = "user" if max_rows is not None else "default"
+    limit = int(max_rows) if max_rows is not None else _max_train_rows()
     total = X.height
     if limit <= 0 or total <= limit:
-        return X, y, {"sampled": False, "original_rows": total, "used_rows": total}
+        return X, y, {
+            "sampled": False,
+            "original_rows": total,
+            "used_rows": total,
+            "sample_rate": 1.0,
+            "limit_source": source,
+        }
 
     rng = np.random.default_rng(seed)
     picked = rng.choice(total, size=limit, replace=False)
@@ -171,6 +182,7 @@ def cap_training_rows(
         "original_rows": total,
         "used_rows": limit,
         "sample_rate": round(limit / total, 6),
+        "limit_source": source,
     }
 
 
@@ -368,6 +380,26 @@ class PreprocessingPipeline:
 
     def fit_transform(self, X: pl.DataFrame) -> pl.DataFrame:
         return self.fit(X).transform(X)
+
+    def as_matrix(self, X: pl.DataFrame) -> np.ndarray:
+        """公开：原始帧 -> ColumnTransformer 所需的原始矩阵（**不做拟合**，无泄漏）。
+
+        交叉验证 / 超参搜索要的是「一行不少、一列未加工」的原始矩阵：
+        填补用的均值、缩放用的方差都只能来自**当前折的训练部分**，
+        一旦这里先拟合过，等于把整份数据的统计信息提前告诉了每一折，
+        CV 指标会系统性偏乐观（泄漏出来的指标往往比真实泛化好几个点）。
+        """
+        return self._to_matrix(X)
+
+    def build(self, X: pl.DataFrame) -> ColumnTransformer:
+        """构造一份**未拟合**的 ColumnTransformer（交叉验证折内拟合用）。
+
+        与 ``self.pipeline_`` 的区别正是「有没有拟合过」：训练流程里那份
+        ``pipeline_`` 已经在训练集上 fit 过，直接塞进 CV 管道会把训练集
+        的统计量带进每一折（数据泄漏）。这里按同样的配置重新搭骨架，
+        把拟合交给 sklearn 的 ``cross_validate`` 在各折内完成。
+        """
+        return self._build(X)
 
     @staticmethod
     def train_test_split(

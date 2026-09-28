@@ -38,6 +38,46 @@ const PLANNING_PROGRESS: Record<string, number> = {
   dynamic_stop: 90,
 };
 
+/**
+ * Agent 执行的粗粒度阶段骨架，供通用 `<TaskProgress>` 复用。
+ *
+ * 与 ML 训练（阶段由后端 `/ml/catalog` 下发）不同，Agent 的细粒度 stage 文案是
+ * 「动词 + 对象」（如「执行工具：训练模型」），数量随工具变化，不适合直接铺成列表。
+ * 这里只做**归并**：把既有 stage/progress 重新解释成 4 个稳定阶段，
+ * 不新增任何状态、不改事件语义 —— 所以 AI 实验室的执行逻辑一行都不用动。
+ */
+export const AGENT_TASK_STAGES: { id: string; name: string }[] = [
+  { id: "understand", name: "理解任务" },
+  { id: "plan", name: "制定计划" },
+  { id: "execute", name: "执行工具" },
+  { id: "summarize", name: "汇总结果" },
+];
+
+/**
+ * 界面 stage 文案 → `AGENT_TASK_STAGES` 下标。
+ *
+ * 用关键词而不是全等匹配：stage 会被拼上工具名等后缀（「执行工具：训练模型」），
+ * 全等匹配会全部落空 → 高亮永远停在第一步。归不到类时返回 0（停在起点），
+ * 不退化成「跳到末尾」那种更误导的结果。
+ */
+export function agentStageIndex(stage: string): number {
+  const text = String(stage ?? "");
+  if (!text) return 0;
+  // ★ 顺序有讲究：「工具完成：xxx」也含「完成」二字，必须先于终态判断，
+  //   否则每跑完一个工具就会被误判成「已到收尾阶段」。
+  if (text.includes("工具完成")) return 2;
+  if (/任务完成|任务失败|未产生运行记录|状态获取失败|取消失败/.test(text)) return 3;
+  if (
+    /执行工具|开工前检查|重新规划|重试中|等待确认|等待补充信息|已补充信息|本地路由直连|已升级远程|动态步骤结束|正在取消/.test(
+      text,
+    )
+  ) {
+    return 2;
+  }
+  if (/执行计划|准备上下文|检索工具/.test(text)) return 1;
+  return 0;
+}
+
 /** 一条事件对界面的增量影响；未出现的字段表示「不改」。 */
 export interface EventEffects {
   stage?: string;

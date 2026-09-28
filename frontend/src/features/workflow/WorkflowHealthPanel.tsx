@@ -1,21 +1,8 @@
 import type { WorkflowEdge, WorkflowNode, WorkflowRun } from "../../types/workflow";
 import type { SchemaColumn } from "../../types/dataset";
 import { missingConfigWarnings } from "./configView";
+import { NODE_TYPES } from "./nodeSpecs";
 import "./workflow-health.css";
-
-const DATA_NODE_TYPES = new Set([
-  "noop",
-  "data.load",
-  "data.clean",
-  "data.duplicate",
-  "data.cast",
-  "data.string",
-  "data.filter",
-  "data.transform",
-  "data.aggregate",
-  "data.pivot",
-  "data.melt",
-]);
 
 function validate(nodes: WorkflowNode[], edges: WorkflowEdge[], columns: SchemaColumn[]) {
   const errors: string[] = [];
@@ -65,7 +52,7 @@ export function WorkflowHealthPanel({
   const dataOutputs = executed
     .map((node) => ({ node, summary: outputSummary(outputs[node.id]) }))
     .filter((item) => item.summary);
-  const unsupported = nodes.filter((node) => !DATA_NODE_TYPES.has(node.type));
+  const unsupported = nodes.filter((node) => !NODE_TYPES.includes(node.type));
   const score = errors.length ? 0 : warnings.length ? 70 : nodes.length ? 100 : 0;
 
   return <section className="workflow-health-panel">

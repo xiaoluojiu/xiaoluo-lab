@@ -10,6 +10,8 @@
  * 这里把「运行状态」与「配置是否完整」拆成两件事分别表达。
  */
 
+import { NODE_LABELS } from "./nodeSpecs";
+
 export type NodeTone = "idle" | "running" | "success" | "danger" | "warning" | "muted";
 
 const TONES: Record<string, NodeTone> = {
@@ -66,8 +68,28 @@ export function nodeDisplay(status: string | undefined, needsConfig: boolean): N
 }
 
 /* ------------------------------------------------------------------ */
-/* 节点产出摘要（分层信息的数据来源）                                  */
+/* 运行阶段骨架（供通用 <TaskProgress> 复用）                          */
 /* ------------------------------------------------------------------ */
+
+/**
+ * 从节点顺序派生「这次运行会经历哪些阶段」。
+ *
+ * 刻意复用画布上的节点名（`NODE_LABELS`）而不是另造一套阶段名：用户刚在画布上
+ * 摆好这些节点，进度里就应该出现同样的叫法，否则「进度条说的阶段」和「我搭的流程」
+ * 对不上号。
+ *
+ * ⚠️ `POST /workflows/{id}/run` 是同步接口，拿不到逐节点进度，所以这些阶段只作为
+ * 清单展示，不会被逐个点亮（进度走不确定进度）。要变成真实推进需要后端提供进度通道。
+ */
+export function workflowStages(
+  nodes: { id: string; type: string }[],
+): { id: string; name: string }[] {
+  return nodes.map((node, index) => ({
+    id: node.id || `node-${index}`,
+    name: NODE_LABELS[node.type] ?? node.type,
+  }));
+}
+
 
 /** 单个节点的产出规模。`metricsFromOutputs` 的取值类型。 */
 export interface NodeMetric {
@@ -79,7 +101,7 @@ export interface NodeMetric {
  * 从运行结果里提取每个节点的「产出多少行 × 多少列」。
  *
  * 为什么放在这里而不是各个页面里各写一遍：画布节点卡片、连线标注、
- * 血缘<｜hy_place▁holder▁no▁813｜>三处都要用同一份口径，`WorkflowHealthPanel.outputSummary`
+ * 体检面板三处都要用同一份口径，`WorkflowHealthPanel.outputSummary`
  * 之前就实现过一次，属于重复逻辑。
  *
  * 后端 `WorkflowRunResult.outputs[nodeId]` 现在是 `Record<string, unknown>`，

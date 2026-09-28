@@ -76,7 +76,7 @@ function describe(ev: AgentEvent, tools: AgentToolInfo[]): string {
 }
 
 // Prompt 179：Agent 执行时间线（SSE 事件流可视化）。
-// React.memo：父组件（AI 实验室 885 行巨型组件）在运行中会高频 setState
+// React.memo：父组件（AI 实验室页面 / useAgentRun）在运行中会高频 setState
 // （usage 事件、progress、stage），若不加 memo，时间线里每一条 li 都会随之重建。
 // events 引用仅在 SSE 真正追加事件时才变化，memo 能把高频无关状态更新挡在门外。
 export const AgentTimeline = memo(function AgentTimeline({ events }: { events: AgentEvent[] }) {

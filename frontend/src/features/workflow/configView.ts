@@ -124,3 +124,30 @@ export function runPreflight(name: string, nodes: WorkflowNode[]): RunBlocker | 
   }
   return null;
 }
+
+/** 从运行失败异常解析出的单条错误。 */
+export interface RunErrorItem {
+  /** 后端错误句中的节点 id；无法解析时为 undefined（条目不可点击）。 */
+  nodeId?: string;
+  message: string;
+}
+
+const NODE_ID_PATTERN = /节点\s+'([^']+)'/;
+
+/**
+ * 从运行失败的异常里提取结构化错误条目。
+ *
+ * client.ts 已把后端 error.details 挂到 Error 上；后端「配置不完整」的
+ * details.errors 是完整中文句数组（含节点 id/类型/缺失参数名），
+ * 这里逐条取出并解析节点 id；非结构化异常退化为单条 message。
+ */
+export function extractRunErrors(error: unknown): RunErrorItem[] {
+  const details = (error as { details?: unknown } | null)?.details;
+  const rawErrors = (details as { errors?: unknown } | undefined)?.errors;
+  if (Array.isArray(rawErrors)) {
+    return rawErrors
+      .filter((item): item is string => typeof item === "string" && item.length > 0)
+      .map((message) => ({ nodeId: NODE_ID_PATTERN.exec(message)?.[1], message }));
+  }
+  return [{ message: error instanceof Error ? error.message : "运行失败" }];
+}

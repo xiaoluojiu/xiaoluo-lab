@@ -7,16 +7,21 @@ interface Props {
   datasetId: number;
   version?: number;
   pageSize?: number;
+  /** 只看这些列（缺省=全部列）。用于让预览跟随左侧字段勾选。 */
+  columns?: string[];
 }
 
 // Prompt 160：分页预览表 —— 服务端分页，禁止一次加载全部数据。
-export function PreviewTable({ datasetId, version, pageSize = 20 }: Props) {
+export function PreviewTable({ datasetId, version, pageSize = 20, columns }: Props) {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<PreviewData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sortColumn, setSortColumn] = useState<string | undefined>();
   const [sortDesc, setSortDesc] = useState(false);
+
+  // 数组引用每次都变，用 join 后的字符串做依赖，避免无谓的重复请求。
+  const columnsKey = columns?.join(",");
 
   useEffect(() => {
     let cancelled = false;
@@ -28,6 +33,7 @@ export function PreviewTable({ datasetId, version, pageSize = 20 }: Props) {
       version,
       sort_column: sortColumn,
       sort_desc: sortDesc,
+      columns,
     })
       .then((d) => {
         if (!cancelled) setData(d);
@@ -41,14 +47,17 @@ export function PreviewTable({ datasetId, version, pageSize = 20 }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [datasetId, version, page, pageSize, sortColumn, sortDesc]);
+    // columns 通过 columnsKey（join 后的字符串）参与依赖，见上。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasetId, version, page, pageSize, sortColumn, sortDesc, columnsKey]);
 
   if (error) return <div className="badge failed">{error}</div>;
   // 首次加载用表骨架（高度已知，避免表格出现时整页跳一下）；换页只加一行「刷新中」。
   if (loading && !data) return <Skeleton lines={4} card />;
   if (!data || !data.items.length) return <div className="muted">暂无数据</div>;
 
-  const columns = Object.keys(data.items[0]);
+  // 表头直接用返回行自身的键：请求已按 columns 过滤，键就是实际展示的列。
+  const tableColumns = Object.keys(data.items[0]);
 
   function toggleSort(col: string) {
     if (sortColumn === col) setSortDesc(!sortDesc);
@@ -66,7 +75,7 @@ export function PreviewTable({ datasetId, version, pageSize = 20 }: Props) {
         <table className="data-table">
           <thead>
             <tr>
-              {columns.map((c) => (
+              {tableColumns.map((c) => (
                 <th key={c} className="sortable" onClick={() => toggleSort(c)}>
                   {c}
                   {sortColumn === c ? (sortDesc ? " ↓" : " ↑") : ""}
@@ -77,7 +86,7 @@ export function PreviewTable({ datasetId, version, pageSize = 20 }: Props) {
           <tbody>
             {data.items.map((row, i) => (
               <tr key={i}>
-                {columns.map((c) => (
+                {tableColumns.map((c) => (
                   <td key={c}>{formatCell(row[c])}</td>
                 ))}
               </tr>

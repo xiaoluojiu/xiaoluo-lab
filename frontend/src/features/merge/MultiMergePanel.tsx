@@ -20,6 +20,7 @@ import {
   type MultiMergePreviewResult,
   type MultiMergeRef,
 } from "../../api/merge";
+import { SampleTable } from "../../components/SampleTable";
 import type { Dataset } from "../../types/dataset";
 
 export function MultiMergePanel() {
@@ -397,35 +398,12 @@ export function MultiMergePanel() {
 }
 
 function MultiMergePreviewTable({ preview }: { preview: MultiMergePreviewResult }) {
-  const rows = preview.preview?.items ?? [];
-  const columns = preview.preview?.columns ?? preview.columns ?? [];
-  if (!rows.length) return <div className="processing-empty">暂无预览数据</div>;
+  // 只保留「把 MultiMerge 的 preview 形状摊平成 rows/columns」这层领域适配，
+  // 表格本体交给共享的 SampleTable（此前这里是同一份 markup 的第三个副本）。
   return (
-    <div className="processing-table-wrap">
-      <table>
-        <thead>
-          <tr>
-            {columns.map((c) => (
-              <th key={c}>{c}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr key={i}>
-              {columns.map((c) => (
-                <td key={c}>{formatCell(row[c])}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <SampleTable
+      rows={preview.preview?.items ?? []}
+      columns={preview.preview?.columns ?? preview.columns ?? []}
+    />
   );
-}
-
-function formatCell(value: unknown) {
-  if (value === null || value === undefined) return "—";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
 }

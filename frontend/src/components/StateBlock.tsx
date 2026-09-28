@@ -1,23 +1,15 @@
 import type { ReactNode } from "react";
 
-/** 空态：发生了什么 + 为什么 + 下一步怎么做。历史上 13 个页面里只有 5 个有空态。 */
-export function EmptyState({
-  title,
-  description,
-  action,
-}: {
-  title: string;
-  description?: ReactNode;
-  action?: ReactNode;
-}) {
-  return (
-    <div className="empty">
-      <span className="empty-title">{title}</span>
-      {description}
-      {action ? <div className="empty-action">{action}</div> : null}
-    </div>
-  );
-}
+/**
+ * 空态：发生了什么 + 为什么 + 下一步怎么做。
+ *
+ * 2026-09-27：这里原先自己实现了一份（只有标题/说明/主操作，没有图标），
+ * 与 components/viz/Blocks.tsx 的同名组件各写各的，改了这头漏那头。
+ * 现在只保留一个实现（viz/Blocks 的插画化版本：图标 + 标题 + 说明 + 主操作 + 次操作），
+ * 这里改成 re-export，历史入口 `components/StateBlock` 继续可用。
+ */
+export { EmptyState } from "./viz/Blocks";
+export type { EmptyStateProps } from "./viz/Blocks";
 
 /** 错误态：必须带重试动作，而不是只显示一行红字。 */
 export function ErrorState({

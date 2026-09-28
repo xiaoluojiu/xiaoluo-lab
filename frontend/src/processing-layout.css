@@ -66,3 +66,54 @@
     gap: 14px !important;
   }
 }
+
+/* =========================================================
+   预览确认弹窗（OperationPreviewDialog）
+   —— 全部为新增选择器，不覆盖既有规则。
+   ========================================================= */
+
+.op-preview-impact {
+  margin-top: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.op-preview-impact-line {
+  font-size: var(--fs-section);
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.op-preview-reasons {
+  margin: var(--space-3) 0 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: var(--fs-control);
+  line-height: 1.7;
+}
+
+.op-preview-sample-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: var(--space-5) 0 var(--space-2);
+}
+
+.op-preview-sample-head strong {
+  color: var(--text);
+  font-size: var(--fs-control);
+}
+
+.op-preview-ack {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  font-size: var(--fs-control);
+  color: var(--text);
+  cursor: pointer;
+}

@@ -308,13 +308,11 @@ class AnswerSource:
         )
 
 
-#: 预置的三类答案来源。旧架构有七种（含 llm_error_fallback 等），
-#: 新架构的降级是「有或无」，不是「降级到半吊子」，因此只保留三种。
+#: 预置的答案来源。旧架构有七种（含 llm_error_fallback 等），
+#: 新架构的降级是「有或无」，不是「降级到半吊子」，因此只保留
+#: 「平台内置规则」与本文件 :func:`answer_source_llm`（远程大模型）两条路径。
 ANSWER_SOURCE_RULE = AnswerSource(
     source="platform_rules", label="平台内置规则", detail="由平台规则与工具结果直接生成，未调用大模型", by_llm=False
-)
-ANSWER_SOURCE_LLM = AnswerSource(
-    source="remote_llm", label="远程大模型", detail="由远程大模型组织最终回答", by_llm=True
 )
 
 
@@ -356,24 +354,6 @@ class AgentEvent:
             payload=data.get("payload") or {},
             created_at=float(data.get("created_at") or _now()),
         )
-
-
-@dataclass
-class PlanStep:
-    """计划中的一个步骤。前端读 ``title ?? goal ?? action``。"""
-
-    tool: str = ""
-    title: str = ""
-    action: str = ""
-    arguments: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "tool": self.tool,
-            "title": self.title,
-            "action": self.action,
-            "arguments": self.arguments,
-        }
 
 
 @dataclass

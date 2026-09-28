@@ -11,11 +11,12 @@ roc_auc 需要概率输出（y_proba）；无法提供或 y_true 仅一个类别
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import polars as pl
 from sklearn import metrics as sk_metrics
+from sklearn.calibration import calibration_curve as sk_calibration_curve
 
 from app.ml_engine.exceptions import MLEngineException
 
@@ -246,3 +247,238 @@ def _roc_auc(
     if not math.isfinite(value):
         return None, "roc_auc 结果为 NaN/Inf，已置空"
     return value, None
+
+
+# ----------------------------------------------------------------------
+# Bootstrap 置信区间：单个指标只是点估计，区间才说明它有多稳
+# ----------------------------------------------------------------------
+
+def bootstrap_confidence_interval(
+    *,
+    values_for_indices: Any,
+    metric_fn: Callable[[np.ndarray], float],
+    n_repeats: int = 1000,
+    seed: int = 42,
+) -> dict[str, float | None]:
+    """有放回重采样，返回指标的 2.5 / 50 / 97.5 分位（95% 置信区间）。
+
+    为什么需要它：测试集指标是一个**点估计** —— 换一份同规模的测试集，
+    accuracy 0.83 可能落在 0.79~0.87。只报点估计，用户会把两个差 0.01 的
+    模型当成有差别，而那点差别很可能只是抽样噪声。
+
+    ``values_for_indices`` 传 y_true（或任何长度等于样本数的序列），
+    这里只取它的长度确定样本规模；``metric_fn(idx)`` 收到一个重采样下标数组，
+    返回该重采样样本上的指标值。**两个 run 传同一份 idx 就是配对比较**
+    （见 `experiments/comparator.py`）：配对后消掉了「样本本身难易」的影响，
+    剩下的才是两个模型的真实差距。
+
+    重采样可能抽到退化样本（例如某个类别一个都没抽到），此时 metric_fn
+    会返回 NaN；NaN 一律剔除，全部退化时返回 None —— 不编一个数字出来，
+    也绝不让 NaN 进 JSON。
+    """
+    n = len(values_for_indices)
+    if n == 0:
+        return {"lower": None, "median": None, "upper": None}
+    rng = np.random.default_rng(seed)
+    scores: list[float] = []
+    for _ in range(max(1, int(n_repeats))):
+        idx = rng.integers(0, n, size=n)
+        try:
+            value = float(metric_fn(idx))
+        except Exception:  # noqa: BLE001 - 退化重采样不该让整个诊断失败
+            continue
+        if math.isfinite(value):
+            scores.append(value)
+    if not scores:
+        return {"lower": None, "median": None, "upper": None}
+    q = np.quantile(scores, [0.025, 0.5, 0.975])
+    return {
+        "lower": float(q[0]),
+        "median": float(q[1]),
+        "upper": float(q[2]),
+        "n_repeats": int(len(scores)),
+    }
+
+
+def class_codes(y_true: Any, y_pred: Any) -> tuple[np.ndarray, np.ndarray, int]:
+    """把标签编码成 0..K-1，返回 (y_true_codes, y_pred_codes, K)。
+
+    Bootstrap 要跑上千轮，每轮都让 sklearn 重新解析字符串标签会成为瓶颈；
+    编码成整数后一轮重采样只剩一次 bincount。
+    """
+    yt = np.asarray(y_true).ravel()
+    yp = np.asarray(y_pred).ravel()
+    _, inverse = np.unique(np.concatenate([yt, yp]), return_inverse=True)
+    n = int(yt.size)
+    return (
+        inverse[:n].astype(np.int64),
+        inverse[n:].astype(np.int64),
+        int(inverse.max()) + 1,
+    )
+
+
+def macro_f1_from_codes(y_true_codes: np.ndarray, y_pred_codes: np.ndarray, n_classes: int) -> float:
+    """macro F1：一次 bincount 出混淆矩阵，避免每轮重采样都走一遍 sklearn。"""
+    k = max(1, int(n_classes))
+    flat = y_true_codes.astype(np.int64) * k + y_pred_codes.astype(np.int64)
+    cm = np.bincount(flat, minlength=k * k).reshape(k, k)
+    tp = np.diag(cm).astype(float)
+    fp = cm.sum(axis=0).astype(float) - tp
+    fn = cm.sum(axis=1).astype(float) - tp
+    denom = 2 * tp + fp + fn
+    f1 = np.divide(2 * tp, denom, out=np.zeros_like(tp), where=denom > 0)
+    return float(f1.mean())
+
+
+def roc_auc_fast(y_true_binary: np.ndarray, scores: np.ndarray) -> float:
+    """二分类 ROC-AUC（按秩计算，等价于 sklearn 的结果但适合放进重采样循环）。"""
+    pos = y_true_binary.astype(bool)
+    n_pos = int(pos.sum())
+    n_neg = int(pos.size - n_pos)
+    if n_pos == 0 or n_neg == 0:
+        return float("nan")
+    order = np.argsort(scores, kind="mergesort")
+    ss = scores[order]
+    # 同分并列取平均秩（与 sklearn 一致）。分组边界靠「相邻不等」一次算完，
+    # 再用 repeat 铺回原长度 —— Bootstrap 里要跑几百上千轮，逐元素 Python 循环会拖垮训练。
+    starts = np.flatnonzero(np.r_[True, ss[1:] != ss[:-1]])
+    ends = np.r_[starts[1:], ss.size]
+    avg = (starts + 1 + ends) / 2.0  # 位置从 1 开始计
+    ranks = np.empty(scores.size, dtype="float64")
+    ranks[order] = np.repeat(avg, ends - starts)
+    return float((ranks[pos].sum() - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg))
+
+
+# ----------------------------------------------------------------------
+# 概率校准（二分类）：可靠性曲线 + ECE / MCE
+# ----------------------------------------------------------------------
+
+def calibration_analysis(
+    y_true: pl.Series,
+    y_pos_proba: np.ndarray,
+    *,
+    positive_label: Any = 1,
+    n_bins: int = 10,
+) -> dict[str, Any]:
+    """二分类概率校准分析，数据全部来自留出测试集上的真实概率输出。
+
+    - 可靠性曲线：每个概率桶「平均预测概率」vs「实际正类比例」，贴对角线=校准好；
+    - ECE：各桶 |观测比例−平均预测| 按桶样本数加权平均（越小越好）；
+    - MCE：各桶偏差的最大值。
+
+    ``y_pos_proba`` 为正类（类别升序第二列）概率的一维数组。
+    """
+    y_np = np.asarray(y_true.to_numpy())
+    p_np = np.asarray(y_pos_proba, dtype="float64")
+    if y_np.shape[0] != p_np.shape[0]:
+        raise MLEngineException("y_true 与概率长度不一致")
+    finite = np.isfinite(p_np)
+    y_np, p_np = y_np[finite], np.clip(p_np[finite], 0.0, 1.0)
+    if y_np.size == 0:
+        raise MLEngineException("概率全部为非有限值，无法做校准分析")
+
+    n_bins = max(2, min(int(n_bins), 50))
+    # 曲线点交给 sklearn.calibration（pos_label 显式指定，避免标签猜测）
+    frac_pos, mean_pred = sk_calibration_curve(
+        y_np, p_np, n_bins=n_bins, strategy="uniform", pos_label=positive_label
+    )
+    # 逐桶计数（与 calibration_curve 相同的分桶规则），用于 ECE 与前端明细
+    bin_idx = np.clip(np.floor(p_np * n_bins).astype(int), 0, n_bins - 1)
+    nonempty = [b for b in range(n_bins) if int((bin_idx == b).sum()) > 0]
+
+    points: list[dict[str, Any]] = []
+    ece = 0.0
+    mce = 0.0
+    total = int(y_np.size)
+    for b, observed, predicted in zip(nonempty, frac_pos, mean_pred):
+        count = int((bin_idx == b).sum())
+        gap = abs(float(observed) - float(predicted))
+        ece += gap * count
+        mce = max(mce, gap)
+        points.append(
+            {
+                "bin_start": round(b / n_bins, 4),
+                "bin_end": round((b + 1) / n_bins, 4),
+                "mean_predicted": round(float(predicted), 6),
+                "observed_frequency": round(float(observed), 6),
+                "count": count,
+            }
+        )
+    return {
+        "basis": "holdout_test",
+        "positive_class": str(positive_label),
+        "n_bins": n_bins,
+        "total": total,
+        "ece": round(ece / total, 6),
+        "mce": round(mce, 6),
+        "points": points,
+    }
+
+
+# ----------------------------------------------------------------------
+# 学习曲线：同一模型在递增训练规模上重复拟合，测试集固定不变
+# ----------------------------------------------------------------------
+
+def learning_curve_scores(
+    X_train_np: np.ndarray,
+    y_train_np: np.ndarray,
+    X_test_np: np.ndarray,
+    y_test_np: np.ndarray,
+    estimator: Any,
+    *,
+    task: str,
+    fractions: tuple[float, ...] = (0.1, 0.25, 0.5, 0.75, 1.0),
+) -> dict[str, Any]:
+    """学习曲线：在固定留出测试集上，记录模型在不同训练规模下的真实分数。
+
+    每个规模点都用 ``sklearn.base.clone`` 得到**全新未拟合**估计器真实训练一次，
+    分别记录训练子集分数与测试集分数。分类主指标用 accuracy，回归用 r2。
+    """
+    from sklearn.base import clone
+
+    if task == "classification":
+        metric_name = "accuracy"
+
+        def score(y_t: np.ndarray, y_p: np.ndarray) -> float:
+            return float(sk_metrics.accuracy_score(y_t, y_p))
+    elif task == "regression":
+        metric_name = "r2"
+
+        def score(y_t: np.ndarray, y_p: np.ndarray) -> float:
+            return float(sk_metrics.r2_score(y_t, y_p))
+    else:
+        raise MLEngineException(f"任务 {task!r} 不支持学习曲线（仅分类 / 回归）")
+
+    n_total = int(X_train_np.shape[0])
+    sizes: list[int] = []
+    for frac in fractions:
+        n = min(n_total, max(2, int(round(n_total * float(frac)))))
+        if n not in sizes:
+            sizes.append(n)
+
+    points: list[dict[str, Any]] = []
+    # train_test_split 的输出已整体打乱，取前 n 行等价于大小为 n 的随机子集
+    for n in sizes:
+        est = clone(estimator)
+        est.fit(X_train_np[:n], y_train_np[:n])
+        train_score = score(y_train_np[:n], est.predict(X_train_np[:n]))
+        test_score = score(y_test_np, est.predict(X_test_np))
+        points.append(
+            {
+                "fraction": round(n / n_total, 6),
+                "rows": int(n),
+                # 分数刻意保留到 12 位而不是 6 位：100% 那个点的 train_score 与
+                # artifacts.train_metrics 的同一指标是**同一个量**（同参数克隆模型、
+                # 同一份全量训练集、同一套已拟合管道），两者必须能对到 1e-9 以内。
+                # 按 6 位四舍五入时，回归的 r2 这类任意小数会差出 5e-7，
+                # 前端「过拟合诊断」与学习曲线就会给出两个对不上的数。
+                "train_score": round(train_score, 12),
+                "test_score": round(test_score, 12),
+            }
+        )
+    return {
+        "basis": "holdout_test",
+        "metric": metric_name,
+        "points": points,
+        "note": "训练子集取打乱后训练集的前 n 行；每个点都是独立拟合的真实结果。",
+    }

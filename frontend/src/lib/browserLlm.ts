@@ -57,12 +57,6 @@ export function readBrowserLlm(): BrowserLlmConfig {
   return value ?? { ...EMPTY };
 }
 
-/** 是否已配置完整（三项齐全才算可用）。 */
-export function hasBrowserLlm(): boolean {
-  const value = readBrowserLlm();
-  return Boolean(value.base_url && value.model && value.api_key);
-}
-
 /**
  * 连接指纹：base_url + model 的稳定短哈希（不含 API Key）。
  *
@@ -104,14 +98,5 @@ export function writeBrowserLlm(config: BrowserLlmConfig): void {
     localStorage.removeItem(STORAGE_KEY);
   } catch {
     // 某些隐私模式下 Storage 不可用：静默降级，配置仅在当前会话内有效。
-  }
-}
-
-export function clearBrowserLlm(): void {
-  try {
-    sessionStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    /* 忽略 */
   }
 }

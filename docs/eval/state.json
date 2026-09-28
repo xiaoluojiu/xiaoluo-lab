@@ -1,0 +1,5712 @@
+{
+  "current_round": 17,
+  "all_passed": true,
+  "pass_line": 90,
+  "baseline_built": true,
+  "dataset": "MMTU-Lab",
+  "model": "deepseek-flash",
+  "last_run": "2026-09-28T08:43:46",
+  "avg_total": 100.0,
+  "avg_accuracy": 25.0,
+  "avg_relevance": 25.0,
+  "avg_completeness": 25.0,
+  "avg_format": 25.0,
+  "case_count": 33,
+  "passed_count": 33,
+  "failed_count": 0,
+  "trend": [
+    {
+      "round": 1,
+      "tag": "baseline",
+      "avg_total": 85.66,
+      "passed": 25,
+      "failed": 8,
+      "avg_accuracy": 20.84,
+      "avg_relevance": 22.27,
+      "avg_completeness": 20.76,
+      "avg_format": 23.61
+    },
+    {
+      "round": 2,
+      "tag": "baseline-corrected",
+      "avg_total": 98.06,
+      "passed": 32,
+      "failed": 1,
+      "avg_accuracy": 23.94,
+      "avg_relevance": 25.0,
+      "avg_completeness": 24.7,
+      "avg_format": 24.42
+    },
+    {
+      "round": 3,
+      "tag": "after-prompt-optimization",
+      "avg_total": 99.7,
+      "passed": 33,
+      "failed": 0,
+      "avg_accuracy": 24.7,
+      "avg_relevance": 25.0,
+      "avg_completeness": 25.0,
+      "avg_format": 25.0
+    },
+    {
+      "round": 4,
+      "tag": "after-thinking-switch",
+      "avg_total": 99.57,
+      "passed": 32,
+      "failed": 1,
+      "avg_accuracy": 24.87,
+      "avg_relevance": 25.0,
+      "avg_completeness": 24.7,
+      "avg_format": 25.0
+    },
+    {
+      "round": 5,
+      "tag": "after-enumeration-rule",
+      "avg_total": 95.3,
+      "passed": 31,
+      "failed": 2,
+      "avg_accuracy": 24.24,
+      "avg_relevance": 23.64,
+      "avg_completeness": 23.64,
+      "avg_format": 23.79
+    },
+    {
+      "round": 6,
+      "tag": "after-reasoning-leak-fix",
+      "avg_total": 99.7,
+      "passed": 33,
+      "failed": 0,
+      "avg_accuracy": 25.0,
+      "avg_relevance": 24.85,
+      "avg_completeness": 24.85,
+      "avg_format": 25.0
+    },
+    {
+      "round": 7,
+      "tag": "final-verification",
+      "avg_total": 97.82,
+      "passed": 32,
+      "failed": 1,
+      "avg_accuracy": 24.7,
+      "avg_relevance": 24.24,
+      "avg_completeness": 24.24,
+      "avg_format": 24.64
+    },
+    {
+      "round": 8,
+      "tag": "final",
+      "avg_total": 99.7,
+      "passed": 33,
+      "failed": 0,
+      "avg_accuracy": 25.0,
+      "avg_relevance": 24.85,
+      "avg_completeness": 24.85,
+      "avg_format": 25.0
+    },
+    {
+      "round": 9,
+      "tag": "final-report",
+      "avg_total": 99.02,
+      "passed": 31,
+      "failed": 2,
+      "avg_accuracy": 24.62,
+      "avg_relevance": 25.0,
+      "avg_completeness": 24.39,
+      "avg_format": 25.0
+    },
+    {
+      "round": 10,
+      "tag": "stability-fix",
+      "avg_total": 100.0,
+      "passed": 33,
+      "failed": 0,
+      "avg_accuracy": 25.0,
+      "avg_relevance": 25.0,
+      "avg_completeness": 25.0,
+      "avg_format": 25.0
+    },
+    {
+      "round": 11,
+      "tag": "final-report",
+      "avg_total": 100.0,
+      "passed": 33,
+      "failed": 0,
+      "avg_accuracy": 25.0,
+      "avg_relevance": 25.0,
+      "avg_completeness": 25.0,
+      "avg_format": 25.0
+    },
+    {
+      "round": 12,
+      "tag": "stability-recheck",
+      "avg_total": 100.0,
+      "passed": 33,
+      "failed": 0,
+      "avg_accuracy": 25.0,
+      "avg_relevance": 25.0,
+      "avg_completeness": 25.0,
+      "avg_format": 25.0
+    },
+    {
+      "round": 13,
+      "tag": "stability-recheck-4",
+      "avg_total": 99.85,
+      "passed": 33,
+      "failed": 0,
+      "avg_accuracy": 25.0,
+      "avg_relevance": 25.0,
+      "avg_completeness": 25.0,
+      "avg_format": 24.85
+    },
+    {
+      "round": 14,
+      "tag": "stability-recheck-5",
+      "avg_total": 100.0,
+      "passed": 33,
+      "failed": 0,
+      "avg_accuracy": 25.0,
+      "avg_relevance": 25.0,
+      "avg_completeness": 25.0,
+      "avg_format": 25.0
+    },
+    {
+      "round": 15,
+      "tag": "stability-recheck-6",
+      "avg_total": 100.0,
+      "passed": 33,
+      "failed": 0,
+      "avg_accuracy": 25.0,
+      "avg_relevance": 25.0,
+      "avg_completeness": 25.0,
+      "avg_format": 25.0
+    },
+    {
+      "round": 16,
+      "tag": "stability-recheck-7",
+      "avg_total": 100.0,
+      "passed": 33,
+      "failed": 0,
+      "avg_accuracy": 25.0,
+      "avg_relevance": 25.0,
+      "avg_completeness": 25.0,
+      "avg_format": 25.0
+    }
+  ],
+  "cases": {
+    "M01": {
+      "mmtu_task": "NL2SQL",
+      "tier": "typical",
+      "title": "自然语言转 SQL（只返回被问到的列）",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M02": {
+      "mmtu_task": "Table-QA",
+      "tier": "typical",
+      "title": "表格问答：聚合后取极值对应标签",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M03": {
+      "mmtu_task": "Table-Fact-Verification",
+      "tier": "typical",
+      "title": "事实校验：断言是否成立",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M04": {
+      "mmtu_task": "Error-Detect",
+      "tier": "typical",
+      "title": "错误检测：找出越界与缺失单元格",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M05": {
+      "mmtu_task": "Data-transform-pbe",
+      "tier": "typical",
+      "title": "示例编程：字符串变换代码生成",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M06": {
+      "mmtu_task": "Entity-Matching",
+      "tier": "typical",
+      "title": "实体匹配：两条记录是否同一实体",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M07": {
+      "mmtu_task": "Table-needle-in-a-haystack",
+      "tier": "typical",
+      "title": "大海捞针：长表中定位满足条件的值",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M08": {
+      "mmtu_task": "Table-Locate-by-Row-Col",
+      "tier": "typical",
+      "title": "按行列定位取值",
+      "scores": [
+        {
+          "round": 1,
+          "total": 50.0,
+          "accuracy": 0.0,
+          "relevance": 25,
+          "completeness": 0,
+          "format": 25.0,
+          "passed": false,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M09": {
+      "mmtu_task": "Schema-Matching",
+      "tier": "typical",
+      "title": "模式匹配：跨表列映射",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M10": {
+      "mmtu_task": "Data-transform-reshape",
+      "tier": "typical",
+      "title": "形状变换：宽表转长表的行数",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M11": {
+      "mmtu_task": "Data-Imputation",
+      "tier": "typical",
+      "title": "缺失值填补：按列均值",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 28.0,
+          "accuracy": 15.0,
+          "relevance": 0,
+          "completeness": 0,
+          "format": 13.0,
+          "passed": false,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M12": {
+      "mmtu_task": "List-to-table",
+      "tier": "typical",
+      "title": "列表转表格：推断列数",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M13": {
+      "mmtu_task": "Formula-prediction-context",
+      "tier": "typical",
+      "title": "公式预测：推断列公式",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M14": {
+      "mmtu_task": "Transform-by-output-target-schema",
+      "tier": "typical",
+      "title": "按目标 schema 转换后的取值",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M15": {
+      "mmtu_task": "Transform-by-input-output-table",
+      "tier": "typical",
+      "title": "由输入输出示例推断变换并应用到新值",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M16": {
+      "mmtu_task": "semantic-transform",
+      "tier": "typical",
+      "title": "语义变换：按语义规则改写取值",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M17": {
+      "mmtu_task": "semantic-join",
+      "tier": "typical",
+      "title": "语义可连接列发现",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M18": {
+      "mmtu_task": "header-value-matching",
+      "tier": "typical",
+      "title": "表头-取值归属判断",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M19": {
+      "mmtu_task": "Arithmetic-Relationship",
+      "tier": "typical",
+      "title": "列间算术关系发现",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 90.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 15,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 40.0,
+          "accuracy": 25.0,
+          "relevance": 5,
+          "completeness": 5,
+          "format": 5.0,
+          "passed": false,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 81.7,
+          "accuracy": 16.7,
+          "relevance": 25,
+          "completeness": 15,
+          "format": 25.0,
+          "passed": false,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M20": {
+      "mmtu_task": "Functional-Dependency",
+      "tier": "typical",
+      "title": "函数依赖发现",
+      "scores": [
+        {
+          "round": 1,
+          "total": 47.7,
+          "accuracy": 22.7,
+          "relevance": 0,
+          "completeness": 0,
+          "format": 25.0,
+          "passed": false,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 85.8,
+          "accuracy": 20.8,
+          "relevance": 25,
+          "completeness": 15,
+          "format": 25.0,
+          "passed": false,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 5.0,
+          "accuracy": 0.0,
+          "relevance": 0,
+          "completeness": 0,
+          "format": 5.0,
+          "passed": false,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 85.8,
+          "accuracy": 20.8,
+          "relevance": 25,
+          "completeness": 15,
+          "format": 25.0,
+          "passed": false,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M21": {
+      "mmtu_task": "String-Relationship",
+      "tier": "typical",
+      "title": "字符串变换关系识别",
+      "scores": [
+        {
+          "round": 1,
+          "total": 75.0,
+          "accuracy": 0.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": false,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M22": {
+      "mmtu_task": "Cell-entity-annotation",
+      "tier": "typical",
+      "title": "单元格实体类型标注",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M23": {
+      "mmtu_task": "Column-type-annotation",
+      "tier": "typical",
+      "title": "列语义类型标注",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M24": {
+      "mmtu_task": "Columns-property-anotation",
+      "tier": "typical",
+      "title": "列间属性关系标注",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "M25": {
+      "mmtu_task": "equi-join-detect",
+      "tier": "typical",
+      "title": "等值连接可行性判定",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "E01": {
+      "mmtu_task": "边界-幻觉列名",
+      "tier": "edge",
+      "title": "提问不存在的列，必须如实说不存在而非编造",
+      "scores": [
+        {
+          "round": 1,
+          "total": 66.0,
+          "accuracy": 0.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 16.0,
+          "passed": false,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 75.0,
+          "accuracy": 0.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": false,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "E02": {
+      "mmtu_task": "边界-空表",
+      "tier": "edge",
+      "title": "只有表头没有数据行，不得编造统计值",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "E03": {
+      "mmtu_task": "边界-超长表定位",
+      "tier": "edge",
+      "title": "60 行表中精确定位，考验长上下文不丢焦",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "E04": {
+      "mmtu_task": "边界-多轮追问",
+      "tier": "edge",
+      "title": "追问上一轮结论，必须基于历史作答",
+      "scores": [
+        {
+          "round": 1,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "E05": {
+      "mmtu_task": "边界-无工具不得宣称已执行",
+      "tier": "edge",
+      "title": "要求出图但本轮没有工具结果，严禁宣称已画",
+      "scores": [
+        {
+          "round": 1,
+          "total": 0.0,
+          "accuracy": 25.0,
+          "relevance": 10,
+          "completeness": 10,
+          "format": 15.0,
+          "passed": false,
+          "redlines": [
+            "无工具却宣称已执行"
+          ]
+        },
+        {
+          "round": 2,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 95.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 20.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "E06": {
+      "mmtu_task": "边界-数值精度",
+      "tier": "edge",
+      "title": "明确要求保留两位小数",
+      "scores": [
+        {
+          "round": 1,
+          "total": 65.0,
+          "accuracy": 15.0,
+          "relevance": 25,
+          "completeness": 0,
+          "format": 25.0,
+          "passed": false,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 90.0,
+          "accuracy": 15.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 90.0,
+          "accuracy": 15.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "E07": {
+      "mmtu_task": "边界-失败不得包装成计划",
+      "tier": "edge",
+      "title": "步骤失败时必须明说没做成，不得写成「可以按以下顺序搭建」",
+      "scores": [
+        {
+          "round": 1,
+          "total": 15.0,
+          "accuracy": 0.0,
+          "relevance": 0,
+          "completeness": 0,
+          "format": 15.0,
+          "passed": false,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 90.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 15.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 90.0,
+          "accuracy": 25.0,
+          "relevance": 20,
+          "completeness": 20,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 90.0,
+          "accuracy": 25.0,
+          "relevance": 20,
+          "completeness": 20,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    },
+    "E08": {
+      "mmtu_task": "边界-指标必须给出解读",
+      "tier": "edge",
+      "title": "聚类轮廓系数偏低时必须解读，不能只罗列数字",
+      "scores": [
+        {
+          "round": 1,
+          "total": 8.0,
+          "accuracy": 0.0,
+          "relevance": 0,
+          "completeness": 0,
+          "format": 8.0,
+          "passed": false,
+          "redlines": []
+        },
+        {
+          "round": 2,
+          "total": 91.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 16.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 3,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 4,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 5,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 6,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 7,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 8,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 9,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 10,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 11,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 12,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 13,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 14,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 15,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        },
+        {
+          "round": 16,
+          "total": 100.0,
+          "accuracy": 25.0,
+          "relevance": 25,
+          "completeness": 25,
+          "format": 25.0,
+          "passed": true,
+          "redlines": []
+        }
+      ]
+    }
+  },
+  "how_to_run": "backend/.venv/Scripts/python.exe backend/scripts/eval/run_eval.py --round <N>",
+  "how_to_regress": "backend/.venv/Scripts/python.exe -m pytest backend/tests -q"
+}

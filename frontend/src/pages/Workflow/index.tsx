@@ -1,16 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { WorkflowStudio } from "../../features/workflow/WorkflowStudio";
 import { WorkflowRunPanel } from "../../features/workflow/WorkflowRunPanel";
 import { WorkflowHealthPanel } from "../../features/workflow/WorkflowHealthPanel";
-import { metricsFromOutputs } from "../../features/workflow/nodeStatus";
+import { metricsFromOutputs, workflowStages } from "../../features/workflow/nodeStatus";
 import { generateSuggestedWorkflow, WORKFLOW_TEMPLATES, applyTemplate } from "../../features/workflow/WorkflowCanvas";
 import { DatasetSelector } from "../../features/merge/DatasetSelector";
 import { getSchema } from "../../api/datasets";
-import { cancelWorkflowRun, cloneWorkflow, createWorkflow, deleteWorkflow, getWorkflow, listWorkflows, runWorkflow, updateWorkflow } from "../../api/workflow";
+import { extractRunErrors, runPreflight } from "../../features/workflow/configView";
+import { cancelWorkflowRun, cloneWorkflow, createWorkflow, deleteWorkflow, getWorkflow, listWorkflows, runWorkflow, updateWorkflow, WORKFLOW_RUN_ESTIMATE } from "../../api/workflow";
 import type { WorkflowEdge, WorkflowNode, WorkflowRun, WorkflowSummary } from "../../types/workflow";
 import type { SchemaColumn } from "../../types/dataset";
 import { PageHeader } from "../../components/PageHeader";
+import { TaskProgress } from "../../components/TaskProgress";
 import "./workflow.css";
 
 export default function WorkflowPage() {
@@ -29,6 +31,11 @@ export default function WorkflowPage() {
   const [showLibrary, setShowLibrary] = useState(false);
   const [bottomTab, setBottomTab] = useState<"execution" | "health">("execution");
   const [templateId, setTemplateId] = useState<string>("");
+  // 运行任务的分阶段反馈：`POST /workflows/{id}/run` 是同步接口（节点全跑完才返回），
+  // 所以进度只能走不确定进度；但「在跑 / 成功 / 失败 + 原因」必须显式呈现。
+  const [runStatus, setRunStatus] = useState<"idle" | "running" | "success" | "error">("idle");
+  const [runError, setRunError] = useState<string | null>(null);
+  const bottomPanelRef = useRef<HTMLDivElement>(null);
 
   async function refresh() { try { setList(await listWorkflows()); } catch (e) { setError(e instanceof Error ? e.message : "加载工作流失败"); } }
   useEffect(() => { void refresh(); }, []);
@@ -37,7 +44,26 @@ export default function WorkflowPage() {
   // 编辑动作统一交给沉浸式编辑器，列表页只保留「浏览 / 快速预览」职责。
   function openEditor(id: number | "new") { setShowLibrary(false); navigate(`/workflow/editor/${id}`); }
   async function save() { if (!name.trim()) { setError("请填写工作流名称"); return; } setBusy(true); try { if (currentId != null) await updateWorkflow(currentId, { name: name.trim(), nodes, edges }); else { const w = await createWorkflow({ name: name.trim(), nodes, edges }); setCurrentId(w.id ?? null); } await refresh(); } catch (e) { setError(e instanceof Error ? e.message : "保存失败"); } finally { setBusy(false); } }
-  async function doRun() { if (currentId == null) return; setBusy(true); setError(null); try { setRun(await runWorkflow(currentId)); setBottomTab("execution"); } catch (e) { setError(e instanceof Error ? e.message : "运行失败"); } finally { setBusy(false); } }
+  async function doRun() {
+    const blocker = runPreflight(name, nodes);
+    if (blocker) {
+      setError(blocker.reason);
+      if (blocker.focusNodeId) setSelectedNodeId(blocker.focusNodeId);
+      return;
+    }
+    if (currentId == null) return;
+    setBusy(true); setError(null); setRunError(null); setRunStatus("running");
+    try {
+      setRun(await runWorkflow(currentId));
+      setBottomTab("execution");
+      setRunStatus("success");
+    } catch (e) {
+      setRunStatus("error");
+      setRunError(extractRunErrors(e).map((item) => item.message).join("；"));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function cancelRun() { if (!run?.run_id) return; try { await cancelWorkflowRun(run.run_id); setRun((current) => current ? { ...current, status: "cancelled" } : current); } catch (e) { setError(e instanceof Error ? e.message : "取消运行失败"); } }
   async function remove(id: number) { if (!confirm(`确认删除工作流 #${id}？`)) return; try { await deleteWorkflow(id); if (currentId === id) newWorkflow(); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : "删除失败"); } }
   async function clone(id: number) { try { await cloneWorkflow(id); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : "克隆失败"); } }
@@ -91,6 +117,20 @@ export default function WorkflowPage() {
         <div className="workflow-title-area"><input value={name} onChange={(event) => setName(event.target.value)} placeholder="未命名工作流" aria-label="工作流名称" /><span className={`badge ${currentId != null ? "success" : ""}`}>{currentId != null ? `#${currentId} 已保存` : "草稿"}</span></div>
         <div className="workflow-studio-actions"><button className="btn" type="button" disabled={busy} onClick={() => void save()}>保存</button><button className="btn primary" type="button" disabled={busy || currentId == null} onClick={() => void doRun()}>▶ 运行</button></div>
       </div>
+      {/* 阶段清单直接取画布上的节点顺序，进度条说的阶段名与用户搭的流程完全一致 */}
+      {runStatus !== "idle" && (
+        <TaskProgress
+          className="workflow-run-task"
+          stages={workflowStages(nodes)}
+          status={runStatus}
+          indeterminate={runStatus === "running"}
+          title="流程运行中"
+          estimate={WORKFLOW_RUN_ESTIMATE}
+          error={runError}
+          onViewResult={() => { setBottomTab("execution"); bottomPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
+          onRetry={() => void doRun()}
+        />
+      )}
       <div className="workflow-suggest-strip">
         <div className="workflow-suggest-copy"><strong>快速起步</strong><span>选一个预置模板快速搭出流程，或直接生成智能建议</span></div>
         <select className="workflow-template-select" value={templateId} onChange={(event) => setTemplateId(event.target.value)} aria-label="选择预置模板">
@@ -102,7 +142,7 @@ export default function WorkflowPage() {
         {columns.length > 0 && <span className="muted">Schema {columns.length} 字段</span>}
       </div>
       <WorkflowStudio nodes={nodes} edges={edges} nodeStates={nodeStates} selectedNodeId={selectedNodeId} onSelectNode={setSelectedNodeId} onChange={(nextNodes, nextEdges) => { setNodes(nextNodes); setEdges(nextEdges); }} columns={columns} nodeMetrics={nodeMetrics} />
-      <div className="workflow-bottom-panel">
+      <div className="workflow-bottom-panel" ref={bottomPanelRef}>
         <div className="workflow-bottom-tabs"><button className={bottomTab === "execution" ? "active" : ""} type="button" onClick={() => setBottomTab("execution")}>执行 {run ? `· ${run.status}` : ""}</button><button className={bottomTab === "health" ? "active" : ""} type="button" onClick={() => setBottomTab("health")}>流程检查</button></div>
         <div className="workflow-bottom-content">{bottomTab === "execution" ? <WorkflowRunPanel run={run} onCancel={() => void cancelRun()} onSelectNode={setSelectedNodeId} /> : <WorkflowHealthPanel nodes={nodes} edges={edges} columns={columns} run={run} onSelectNode={setSelectedNodeId} />}</div>
       </div>

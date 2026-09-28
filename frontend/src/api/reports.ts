@@ -47,3 +47,21 @@ export function deleteSavedReport(key: string) {
     client.delete("/reports/saved", { params: { key } }),
   );
 }
+
+/** 批量删除的回执：`failed` 逐条给出没删掉的原因（不存在 / 非法 key / IO 失败）。 */
+export interface BatchDeleteResult {
+  deleted: boolean;
+  count: number;
+  deleted_keys: string[];
+  failed: { key: string; error: string }[];
+}
+
+/**
+ * 批量删除已保存报告。「删除选中」与「一键删除全部」共用：
+ * 后者把列表里所有 key 传进来即可，后端不做二次区分。
+ */
+export function deleteSavedReports(keys: string[]) {
+  return unwrap<BatchDeleteResult>(
+    client.post("/reports/saved/batch-delete", { keys }),
+  );
+}

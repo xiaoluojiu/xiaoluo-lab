@@ -1,7 +1,8 @@
 # AI 全链条接入 · 实验设计与复现说明
 
 > 配套脚本：`agent_chain_benchmark.py`
-> 结果产物：`results/agent_chain_<时间戳>.json`（原始逐次）+ `.md`（可直接贴论文的汇总表）
+> 结果产物：脚本运行时写入 `results/agent_chain_<时间戳>.json`（原始逐次）+ `.md`（可直接贴论文的汇总表）；
+> 2026-09-21 那批历史产物已归档到 `docs/experiments/agent-chain-benchmark/`（`results/` 现为运行期临时目录）。
 
 ## 1. 这套实验要回答的问题
 

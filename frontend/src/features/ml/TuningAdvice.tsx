@@ -1,21 +1,40 @@
-import { useMemo } from "react";
-import type { MlCatalog, MlParamSpec, MlTuningAdvice, MlTuningRule, TrainArtifacts } from "../../types/ml";
+import { useMemo, useState } from "react";
+import type {
+  MlCatalog,
+  MlHpoResult,
+  MlParamSpec,
+  MlSignalRules,
+  MlTuningAdvice,
+  MlTuningRule,
+  TrainArtifacts,
+} from "../../types/ml";
 import { InfoHint } from "../../components/InfoHint";
+import { optimizeExperiment } from "../../api/experiments";
 
 const num = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) ? v : null;
+
+/** 取一条阈值：后端没给（旧版本 catalog）时回落到括号里的默认值。 */
+function rule(rules: MlSignalRules | undefined, signal: string, key: string, fallback: number): number {
+  const v = rules?.[signal]?.[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+}
 
 /**
  * 判定本次训练命中了哪些「调参信号」。
  *
  * 判定只用后端训练时真实落库的产物（测试集指标 / 训练集指标 / 类别分布 /
  * 特征规模 / 耗时），不做任何前端估算——否则建议会建立在猜测上。
+ *
+ * `rules` 来自 `GET /ml/catalog` 的 `signal_rules`（后端 `metadata.SIGNAL_RULES`）：
+ * 阈值属于口径而不是样式，放在前端等于给自己埋一份迟早会分家的副本。
  */
 export function detectSignals(
   task: string,
   metrics: Record<string, number | string>,
   artifacts: TrainArtifacts | null,
   runtime: number | null | undefined,
+  rules?: MlSignalRules,
 ): Set<string> {
   const out = new Set<string>();
   const train = (artifacts?.train_metrics ?? null) as Record<string, number> | null;
@@ -30,30 +49,56 @@ export function detectSignals(
     ].filter((g): g is number => g !== null);
     const gap = gaps.length ? Math.max(...gaps) : null;
 
-    if (gap !== null && gap > 0.1) out.add("overfit");
-    if (accTest !== null && accTest < 0.7 && (gap === null || gap <= 0.05)) out.add("underfit");
+    const overfitGap = rule(rules, "overfit", "classification_metric_gap_above", 0.1);
+    const underfitGap = rule(rules, "underfit", "classification_metric_gap_at_most", 0.05);
+    if (gap !== null && gap > overfitGap) out.add("overfit");
+    if (
+      accTest !== null &&
+      accTest < rule(rules, "underfit", "classification_accuracy_below", 0.7) &&
+      (gap === null || gap <= underfitGap)
+    ) {
+      out.add("underfit");
+    }
     const auc = num(metrics.roc_auc);
-    if (auc !== null && auc <= 0.55) out.add("no_signal");
+    if (auc !== null && auc <= rule(rules, "no_signal", "classification_roc_auc_at_most", 0.55)) {
+      out.add("no_signal");
+    }
 
     const dist = artifacts?.class_distribution;
-    if (dist && dist.majority_ratio >= 0.7) out.add("imbalanced");
+    if (dist && dist.majority_ratio >= rule(rules, "imbalanced", "classification_majority_ratio_at_least", 0.7)) {
+      out.add("imbalanced");
+    }
   } else if (task === "regression") {
     const r2Test = num(metrics.r2);
     const gap = train?.r2 != null && r2Test != null ? train.r2 - r2Test : null;
-    if (gap !== null && gap > 0.15) out.add("overfit");
-    if (r2Test !== null && r2Test < 0.3 && (gap === null || gap <= 0.1)) out.add("underfit");
-    if (r2Test !== null && r2Test <= 0) out.add("no_signal");
+    if (gap !== null && gap > rule(rules, "overfit", "regression_r2_gap_above", 0.15)) {
+      out.add("overfit");
+    }
+    if (
+      r2Test !== null &&
+      r2Test < rule(rules, "underfit", "regression_r2_below", 0.3) &&
+      (gap === null || gap <= rule(rules, "underfit", "regression_r2_gap_at_most", 0.1))
+    ) {
+      out.add("underfit");
+    }
+    if (r2Test !== null && r2Test <= rule(rules, "no_signal", "regression_r2_at_most", 0)) {
+      out.add("no_signal");
+    }
   } else if (task === "clustering") {
     const sil = num(metrics.silhouette);
     const k = num(metrics.cluster_count);
-    if ((sil !== null && sil < 0.25) || k === 1) out.add("cluster_weak");
-    if (sil !== null && sil < 0.1) out.add("no_signal");
+    const weakSil = rule(rules, "cluster_weak", "clustering_silhouette_below", 0.25);
+    const weakK = rule(rules, "cluster_weak", "clustering_cluster_count_equals", 1);
+    if ((sil !== null && sil < weakSil) || k === weakK) out.add("cluster_weak");
+    if (sil !== null && sil < rule(rules, "no_signal", "clustering_silhouette_below", 0.1)) {
+      out.add("no_signal");
+    }
   }
 
   const nFeatures = artifacts?.model_features?.length ?? 0;
   const nRows = artifacts?.train_rows ?? 0;
   if (
-    (runtime != null && runtime > 30) ||
+    (runtime != null && runtime > rule(rules, "costly", "runtime_seconds_above", 30)) ||
     (nFeatures > 0 && nRows > 0 && nFeatures > nRows)
   ) {
     out.add("costly");
@@ -102,6 +147,8 @@ interface Props {
   artifacts: TrainArtifacts | null;
   metrics: Record<string, number | string>;
   runtime?: number | null;
+  /** 发起自动搜索所需的实验 id（训练结果里的 run 自带）。 */
+  experimentId?: number | null;
   onApply: (patch: Record<string, unknown>) => void;
 }
 
@@ -118,6 +165,7 @@ export function TuningAdvice({
   artifacts,
   metrics,
   runtime = null,
+  experimentId = null,
   onApply,
 }: Props) {
   const task = artifacts?.task ?? "";
@@ -135,8 +183,8 @@ export function TuningAdvice({
   }, [specs]);
 
   const hits = useMemo(
-    () => detectSignals(task, metrics, artifacts, runtime),
-    [task, metrics, artifacts, runtime],
+    () => detectSignals(task, metrics, artifacts, runtime, catalog?.signal_rules),
+    [task, metrics, artifacts, runtime, catalog],
   );
 
   const matched = useMemo(() => {
@@ -153,7 +201,29 @@ export function TuningAdvice({
       .filter((r) => r.items.length > 0);
   }, [catalog, hits, specOf]);
 
-  if (!matched.length) return null;
+  // 自动超参搜索：能不能搜取决于后端有没有给这个模型内置搜索空间
+  // （单一事实源在 cv.SEARCH_SPACES，经 /ml/catalog 的 search_spaces 透出）。
+  const searchParams = catalog?.search_spaces?.[model] ?? null;
+  const canSearch = !!experimentId && !!searchParams;
+  const [searching, setSearching] = useState(false);
+  const [hpo, setHpo] = useState<MlHpoResult | null>(null);
+  const [hpoError, setHpoError] = useState<string | null>(null);
+
+  async function runSearch() {
+    if (!experimentId || searching) return;
+    setSearching(true);
+    setHpoError(null);
+    try {
+      setHpo(await optimizeExperiment(experimentId, 20));
+    } catch (e) {
+      setHpo(null);
+      setHpoError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  if (!matched.length && !canSearch) return null;
 
   function targetOf(item: { advice: MlTuningAdvice; spec: MlParamSpec }): unknown {
     const current = trainedParams[item.spec.name] !== undefined
@@ -165,6 +235,71 @@ export function TuningAdvice({
   return (
     <div className="ml-advice">
       <h4 style={{ margin: "0 0 var(--space-2)" }}>调参建议</h4>
+      {canSearch && (
+        <div className="ml-advice-block">
+          <div className="ml-advice-head">
+            <span className="ml-advice-title">自动超参搜索</span>
+            <button
+              type="button"
+              className="btn"
+              style={{ padding: "3px 10px" }}
+              disabled={searching}
+              onClick={() => void runSearch()}
+            >
+              {searching ? "搜索中…" : "🔍 自动搜索超参数（20 组 × 5 折 CV）"}
+            </button>
+          </div>
+          <p className="ml-advice-detect">
+            搜索参数：{searchParams?.join("、")}；每组候选都在 5 折 CV 上评估，
+            预处理在每折训练集内拟合（不是先在全量上拟合再切分）。
+            搜索结果不会自动写入实验配置 —— 要不要采纳由你决定。
+          </p>
+          {hpoError && <p className="ml-param-error">搜索失败：{hpoError}</p>}
+          {hpo && (
+            <div className="ml-hpo">
+              <p className="muted" style={{ margin: "4px 0" }}>
+                最佳 {hpo.metric} = <b>{hpo.best_score.toFixed(4)}</b>
+                （{hpo.n_iter} 组 × {hpo.folds} 折，{hpo.note ?? "折内拟合"}）
+              </p>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>{hpo.metric}（mean ± std）</th>
+                    <th>参数</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {hpo.top_results.map((r) => (
+                    <tr key={r.rank}>
+                      <td>{r.rank}</td>
+                      <td>
+                        {r.mean_score.toFixed(4)} ± {r.std_score.toFixed(4)}
+                      </td>
+                      <td>
+                        <code>{JSON.stringify(r.params)}</code>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <button
+                type="button"
+                className="btn primary"
+                style={{ padding: "3px 10px" }}
+                onClick={() => onApply(hpo.best_params)}
+              >
+                应用最佳参数
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {!canSearch && (
+        <p className="ml-advice-detect">
+          当前模型暂无内置搜索空间，自动搜索不可用 —— 可按下面的建议逐项调整。
+        </p>
+      )}
       {matched.map(({ rule, items }) => (
         <div className="ml-advice-block" key={rule.id}>
           <div className="ml-advice-head">

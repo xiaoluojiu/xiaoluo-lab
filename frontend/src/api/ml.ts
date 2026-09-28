@@ -1,10 +1,10 @@
-/** ML / Experiments API（Prompt 200-202 对应前端）。 */
+/** ML API（Prompt 200-202 对应前端）。
+ *
+ * 实验相关的接口（列表 / 详情 / 运行 / 对比 / 删除）已迁到 `api/experiments.ts`，
+ * 文件末尾保留同名 re-export 以兼容既有导入。
+ */
 import { client, unwrap } from "./client";
-import type { Pagination } from "../types/common";
 import type {
-  CompareResult,
-  Experiment,
-  ExperimentRun,
   ExplainResult,
   MlCatalog,
   MlModel,
@@ -37,12 +37,28 @@ export interface TrainBody {
   seed?: number | null;
   /** 测试集比例，缺省 0.2（后端默认）。 */
   test_size?: number | null;
+  /** 参与训练的数据行数上限；与 train_fraction 互斥，均缺省走后端默认上限。 */
+  max_rows?: number | null;
+  /** 参与训练的数据占比（0~1，1 为全量）；与 max_rows 互斥。 */
+  train_fraction?: number | null;
+  /** 是否生成学习曲线（额外拟合，默认 false）。 */
+  enable_learning_curve?: boolean;
+  /** 是否做 5 折交叉验证（每折重新拟合，默认 false）。 */
+  enable_cv?: boolean;
   description?: string;
 }
 
 export function trainModel(body: TrainBody) {
   return unwrap<TrainResult>(client.post("/ml/train", body));
 }
+
+/**
+ * 训练刚开始、还没收到第一条 progress 事件时的预计耗时文案。
+ *
+ * 给它是为了填住「点了开始训练 → 进度条还没有任何阶段信息」这段空窗：
+ * 用户至少知道「在跑、大概要半分钟」，而不是怀疑按钮没生效。
+ */
+export const ML_TRAIN_ESTIMATE = "模型训练中，预计需要 30 秒";
 
 /**
  * 流式训练：`POST /ml/train/stream` 以 SSE 边训练边回推进度。
@@ -162,48 +178,73 @@ export function predictWithRun(body: {
   return unwrap<PredictionResult>(client.post("/ml/predict", body));
 }
 
+/** 全量推理结果的导出格式。 */
+export type PredictExportFormat = "csv" | "parquet";
+
+/**
+ * 导出一次推理的**全量**结果（原始列 + prediction + 概率列），返回文件 Blob。
+ *
+ * 与 `predictWithRun` 的区别：后者只回前 limit 行给界面预览，这里把每一行都写进文件。
+ * 阈值会一并传给后端，保证导出结果与界面上看到的口径完全一致。
+ */
+export async function downloadPredictions(
+  runId: number,
+  params: {
+    dataset_id?: number | null;
+    version?: number | null;
+    threshold?: number | null;
+    format?: PredictExportFormat;
+  } = {},
+): Promise<Blob> {
+  const resp = await client.get(`/experiments/runs/${runId}/predict-export`, {
+    params: {
+      dataset_id: params.dataset_id ?? undefined,
+      version: params.version ?? undefined,
+      threshold: params.threshold ?? undefined,
+      format: params.format ?? "csv",
+    },
+    responseType: "blob",
+  });
+  return resp.data as Blob;
+}
+
 /** 模型解释：特征重要性（优先复用训练时落库的结果）。 */
 export function explainRun(runId: number) {
   return unwrap<ExplainResult>(client.get(`/ml/explain/${runId}`));
 }
 
-export function listExperiments(page = 1, pageSize = 20, withMetrics = false) {
-  return unwrap<Pagination<Experiment>>(
-    client.get("/experiments", {
-      params: { page, page_size: pageSize, ...(withMetrics ? { with_metrics: true } : {}) },
-    }),
-  );
+/** 一键导出单次运行的详细报告，返回文件 Blob。 */
+export type RunReportFormat = "html" | "markdown" | "pdf";
+
+export async function exportRunReport(
+  runId: number,
+  format: RunReportFormat = "html",
+): Promise<Blob> {
+  const resp = await client.get(`/experiments/runs/${runId}/report`, {
+    params: { format },
+    responseType: "blob",
+  });
+  return resp.data as Blob;
 }
 
-export function getExperiment(id: number) {
-  return unwrap<Experiment>(client.get(`/experiments/${id}`));
-}
-
-export function getExperimentRuns(id: number) {
-  return unwrap<ExperimentRun[]>(client.get(`/experiments/${id}/runs`));
-}
-
-export function runExperiment(id: number) {
-  return unwrap<ExperimentRun>(client.post(`/experiments/${id}/run`));
-}
-
-export function compareRuns(runIds: number[]) {
-  return unwrap<CompareResult>(client.post("/experiments/compare", { run_ids: runIds }));
-}
-
-/** 实验级对比：每个实验取最近一次成功运行，比较逻辑仍走后端 ExperimentComparator。 */
-export function compareExperiments(experimentIds: number[]) {
-  return unwrap<CompareResult>(
-    client.post("/experiments/compare", { experiment_ids: experimentIds }),
-  );
-}
-
-export function deleteExperiment(id: number) {
-  return unwrap<{ deleted: boolean; experiment_id: number }>(
-    client.delete(`/experiments/${id}`),
-  );
-}
-
-export function deleteAllExperiments() {
-  return unwrap<{ deleted: boolean; count: number }>(client.delete("/experiments"));
-}
+/**
+ * 实验相关接口（列表 / 详情 / 运行 / 对比 / 删除）已迁到 `api/experiments.ts`。
+ *
+ * 这里保留同名 re-export，是为了让既有调用方（`pages/ML` 的实验历史区）**零改动**；
+ * 新代码请直接从 `api/experiments` 导入。
+ */
+export {
+  listExperiments,
+  getExperiment,
+  getExperimentRuns,
+  runExperiment,
+  compareRuns,
+  compareExperiments,
+  deleteExperiment,
+  deleteAllExperiments,
+  deleteExperiments,
+  deleteRun,
+  deleteRuns,
+  EXPERIMENT_RUN_STAGES,
+  EXPERIMENT_RUN_ESTIMATE,
+} from "./experiments";

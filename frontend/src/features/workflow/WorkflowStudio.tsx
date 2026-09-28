@@ -366,7 +366,7 @@ export function WorkflowStudio({
           aria-label="搜索节点"
         />
         <div className="workflow-tabs">
-          {["全部", "数据", "机器学习", "AI"].map((item) => (
+          {["全部", "数据", "机器学习", "AI", "报告"].map((item) => (
             <button key={item} type="button" className={group === item ? "active" : ""} onClick={() => setGroup(item)}>
               {item}
             </button>
@@ -619,31 +619,10 @@ export function WorkflowStudio({
                 specs={selectedSpec.params}
                 config={configWithoutUi}
                 columns={columns}
+                datasetOptions={datasetOptions}
                 onChange={updateSelectedConfig}
               />
             </section>
-
-            {(datasetOptions.length > 0 && selected.type === "data.load") && (
-              <section>
-                <label>数据集</label>
-                <select
-                  className="wf-param-input"
-                  value={String(flattenConfig(selected.config).dataset_id ?? "")}
-                  onChange={(event) => {
-                    const raw = event.target.value;
-                    updateSelectedConfig({
-                      ...flattenConfig(selected.config),
-                      dataset_id: raw === "" ? undefined : Number(raw),
-                    });
-                  }}
-                >
-                  <option value="">（未选择）</option>
-                  {datasetOptions.map((option) => (
-                    <option key={option.id} value={option.id}>#{option.id} {option.name}</option>
-                  ))}
-                </select>
-              </section>
-            )}
 
             <section>
               <label>数据上下文</label>

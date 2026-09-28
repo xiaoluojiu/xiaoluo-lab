@@ -1,7 +1,7 @@
 # 机器学习模块使用与教学指南
 
 > 面向两类读者：
-> - **新手**：照第 3 节逐步复现，能跑出第一条结果并读懂它；
+> - **新手**：用「一键流程」跑出第一条结果并读懂它；
 > - **进阶用户**：查第 4~7 节的参数表按需调参，知道"改这个会发生什么"。
 >
 > **口径来源**：第 4~7 节的全部参数表由 `backend/app/ml_engine/metadata.py` 派生，
@@ -15,9 +15,10 @@
 ```
 backend/app/
 ├── ml_engine/                     # 算法内核：不依赖 FastAPI，可被任意层调用
-│   ├── registry.py                # MODEL_REGISTRY：11 个模型（4 分类 / 4 回归 / 2 聚类 / 1 降维）
+│   ├── registry.py                # MODEL_REGISTRY：12 个模型（5 分类 / 4 回归 / 2 聚类 / 1 降维）
 │   ├── base.py                    # ModelAdapter 抽象：fit / predict / predict_proba / summary
-│   ├── classification.py          # 4 个分类模型
+│   │                              #   + 产物 HMAC 信封 to_signed_bytes / from_signed_bytes
+│   ├── classification.py          # 5 个分类模型（含直方图梯度提升）
 │   ├── regression.py              # 4 个回归模型
 │   ├── clustering.py              # KMeans / DBSCAN
 │   ├── dimensionality.py          # PCA（降维与可视化，不预测标签）
@@ -27,17 +28,16 @@ backend/app/
 │   ├── exceptions.py              # MLEngineException
 │   │
 │   ├── metadata.py                # 教学元数据单一事实源（流程/参数/指标 + 调参手册 + 组合约束）
-│   └── step_runner.py    ★ 新增   # 单步执行器：load / preprocess / train / predict 可独立跑
 │
 ├── experiments/service.py
-│   ├── ExperimentService.run()     # 「一键全流程」：切分→预处理→训练→评估→持久化
-│   └── StepRunner（step_runner）   # 「分步可控」：与上者共用同一套 ml_engine 组件
+│   └── ExperimentService.run()     # 「一键全流程」：切分→预处理→训练→评估→持久化
 │
 ├── api/v1/experiments.py
 │   ├── GET  /ml/models             # 模型目录
 │   ├── GET  /ml/catalog  ★ 新增   # 教学目录（流程步骤/参数/指标，供前端与学习中心渲染）
 │   ├── POST /ml/train              # 训练
-│   ├── POST /ml/predict            # 推理
+│   ├── POST /ml/predict            # 推理（预览前 N 行）
+│   ├── GET  /experiments/runs/{id}/predict-export  # 全量推理结果导出（csv / parquet）
 │   └── POST /ml/explain /compare    # 解释 / 对比
 │
 └── tools/ml_tools.py               # Agent 工具（8 个）
@@ -45,21 +45,6 @@ backend/app/
     ├── ml.evaluate      ml.compare   ml.explain
     └── ml.explain_config  ★ 新增   # 教学问答：这个参数是干什么的
 ```
-
-### 1.1 两条使用路径的关系
-
-模块刻意保留**两条入口**，共用同一套算法内核，不做第二份实现：
-
-| | 一键全流程 | 分步执行 |
-|---|---|---|
-| 入口 | `ExperimentService.run()` / `POST /ml/train` | `app/ml_engine/step_runner.py` 四个函数 |
-| 适合 | 已经知道要怎么做，直接要结果 | 教学演示、排障、只想验证某一步 |
-| 产物 | 落盘 `model.pkl` + `pipeline.pkl`，可推理/对比 | 只返回中间结果，不落盘 |
-| 中间可见性 | `run.artifacts` 一次性给全 | 每步单独给，可逐步检查 |
-
-**关键设计**：两条路径的时间/切分/预处理/评估逻辑完全一致
-（`step_runner` 直接调用 `PreprocessingPipeline`、`MODEL_REGISTRY`、`evaluation`），
-所以分步验证过的结论对全流程同样成立。
 
 ---
 
@@ -76,7 +61,7 @@ backend/app/
 | ⑤ | 模型训练 | 模型名 + 参数 | estimator | `artifacts.model_summary` |
 | ⑥ | 评估 | 测试集 | 指标 | `metrics` + `confusion_matrix` / `per_class` / `residual_stats` |
 | ⑦ | 产物持久化 | model / pipeline | pkl 文件 | `artifacts.model_key` / `pipeline_key` |
-| ⑧ | 推理 | `run_id` + 新数据 | 预测 + 概率 | 返回 `pipeline_applied` / `runtime` |
+| ⑧ | 推理 | `run_id` + 新数据 | 预测 + 概率 | 返回 `pipeline_applied` / `runtime`；导出走 `predict-export`（csv / parquet 全量） |
 | ⑨ | 解释 | `run_id` | 特征重要性 | 返回 `source`（复用产物 / 现算）+ `method` |
 
 **④ 的核心约定（防数据泄漏）**：管道只在训练集 `fit_transform`，测试集只 `transform`。
@@ -84,179 +69,9 @@ backend/app/
 
 ---
 
-## 3. 按步骤运行演示（新手照着做）
+## 3. 关键参数说明表
 
-以下输出均为**真实运行结果**，可直接对照复现。
-
-### 演示数据
-
-60 行，含一个 id 列（需排除）、一个类别列、两个数值列、一个二分类标签：
-
-```python
-import polars as pl
-
-df = pl.DataFrame({
-    "id":     list(range(1, 61)),
-    "age":    [20 + (i * 7) % 50 for i in range(60)],
-    "city":   (["BJ", "SH", "GZ"] * 20)[:60],
-    "income": [3.0 + (i % 13) * 1.5 for i in range(60)],
-    "label":  [0 if i % 2 == 0 else 1 for i in range(60)],
-})
-```
-
-### 步骤 1 · 数据体检 `run_load_step`
-
-```python
-from app.ml_engine.step_runner import run_load_step
-
-r1 = run_load_step(df, target="label", excluded_columns=["id"])
-print(r1.status, r1.note)
-print(r1.output)
-print(r1.artifacts["schema_profile"])
-```
-
-真实输出：
-
-```
-ok  60 行 × 5 列；目标列 label；参与训练的特征 3 列
-{'row_count': 60, 'column_count': 5, 'target': 'label',
- 'feature_columns': ['age', 'city', 'income']}
-[{'column': 'id',     'dtype': 'Int64',   'null_count': 0, 'n_unique': 60, 'is_numeric': True},
- {'column': 'age',    'dtype': 'Int64',   'null_count': 0, 'n_unique': 50, 'is_numeric': True},
- {'column': 'city',   'dtype': 'String',  'null_count': 0, 'n_unique': 3,  'is_numeric': False},
- {'column': 'income', 'dtype': 'Float64', 'null_count': 0, 'n_unique': 13, 'is_numeric': True},
- {'column': 'label',  'dtype': 'Int64',   'null_count': 0, 'n_unique': 2,  'is_numeric': True}]
-```
-
-**怎么读**：`id` 的 `n_unique=60` 等于行数 —— 这是典型的高基数标识列，
-必须放进 `excluded_columns`，否则模型会"背下每一行"，指标虚高但没有泛化能力。
-
-### 步骤 2 · 看预处理做了什么 `run_preprocess_step`
-
-```python
-from app.ml_engine.step_runner import run_preprocess_step
-
-r2 = run_preprocess_step(df, target="label", excluded_columns=["id"], preview_rows=3)
-print(r2.output)
-print(r2.artifacts["config_used"])
-print(r2.artifacts["before_preview"])
-print(r2.artifacts["after_preview"])
-```
-
-真实输出：
-
-```
-{'input_features': ['age', 'city', 'income'],
- 'output_features': ['age', 'city=BJ', 'city=GZ', 'city=SH', 'income'],
- 'input_feature_count': 3, 'output_feature_count': 5}
-
-{'encoding': {'method': 'one_hot', 'columns': ['city']},
- 'scaling':  {'method': 'standard', 'columns': ['age', 'income']}}
-
-before: [{'age': 20, 'city': 'BJ', 'income': 3.0},
-         {'age': 27, 'city': 'SH', 'income': 4.5}]
-after:  [{'age': -1.6349, 'city=BJ': 1.0, 'city=GZ': 0.0, 'city=SH': 0.0, 'income': -1.5391},
-         {'age': -1.1580, 'city=BJ': 0.0, 'city=GZ': 0.0, 'city=SH': 1.0, 'income': -1.2675}]
-```
-
-**怎么读**：
-
-- **3 列变 5 列** —— `city` 被 one-hot 展开成 3 个 0/1 列，原始的 1 列消失；
-- **age/income 变成负数小数** —— 标准化（均值 0、方差 1）的结果。
-  原始 `age=20` 变成 `-1.63` 说明它低于均值，而不是"变小了"；
-- **`city=BJ` 这列名自带前缀** —— 这是 `PreprocessingPipeline._collect_names` 刻意做的
-  可读化映射（sklearn 原生会给 `city_BJ`），便于在特征重要性里一眼看出是哪个取值。
-
-### 步骤 3 · 训练 `run_train_step`
-
-```python
-from app.ml_engine.step_runner import run_train_step
-
-r3 = run_train_step(
-    df, task="classification", model="random_forest_classifier", target="label",
-    parameters={"n_estimators": 50, "max_depth": 5},
-    excluded_columns=["id"], test_size=0.25, seed=42,
-)
-print(r3.note)
-print(r3.output)
-print(r3.artifacts["confusion_matrix"])
-```
-
-真实输出：
-
-```
-random_forest_classifier 训练完成：训练 45 行 / 测试 15 行（test_size=0.25, seed=42，分层切分）
-
-{'task': 'classification', 'model': 'random_forest_classifier',
- 'metrics': {'accuracy': 0.2, 'precision': 0.15, 'recall': 0.1875,
-             'f1': 0.1667, 'roc_auc': 0.0179},
- 'train_rows': 45, 'test_rows': 15, 'test_size': 0.25, 'seed': 42, 'stratified': True}
-
-{'labels': ['0', '1'], 'matrix': [[3, 5], [7, 0]]}
-```
-
-**怎么读（重要，别急着怀疑代码）**：这份演示数据的 `label = i % 2`，
-即标签**完全由行号决定，与 age/city/income 毫无关系**。
-所以指标接近随机水平（AUC≈0.02）是**正确结果**，不是 bug。
-这恰恰是教学要传达的第一课：**指标差先查数据与标签的关系，再怀疑模型**。
-
-想知道"模型正常时指标长什么样"，看第 8 节的对照实验。
-
-### 步骤 4 · 推理 `run_predict_step`
-
-```python
-from app.ml_engine.preprocessing import build_pipeline
-from app.ml_engine.registry import MODEL_REGISTRY
-from app.ml_engine.step_runner import run_predict_step
-
-X = df.select(["age", "city", "income"])
-pipeline = build_pipeline(None, X).fit(X)
-model = MODEL_REGISTRY.create("random_forest_classifier",
-                              {"n_estimators": 50, "max_depth": 5, "random_state": 42})
-model.fit(pipeline.transform(X), df["label"])
-
-new_df = pl.DataFrame({"age": [25, 60, 41], "city": ["BJ", "SH", "GZ"],
-                       "income": [6.0, 15.0, 9.0]})
-r4 = run_predict_step(model, pipeline, new_df,
-                      feature_columns=["age", "city", "income"], limit=3)
-print(r4.output)
-```
-
-真实输出：
-
-```
-{'row_count': 3, 'prediction_column': 'prediction',
- 'probability_columns': ['prob_0', 'prob_1'], 'pipeline_applied': True, 'runtime': 0.00325,
- 'preview': [
-   {'age': 25, 'city': 'BJ', 'income': 6.0,  'prediction': 1, 'prob_0': 0.4245, 'prob_1': 0.5755},
-   {'age': 60, 'city': 'SH', 'income': 15.0, 'prediction': 0, 'prob_0': 0.5798, 'prob_1': 0.4202},
-   {'age': 41, 'city': 'GZ', 'income': 9.0,  'prediction': 1, 'prob_0': 0.3254, 'prob_1': 0.6746}]}
-```
-
-**怎么读**：
-
-- **`pipeline_applied: True` 是必查项** —— 推理必须复用训练时的那个管道。
-  直接用原始列（`city` 还是字符串、`age` 未标准化）会因列不匹配而失败，
-  这是"训练完换个数据集就推不出结果"的最常见原因；
-- **概率列给了置信度** —— `prob_1=0.5755` 表示"偏向类别 1 但很不确定"。
-  0.575 和 0.95 是两个完全不同的决策信心，只看 `prediction` 会把它们混为一谈。
-
-### 可复现性验证
-
-```python
-r3b = run_train_step(df, task="classification", model="random_forest_classifier",
-                     target="label", parameters={"n_estimators": 50, "max_depth": 5},
-                     excluded_columns=["id"], test_size=0.25, seed=42)
-print(r3.output["metrics"] == r3b.output["metrics"])   # True
-```
-
-同 seed 两次训练指标**逐位相同**。这是"结果可复现"的可执行证明。
-
----
-
-## 4. 关键参数说明表
-
-### 4.1 训练参数
+### 3.1 训练参数
 
 | 参数 | 中文名 | 类型 | 默认值 | 取值范围 | 调大 / 调小的影响 | 建议 |
 |---|---|---|---|---|---|---|
@@ -265,12 +80,17 @@ print(r3.output["metrics"] == r3b.output["metrics"])   # True
 | `test_size` | 测试集比例 | float | `0.2` | `(0, 1)`，常用 0.2~0.3 | ⬆ 评估更稳，但训练数据更少；⬇ 训练数据更多，但评估波动大 | 数据 <200 行可升到 0.3；数据大可降到 0.1 |
 | `seed` | 随机种子 | int | `42` | 任意整数 | 固定后切分与支持 `random_state` 的模型完全可复现 | **做对比实验必须固定同一个 seed** |
 | `preprocessing` | 预处理配置 | object | 自动按数据画像生成 | `{missing, encoding, scaling}` | 覆盖默认预处理；只传一部分时其余保持默认 | 默认策略不适合时才手动指定 |
+| `enable_learning_curve` | 生成学习曲线 | bool | `false` | true / false | true 时在多个训练子集上重训并评估，用于判断「加数据还有没有用」 | 想判断偏差/方差走向时开；数据大时耗时明显 |
+| `enable_cv` | 5 折交叉验证 | bool | `false` | true / false | true 时在**切分前的全量数据**上再跑一遍 5 折 CV，给出各折均值 ± 标准差 | 数据少、单次切分波动大时开；代价约为普通训练的 5 倍 |
+
+> **两个开关都默认关闭**：它们都在主训练之外额外跑模型，开着会显著拉长等待。
+> 需要「这个 0.87 到底稳不稳」的答案时才开 —— 这正是它们存在的理由。
 
 > **`test_size` 的硬约束**：分层切分要求测试集样本数 ≥ 类别数。
 > 例如 8 行、2 类别、`test_size=0.2` → 测试集 2 个样本，刚好够；
 > 若数据再小，模块会给出中文提示"测试集样本不足以覆盖 N 个类别"，而不是抛 sklearn 的英文原始错误。
 
-### 4.2 预处理参数
+### 3.2 预处理参数
 
 | 参数 | 中文名 | 类型 | 默认值 | 取值范围 | 影响 | 何时改 |
 |---|---|---|---|---|---|---|
@@ -287,13 +107,13 @@ print(r3.output["metrics"] == r3b.output["metrics"])   # True
 > 两条都只做"补漏"，**你显式给出的策略一律保留**。这是为了让部分配置也能跑通，
 > 而不是静默改掉你的意图。
 
-### 4.3 各模型的可调参数
+### 3.3 各模型的可调参数
 
 参数的可调范围取决于底层 sklearn 模型的真实签名——`MODEL_PARAMS` 里每个参数名都经过
 `MODEL_REGISTRY.supports_param()` 的签名级探测，因此**界面上能填的每一项都是模型真的接受的**，
 不会出现"填了却报 TypeError"。
 
-共 11 个模型 / **73 个可调参数**，其中 **32 个核心参数**。核心参数在界面上常显，
+共 12 个模型 / **82 个可调参数**，其中 **36 个核心参数**。核心参数在界面上常显，
 进阶参数在「展开进阶参数」里按需启用（启用后才写进请求；不启用＝交给 sklearn 用它自己的默认值）。
 
 下面列出每个模型的核心参数；进阶参数的完整说明同样可查（界面 ⓘ / `ml.explain_config` 的 `topic=model`）。
@@ -350,6 +170,24 @@ print(r3.output["metrics"] == r3b.output["metrics"])   # True
 
 > **类别不均衡时注意**：随机森林同样支持 `class_weight`，它在进阶参数里。
 > 如果少数类的 recall 明显偏低，这一项的收益通常大于继续调树数。
+
+#### hist_gradient_boosting_classifier
+
+直方图梯度提升（sklearn 的 LightGBM 同族实现）：先把连续特征分箱再找分裂点，
+表格数据上通常比随机森林**更快且略准**。
+
+| 参数 | 中文名 | 默认 | 范围 | 常用 | 影响与什么时候改 |
+|---|---|---|---|---|---|
+| `learning_rate` | 学习率 | 0.1 | 0 ~ 1 的浮点数，常用 0.01 ~ 0.3 | 0.01 / 0.05 / 0.1 / 0.2 | 每棵树对最终预测的贡献被它缩放。调小需要更多棵树才能达到同等拟合（更慢但常更稳），调大收敛快但容易过冲、卡在次优解。<br>**什么时候改**：它是提升类模型里最有效的一项——测试集不佳时先降到 0.05 并把 `max_iter` 加倍；只想快速试思路时保持 0.1。 |
+| `max_iter` | 最大提升轮数 | 100 | 正整数，常用 50 ~ 1000 | 50 / 100 / 200 / 500 / 1000 | 最多叠加多少棵树。轮数不足会欠拟合，过多会过拟合且线性变慢；开启 `early_stopping` 时它只是上限，实际轮数由验证集决定。<br>**什么时候改**：学习率调小时要同步加大（大致翻倍）；开了早停后可以设得宽一些，让模型自己停。 |
+| `max_leaf_nodes` | 单棵树最大叶子数 | 31 | 2 ~ 31（内部用 8 位存叶节点索引，超过 31 会直接报错） | 8 / 15 / 31 | 控制单棵树的复杂度，作用与决策树的 `max_depth` 同向，同时决定模型能表达多少交互。<br>**什么时候改**：过拟合时调到 15 或 8；样本量大且欠拟合时保持 31。注意它**不是**越大越好，上限就是 31。 |
+| `min_samples_leaf` | 叶节点最小样本数 | 20 | 正整数，常用 5 ~ 100 | 5 / 20 / 50 / 100 | 每个叶子至少保留多少样本。它比 `max_leaf_nodes` 更平滑地控制过拟合，也是直方图方法默认就偏大的一项（20，远大于决策树的 1）。<br>**什么时候改**：数据噪声大或样本少时调大到 50~100；指标明显欠拟合时调小到 5。 |
+
+进阶参数：`l2_regularization`、`max_features`、`early_stopping`、`class_weight`、`max_bins`
+
+> **与随机森林怎么选**：特征基数高（one-hot 之后列很多）且样本上万时，
+> 直方图方法的训练耗时通常明显低于随机森林；样本只有几百行时两者差距不大，
+> 随机森林的抗过拟合更省心。
 
 #### linear_regression
 
@@ -432,7 +270,7 @@ print(r3.output["metrics"] == r3b.output["metrics"])   # True
 
 进阶参数：`svd_solver`、`tol`
 
-### 4.4 参数不是彼此独立的：无效组合提示
+### 3.4 参数不是彼此独立的：无效组合提示
 
 有些参数必须配对使用，否则 sklearn 会直接抛错。界面会在**点训练之前**把这类组合标出来，
 不必等训练失败再读英文报错：
@@ -455,7 +293,7 @@ print(r3.output["metrics"] == r3b.output["metrics"])   # True
 
 ---
 
-## 5. 指标解读表
+## 4. 指标解读表
 
 | 指标 | 中文名 | 任务 | 含义 | 怎么读 | 方向 |
 |---|---|---|---|---|---|
@@ -475,7 +313,7 @@ print(r3.output["metrics"] == r3b.output["metrics"])   # True
 
 ---
 
-## 6. 边界与错误提示对照表
+## 5. 边界与错误提示对照表
 
 模块把 sklearn / pandas 层难懂的英文异常统一转成可操作的中文提示：
 
@@ -498,7 +336,7 @@ print(r3.output["metrics"] == r3b.output["metrics"])   # True
 
 ---
 
-## 7. 教学接口：`GET /ml/catalog`
+## 6. 教学接口：`GET /ml/catalog`
 
 ```bash
 curl http://127.0.0.1:8000/api/v1/ml/catalog
@@ -513,9 +351,9 @@ curl http://127.0.0.1:8000/api/v1/ml/catalog
   "training_params":       [ ... 5 项 ],
   "models":                [ ... 11 个模型，含 task/note/params（73 项，每项带 type/tier/default/sklearn_default/range/options/step/typical/requires） ],
   "metrics":               { ... 10 个指标 },
-  "tuning_playbook":       [ ... 6 类调参情形，见第 9 节：signal/title/detect/why/advice/escalate ],
-  "param_combos":          [ ... 6 条无效参数组合约束，见第 4.4 节 ],
-  "inference_params":      [ ... 2 项训练后才生效的旋钮（threshold / limit），每项带 affects_result / applies_to，见第 9.4 节 ],
+  "tuning_playbook":       [ ... 6 类调参情形，见第 8 节：signal/title/detect/why/advice/escalate ],
+  "param_combos":          [ ... 6 条无效参数组合约束，见第 3.4 节 ],
+  "inference_params":      [ ... 2 项训练后才生效的旋钮（threshold / limit），每项带 affects_result / applies_to，见第 8.4 节 ],
   "conventions": {
     "target_naming": ["target", "label", "y", "class"],
     "default_test_size": 0.2,
@@ -544,7 +382,7 @@ curl http://127.0.0.1:8000/api/v1/ml/catalog
 > 因此问 Agent「我的随机森林过拟合了怎么办」「KNN 的 k 怎么调」，
 > 得到的答案与本文第 4/9 节同源，不会出现"文档和助手各说一套"。
 
-### 7.1 前端如何呈现这些内容（「透明」看得见的地方）
+### 6.1 前端如何呈现这些内容（「透明」看得见的地方）
 
 同一份 catalog 在前端「机器学习」页被两处消费，因此**界面上的说明与本文表格口径一致**：
 
@@ -586,7 +424,7 @@ paramLabel(catalog, "n_estimators", "random_forest_classifier")  // 中原名，
 
 ---
 
-## 8. 结果解读示例：同一份数据，五种做法
+## 7. 结果解读示例：同一份数据，五种做法
 
 这一节展示**参数选择如何直接改变结论**。数据为 300 行、含真实规律的二分类集
 （`income` 越高、`age` 越偏离中段 → 更可能 `label=1`，另加噪声）：
@@ -632,7 +470,7 @@ kmeans (k=3)：
 
 ---
 
-## 9. 调参：从「凭感觉试」到「有依据地试一次」
+## 8. 调参：从「凭感觉试」到「有依据地试一次」
 
 调参的困难通常不在"找不到参数"，而在**指标不理想时不知道该往哪个方向动**。
 这一节把这件事拆成两个可执行的部分：**判定信号**（这次到底出了什么问题）与**对应动作**（动哪个参数、往哪边动）。
@@ -640,10 +478,14 @@ kmeans (k=3)：
 规则定义在 `metadata.py` 的 `TUNING_PLAYBOOK`，训练完成后由界面自动匹配并给出可一键应用的建议
 （Agent 侧通过 `ml.explain_config` 的 `topic=tuning` 取同一份内容）。
 
-### 9.1 六类判定信号
+### 8.1 六类判定信号
 
 判定只用**训练时真实落库的产物**，不做前端估算。其中 `train_metrics` 是为此专门新增的产物：
 它与 `run.metrics`（测试集口径）严格分开，两者相减才说明问题是"学过头"还是"还没学会"。
+
+上表里的每个数字都由 `metadata.py` 的 `SIGNAL_RULES` 定义，经 `GET /ml/catalog` 的
+`signal_rules` 字段透给前端 —— 前端判定与这里的说明文字读的是同一个数，不会各写一份 0.1。
+`TUNING_PLAYBOOK` 的 `detect` 文案同样由它拼出，改阈值只需改一处。
 
 | signal | 判定口径 | 对应的问题 |
 |---|---|---|
@@ -656,7 +498,7 @@ kmeans (k=3)：
 
 > `no_signal` 命中时会抑制 `underfit`：前者更精确，两条同时出现只会造成困惑。
 
-### 9.2 每类情形的建议动作
+### 8.2 每类情形的建议动作
 
 界面会把下表中的动作按**当前模型确实拥有的参数**过滤后展示，并标注目标值。例如过拟合时
 树模型看到的是深度/叶子相关项，线性模型看到的是 `C`——不会给出这个模型根本没有的参数。
@@ -674,11 +516,11 @@ kmeans (k=3)：
 压到很浅后测试集仍无改善，问题多半在特征或数据量；特征数超过样本数时，靠调参只能缓解，
 更有效的是回到数据处理阶段做筛选或降维。这比再多试几组参数更省时间。
 
-### 9.3 人工排查顺序（先数据后模型）
+### 8.3 人工排查顺序（先数据后模型）
 
-1. **标签与特征真的相关吗？** —— 若 AUC≈0.5，先怀疑数据本身（见第 3 节演示）。
-2. **有没有该排除的高基数列？** —— id/主键会让指标虚高（第 8 节 B）。
-3. **训练 vs 测试指标差距大吗？** —— 差距大是过拟合（第 8 节 C）。
+1. **标签与特征真的相关吗？** —— 若 AUC≈0.5，先怀疑数据本身。
+2. **有没有该排除的高基数列？** —— id/主键会让指标虚高（第 7 节 B）。
+3. **训练 vs 测试指标差距大吗？** —— 差距大是过拟合（第 7 节 C）。
 4. **树模型**：先试 `random_forest_*`（`n_estimators=100~200`），它几乎总是不差的基线。
 5. **KNN / KMeans / 逻辑回归**：检查 `scaling` 是否生效。
 6. **线性模型不收敛**：调大 `max_iter`。
@@ -698,9 +540,9 @@ kmeans (k=3)：
 | 分类的类别分布 | `artifacts.class_distribution` | 多数类占比 ≥70% 时 accuracy 会骗人 |
 
 > 一个实际用法：调完参数后**保持 `seed` 不变再训一次**，然后用「实验历史」里勾选两次运行做对比
-> （第 8 节的做法）——这样才能确定指标变化来自参数，而不是数据切分的随机性。
+> （第 7 节的做法）——这样才能确定指标变化来自参数，而不是数据切分的随机性。
 
-### 9.4 训练之后的旋钮：决策阈值
+### 8.4 训练之后的旋钮：决策阈值
 
 9.1~9.3 谈的都是**超参数**：改一个就得重训一次。但分类问题里还有一个参数
 既影响结果、又完全不用重训 —— **决策阈值**。
@@ -751,9 +593,88 @@ kmeans (k=3)：
 `frontend/src/features/ml/PredictionPanel.tsx`（阈值入口与曲线展示）、
 `tests/test_ml_threshold.py`（13 条语义回归用例，不训练模型）。
 
+### 8.5 让"一次切分"变成"五个数"：交叉验证与自动超参搜索
+
+8.1~8.4 的诊断都建立在**单次留出切分**上。数据少的时候，换个 seed 指标就能跳几个点 ——
+此时「0.87」到底是模型的能力还是切分的运气，光看一个数分不出来。这一节给两个工具。
+
+**交叉验证（`enable_cv=true`）。** 把**切分前的全量数据**分成 5 份，轮流拿 4 份训练、
+1 份验证，得到 5 个数，报均值 ± 标准差。分类用 `StratifiedKFold`（每折类别比例与整体一致），
+回归用 `KFold`。
+
+> **防泄漏是这里唯一要紧的事。** 缺失值填补的均值、缩放用的方差、one-hot 的类别表，
+> 都必须**只从当折的训练集里学**，不能先在整份数据上学完再切 —— 后者会把测试折的信息
+> 提前喂给模型，指标虚高且不可复现。实现上，CV 拿到的是**未拟合**的
+> `ColumnTransformer` 骨架（`PreprocessingPipeline.build`）与未拟合的 estimator
+> （`ModelAdapter.new_estimator`），拟合发生在 `cross_validate` 的每一折内部。
+> 这条契约由 `tests/test_cv_hpo.py::test_cv_as_matrix_does_not_fit_the_pipeline` 钉住。
+
+| 字段 | 含义 |
+|---|---|
+| `artifacts.cv.folds` | 折数（默认 5） |
+| `artifacts.cv.mean` / `std` | 各折指标的均值 / 标准差（`std` 大 = 结果对切分敏感） |
+| `artifacts.cv.per_fold` | 每折原始值，形如 `[{metric, values:[5 个数]}]`（能看出是不是被某一折拖低） |
+| `artifacts.cv.note` | 「5 折分层 CV，预处理在每折训练集内拟合」—— 口径写在结果里 |
+
+**怎么用这个标准差。** 均值告诉你"大概多少"，标准差告诉你"能不能信"。
+两个模型均值差 0.005 而标准差 0.02 时，这个差不值得写成结论。
+
+**自动超参搜索（`POST /experiments/{id}/optimize`）。** 在**该实验当前配置的数据**
+（同一套排除列、同一套切分前数据）上，用 `RandomizedSearchCV` 随机采样
+`n_iter` 组参数（默认 20），每组做 5 折 CV，按主指标排名返回 Top10。
+前端「调参建议」面板里一键搜索、一键把最佳参数填回参数面板。
+
+| 字段 | 含义 |
+|---|---|
+| `best_params` | 最佳参数（**已去掉 `model__` 前缀**，可直接原样交给训练接口） |
+| `best_score` / `top_results[]` | 最佳得分 / Top10（含 `rank`、`mean_score`、`std`、`params`） |
+| `n_iter` | **实际**采样组数：候选网格比请求值小时自动收敛到网格大小（不重复采样、不丢警告在日志里） |
+| `experiment_id` / `model` / `task` / `metric` | 这次搜索的落点，便于回查「这个分数是哪个实验、按哪个指标排的」 |
+
+搜索空间按模型定义在 `app/ml_engine/cv.py::SEARCH_SPACES`，目前覆盖
+随机森林 / HistGradientBoosting / 逻辑回归 / KNN 四个模型；
+`GET /ml/catalog` 的 `search_spaces` 会透出「哪些参数在搜索范围内」，
+**不在表里的模型不会静默搜索**，接口明确报错。
+
+> **搜索不写回实验配置。** `optimize` 只返回结果，改不改由你决定 ——
+> 搜索是在同一份数据上多看了很多次，那个 `best_score` 本身已经带一点乐观偏差，
+> 它适合用来**缩小范围**，不适合直接当最终泛化指标。要报最终数字，请用搜到的参数
+> **重训一次**，看留出测试集。
+
+### 8.6 指标的可信度：95% 置信区间与配对差异
+
+**单次的置信区间。** 训练结束时会把测试集的逐条预测留档
+（`artifacts.test_predictions`），再用 Bootstrap 重采样算出指标的 95% 区间：
+分类给 accuracy / f1 / roc_auc，回归给 r2 / rmse。界面在每个指标卡下方直接显示
+`95% CI [下界, 上界]`，HTML 报告里多一列「95% CI」。
+
+样本少于 30 行时不给区间（重采样已无意义），Bootstrap 次数按样本量自适应
+（≤5000 行 1000 次、≤20000 行 400 次、更大 200 次），避免大数据上把训练拖慢。
+
+> **上限提醒**：`test_predictions` 最多留 5 万行，超出时存**随机抽样版**并在
+> `note` 里写明 —— 静默换成子集等于让区间建立在一份没交代的数据上，宁可写明。
+
+**两个模型谁更好：看配对差异。** 模型对比页在两次运行**可比**时额外给出
+`paired_delta`：对同一批测试样本**共用同一组重采样下标**，算「A − B」这个差值的区间。
+
+| 字段 | 含义 |
+|---|---|
+| `delta` | A 减 B 的点估计 |
+| `lower` / `upper` | 差值的 95% 区间 |
+| `significant` | 区间是否**不含 0**（含 0 ⇒ 差异不显著） |
+| `note` | 不可比时说明原因 |
+
+> **为什么必须配对。** 两次独立 Bootstrap 各自带一份重采样噪声，相减会把两份噪声叠进去，
+> 区间被人为撑宽。配对（同一组下标）抵消掉"这一批样本本身好不好分"的影响，
+> 剩下的才是两个模型的真实差距。
+>
+> **判可比的前提**（缺一条就返回 `null`，而不是硬算）：两次运行都成功、
+> `test_predictions.rows` 相同、且 `y_true` **逐行相等**、样本 ≥30 行。
+> 不同切分上的两个 Δ 混着"样本不一样"和"模型不一样"两件事，配对前提不成立。
+
 ---
 
-## 10. 已知限制（写入论文「局限与展望」）
+## 9. 已知限制（写入论文「局限与展望」）
 
 以下问题**已知且刻意未在本阶段修复**，因为修复收益低于对既有约定的破坏风险：
 
@@ -762,12 +683,24 @@ kmeans (k=3)：
    但测试用例各自新建内存库（`dataset_id` 总从 1 开始）+ 临时 storage 时，
    会命中上一个用例的旧快照。**已通过 `tests/conftest.py` 的
    `_isolate_version_frame_cache` fixture 在测试侧隔离**，生产代码未改。
-2. **全量推理结果不可导出** —— `predict` 返回的是 `limit` 行预览（上限 5000），
-   完整预测结果没有落盘/下载通道。
+2. ~~**全量推理结果不可导出**~~ —— **已修复**：
+   `GET /experiments/runs/{run_id}/predict-export?format=csv|parquet` 返回全量结果
+   （原始列 + `prediction` + 各 `prob_*` 列），与预览共用同一次推理，口径必然一致。
 3. **无鉴权** —— 与其他模块一致，接口不做身份校验（安全类问题统一写入论文展望）。
 4. **pickle 产物无版本戳** —— `model.pkl` / `pipeline.pkl` 未记录 sklearn 版本；
    跨版本升级后反序列化可能失败，表现为"推理报错但模型文件存在"。
+   完整性方面已补一层 HMAC 信封（`XLB1` + `hmac_sha256` + payload，
+   密钥取自环境变量 `ML_MODEL_SIGNING_SECRET`，未配置时用内置常量）：
+   文件被截断或被别的 pickle 顶替会在加载时明确报错，而不是给出一份错误的预测。
+   **注意**：未配置环境变量时它不是安全边界——只防损坏与误替换，不防蓄意伪造。
 5. **同步阻塞** —— 训练同步执行，长任务会占用请求线程（进程内单 worker 的既有约束）。
+   交叉验证与超参搜索同样同步执行，**默认关闭**正是出于这一点。
+6. **`test_predictions` 留档上限 5 万行** —— 超出时存随机抽样版并在 `note` 中写明，
+   置信区间因此建立在抽样子集上。这是为了不让报告产物无限膨胀，需要精确区间时
+   请自行在导出结果上重算。
+7. **报告内嵌图只进 HTML** —— `ReportSection.images` 只有 HTML 导出器消费，
+   Markdown 与 PDF 仍走表格/文本（PDF 渲染 base64 位图体积与兼容性都不划算）。
+   这不是遗漏，是有意为之；代价是 HTML 报告依赖 `matplotlib`（新增依赖）。
 
 ---
 
@@ -775,18 +708,25 @@ kmeans (k=3)：
 
 | 内容 | 文件 |
 |---|---|
-| 教学元数据（参数表来源） | `backend/app/ml_engine/metadata.py` |
-| 单步执行器 | `backend/app/ml_engine/step_runner.py` |
-| 预处理管道 | `backend/app/ml_engine/preprocessing.py` |
-| 全流程服务 | `backend/app/experiments/service.py` |
-| 教学接口 | `backend/app/api/v1/experiments.py`（`GET /ml/catalog`） |
+| 教学元数据（参数表来源，含 `search_spaces`） | `backend/app/ml_engine/metadata.py` |
+| 预处理管道（`as_matrix` / `build`） | `backend/app/ml_engine/preprocessing.py` |
+| **交叉验证与超参搜索** | `backend/app/ml_engine/cv.py`（`cv_evaluate` / `random_search` / `SEARCH_SPACES`） |
+| **指标重采样工具** | `backend/app/ml_engine/evaluation.py`（`bootstrap_confidence_interval`） |
+| 全流程服务 | `backend/app/experiments/service.py`（`_cross_validate` / `optimize` / `_paired_delta`） |
+| 模型对比（配对差异） | `backend/app/experiments/comparator.py` |
+| **训练报告图表（HTML 内嵌）** | `backend/app/experiments/run_report.py` + `backend/app/reports/html.py` |
+| 教学接口 | `backend/app/api/v1/experiments.py`（`GET /ml/catalog`、`POST /experiments/{id}/optimize`） |
 | Agent 教学工具 | `backend/app/tools/ml_tools.py`（`MlExplainConfigTool`） |
 | 错误提示对照 | `backend/app/ml_engine/exceptions.py` + 各 `_preflight` |
 | 模块审查报告 | `backend/ML_MODULE_REVIEW.md` |
 | **前端 · 教学目录面板**（流程/参数/指标） | `frontend/src/features/ml/ParamGuide.tsx` |
 | **前端 · 参数调整面板**（核心/进阶 + 类型化控件） | `frontend/src/features/ml/ParamTuner.tsx` |
 | **前端 · 预处理面板**（填补/编码/缩放） | `frontend/src/features/ml/PreprocessPanel.tsx` |
-| **前端 · 调参建议**（匹配 playbook + 一键应用） | `frontend/src/features/ml/TuningAdvice.tsx` |
+| **前端 · 调参建议**（匹配 playbook + 一键应用 + 自动搜索） | `frontend/src/features/ml/TuningAdvice.tsx` |
+| **前端 · 交叉验证表与 CI 展示** | `frontend/src/features/ml/ExperimentResult.tsx` |
+| **前端 · 模型对比（配对差异）** | `frontend/src/features/ml/ModelComparison.tsx` |
+| 回归用例（CV / 搜索 / 防泄漏） | `backend/tests/test_cv_hpo.py` |
+| 回归用例（报告内嵌图表） | `backend/tests/test_run_report.py` |
 | **前端 · 训练过程透明化**（读 `run.artifacts`） | `frontend/src/features/ml/TrainTrace.tsx` |
 | **前端 · 页面接线**（含 `test_size` 输入） | `frontend/src/pages/ML/index.tsx` |
 | **前端 · 类型镜像** | `frontend/src/types/ml.ts` |

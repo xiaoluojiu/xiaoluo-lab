@@ -88,17 +88,3 @@ def test_visualize_chart_slot_can_override_its_default():
 
     assert step.defaults.get("chart") == "histogram"
     assert "chart" in step.tuned_slots, "chart 必须是可微调槽位，否则默认值永远赢"
-
-
-def test_visualize_chart_slot_can_override_its_default():
-    """用户点名「画成柱状图」时必须画柱状图。
-
-    VISUALIZE 步骤带 ``defaults={"chart": "histogram"}``，而 chart 只挂在
-    required_slots 上时，抽取结果**覆盖不了**一个非空默认值 —— 实测
-    「把刚才的结果画成柱状图」画出来的是直方图，接着因为那一列不是数值列，
-    整次运行以 ``could not convert string to float`` 失败。
-    """
-    step = get_playbook(Intent.VISUALIZE).steps[0]
-
-    assert step.defaults.get("chart") == "histogram"
-    assert "chart" in step.tuned_slots, "chart 必须是可微调槽位，否则默认值永远赢"

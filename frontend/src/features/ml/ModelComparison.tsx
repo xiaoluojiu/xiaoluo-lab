@@ -56,6 +56,31 @@ export function ModelComparison({ result }: { result: CompareResult | null }) {
         </tbody>
       </table>
 
+      {/* 配对差异：两次重采样抽的是同一批下标，样本难易被抵消，剩下的才是模型差距。
+          区间跨 0 就是「不能排除其实一样好」，必须写出来，否则用户会把噪声当结论。 */}
+      {result.paired_delta && result.paired_delta.metrics.length > 0 && (
+        <div className="mt">
+          <div className="muted" style={{ fontWeight: 600 }}>
+            配对差异（Run #{result.paired_delta.run_a} − Run #{result.paired_delta.run_b}，
+            同一份 {result.paired_delta.rows} 行测试集上同步重采样
+            {result.paired_delta.n_bootstrap ? ` × ${result.paired_delta.n_bootstrap} 次` : ""}）
+          </div>
+          <ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>
+            {result.paired_delta.metrics.map((m) => (
+              <li key={m.metric}>
+                {m.metric}：Δ = {m.delta.toFixed(4)}（95% CI [{m.lower.toFixed(4)}, {m.upper.toFixed(4)}]）
+                {!m.significant && (
+                  <span className="muted" style={{ marginLeft: 6 }}>
+                    差异不显著
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+          <div className="muted">{result.paired_delta.note}</div>
+        </div>
+      )}
+
       {result.parameter_diff && Object.keys(result.parameter_diff).length > 0 && (
         <details className="mt">
           <summary className="muted" style={{ cursor: "pointer" }}>查看参数差异</summary>

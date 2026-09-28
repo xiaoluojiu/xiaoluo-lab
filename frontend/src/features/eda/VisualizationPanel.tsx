@@ -25,10 +25,18 @@ import {
   YAxis,
 } from "recharts";
 import { edaVisualize, type VisualizeChart } from "../../api/analysis";
-import { describeAnalysisError } from "../../lib/analysisError";
-import { chartFieldAdvice, isContinuousNumeric } from "../../lib/edaColumns";
+import { Link } from "react-router-dom";
+import { formatError, type AnalysisError } from "../../lib/analysisError";
+import { chartFieldAdvice, isContinuousNumeric, isNumericColumn, isTemporalColumn } from "../../lib/edaColumns";
 import type { SchemaColumn } from "../../types/dataset";
 import { Icon } from "../../components/icons/Icon";
+
+/**
+ * 列类型判定统一由 `lib/edaColumns` 提供（该文件是全仓 dtype 正则的唯一真源）。
+ * 这里保留同名 re-export 只是为了不打断既有调用方（如 pages/Analysis）——
+ * 此前本文件内联了一份与 lib 逐字相同的实现，属重复逻辑。
+ */
+export { isNumericColumn, isTemporalColumn };
 
 const CHART_TYPES: Array<{ value: VisualizeChart; label: string }> = [
   { value: "histogram", label: "直方图" },
@@ -54,14 +62,19 @@ interface Props {
   selectedColumns: string[];
   chart: VisualizeChart;
   onChartChange: (chart: VisualizeChart) => void;
+  /** /schema 返回的总行数：低基数判定必须与后端 continuous_columns 同口径。 */
+  rowCount: number;
 }
 
-export function isNumericColumn(c: SchemaColumn) {
-  return /int|float|double|decimal|number/i.test(c.dtype);
-}
+/** 图表字段位：每种图有哪些"槽位"（column / x / y / group_by）。 */
+type ChartSlot = "column" | "x" | "y" | "group_by";
 
-export function isTemporalColumn(c: SchemaColumn) {
-  return /date|time/i.test(c.dtype);
+/** 一个字段位的完整描述：候选列 + 未手动指定时的自动值。UI 与取值共用同一份。 */
+interface SlotSpec {
+  slot: ChartSlot;
+  label: string;
+  auto: string | undefined;
+  options: string[];
 }
 
 export function VisualizationPanel({
@@ -70,11 +83,17 @@ export function VisualizationPanel({
   selectedColumns,
   chart,
   onChartChange,
+  rowCount,
 }: Props) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AnalysisError | null>(null);
+  // 字段位覆盖：key 形如 `${chart}.${slot}`。用户在下拉里手动指定后优先于自动值。
+  const [overrides, setOverrides] = useState<Record<string, string>>({});
+  // 用字符串做依赖，避免对象引用变化造成无谓的重跑判断。
+  const overrideKey = useMemo(() => JSON.stringify(overrides), [overrides]);
 
+  const colNames = useMemo(() => columns.map((c) => c.column), [columns]);
   const numericCols = useMemo(
     () => columns.filter(isNumericColumn).map((c) => c.column),
     [columns],
@@ -83,8 +102,8 @@ export function VisualizationPanel({
   // 后端 continuous_columns 会把它们按分类处理并拒绝作相关性输入，
   // 前端若直接按 dtype 当数值列提交，就会稳定拿到 422。
   const continuousNumericCols = useMemo(
-    () => columns.filter((c) => isContinuousNumeric(c)).map((c) => c.column),
-    [columns],
+    () => columns.filter((c) => isContinuousNumeric(c, rowCount)).map((c) => c.column),
+    [columns, rowCount],
   );
   const temporalCols = useMemo(
     () => columns.filter(isTemporalColumn).map((c) => c.column),
@@ -106,6 +125,28 @@ export function VisualizationPanel({
     () => categoricalCols.filter((name) => selectedSet.has(name)),
     [categoricalCols, selectedSet],
   );
+  const selectedTemporal = useMemo(
+    () => temporalCols.filter((name) => selectedSet.has(name)),
+    [temporalCols, selectedSet],
+  );
+  // 字段位下拉的候选列：勾选中的排前面，其余随后（去重保序）。
+  // 这样「左侧勾选 → 立刻可选」与「没勾选也能直接挑」两种用法都成立。
+  const continuousOptions = useMemo(
+    () => [...selectedNumeric, ...continuousNumericCols.filter((name) => !selectedSet.has(name))],
+    [selectedNumeric, continuousNumericCols, selectedSet],
+  );
+  const categoricalOptions = useMemo(
+    () => [...selectedCategorical, ...categoricalCols.filter((name) => !selectedSet.has(name))],
+    [selectedCategorical, categoricalCols, selectedSet],
+  );
+  // 折线图 x 轴候选：选中时间列 → 全部时间列 → 连续数值列（去重保序）。
+  const lineXOptions = useMemo(
+    () =>
+      [...selectedTemporal, ...temporalCols, ...continuousNumericCols].filter(
+        (name, index, arr) => arr.indexOf(name) === index,
+      ),
+    [selectedTemporal, temporalCols, continuousNumericCols],
+  );
   // 热力图：优先用勾选的连续数值列；没有勾选时用数据集里全部连续数值列。
   // 绝不把分类列混进来 —— 这正是日志里 columns=DepDelay,Month 的来源。
   const effectiveNumeric = selectedNumeric.length ? selectedNumeric : continuousNumericCols;
@@ -118,12 +159,21 @@ export function VisualizationPanel({
     return picked.filter((name) => numericCols.includes(name));
   }, [selectedColumns, continuousNumericCols, categoricalCols, numericCols]);
 
-  const advice = useMemo(() => chartFieldAdvice(chart, columns), [chart, columns]);
+  const advice = useMemo(
+    () => chartFieldAdvice(chart, columns, rowCount),
+    [chart, columns, rowCount],
+  );
 
   useEffect(() => {
     setData(null);
     setError(null);
-  }, [datasetId, selectedColumns.join("\u0001")]);
+    // overrideKey 一并作为依赖：改字段位后必须作废旧图，否则会把上一参数的图当成新的。
+  }, [datasetId, selectedColumns.join("\u0001"), overrideKey]);
+
+  // 切换数据集清空字段位覆盖：旧数据集的列名在新数据集里可能不存在（或含义不同）。
+  useEffect(() => {
+    setOverrides({});
+  }, [datasetId]);
 
   // 自动生成：失败后必须能重跑，否则用户改完字段仍停在报错页（回归：改字段后
   // 报错文案不消失、图表要手动点「生成图表」才恢复，看起来像功能坏了）。
@@ -141,12 +191,13 @@ export function VisualizationPanel({
     return () => clearTimeout(timer);
   }, [error, data, loading, retryKey]);
 
-  // 勾选字段 / 数据集 / 图表类型变化 → 重置重试预算并清空错误，重新自动生成。
+  // 勾选字段 / 数据集 / 图表类型 / 字段位变化 → 重置重试预算并清空错误，重新自动生成。
+  // 字段位变化走这里（bump retryKey）触发重新请求，不需要额外的触发机制。
   useEffect(() => {
     retryBudgetRef.current = RETRY_LIMIT;
     setError(null);
     setRetryKey((k) => k + 1);
-  }, [datasetId, chart, selectedColumns.join("\u0001")]);
+  }, [datasetId, chart, selectedColumns.join("\u0001"), overrideKey]);
 
   useEffect(() => {
     void run();
@@ -155,61 +206,109 @@ export function VisualizationPanel({
   }, [datasetId, chart, selectedColumns.join("\u0001"), retryKey]);
 
   const selectionNote = selectedColumns.length
-    ? `使用左侧已选字段（${selectedColumns.length} 个）`
-    : "未指定字段，按当前数据集自动选择适合图表的数据字段";
+    ? `已勾选 ${selectedColumns.length} 个字段（下方选择器可指定每个字段位）`
+    : "未勾选字段，已按图表类型自动选择字段";
+
+  /** 该字段位被手动指定的值（仍需存在于当前 dataset schema），否则 undefined。 */
+  function overrideOf(type: VisualizeChart, slot: ChartSlot): string | undefined {
+    const picked = overrides[`${type}.${slot}`];
+    return picked && colNames.includes(picked) ? picked : undefined;
+  }
+
+  /** 按图表类型描述各字段位（heatmap 不产出字段位，沿用「勾选优先」的既有逻辑）。 */
+  function slotSpecs(type: VisualizeChart): SlotSpec[] {
+    const numeric = continuousOptions;
+    const categorical = categoricalOptions;
+    switch (type) {
+      case "histogram":
+      case "boxplot":
+      case "qq":
+      case "area":
+        return [{ slot: "column", label: "字段", auto: numeric[0], options: numeric }];
+      case "bar":
+        return [{ slot: "column", label: "分类字段", auto: categorical[0], options: categorical }];
+      case "scatter": {
+        // y 的自动值跟随「实际生效的 x」：与改动前 `find(name => name !== x)` 的口径一致，
+        // 否则只改 x 就会撞成同列、图表直接消失（x≠y 的校验是给手改两处时兜底的）。
+        const effectiveX = overrideOf(type, "x") ?? numeric[0];
+        return [
+          { slot: "x", label: "X 轴", auto: numeric[0], options: numeric },
+          { slot: "y", label: "Y 轴", auto: numeric.find((name) => name !== effectiveX), options: numeric },
+        ];
+      }
+      case "line": {
+        const defaultX = selectedTemporal[0] ?? temporalCols[0] ?? numeric[0];
+        const effectiveX = overrideOf(type, "x") ?? defaultX;
+        return [
+          { slot: "x", label: "X 轴", auto: defaultX, options: lineXOptions },
+          { slot: "y", label: "Y 轴", auto: numeric.find((name) => name !== effectiveX), options: numeric },
+        ];
+      }
+      case "grouped_bar": {
+        // 分组列的自动值同样跟随实际生效的分类列（两列相同时后端直接 422）。
+        const effectiveColumn = overrideOf(type, "column") ?? categorical[0];
+        return [
+          { slot: "column", label: "分类列", auto: categorical[0], options: categorical },
+          { slot: "y", label: "数值列", auto: numeric[0], options: numeric },
+          {
+            slot: "group_by",
+            label: "分组列",
+            auto: categorical.find((name) => name !== effectiveColumn),
+            options: categorical,
+          },
+        ];
+      }
+      default:
+        return [];
+    }
+  }
+
+  /** 字段位最终生效值：手动指定且仍存在于当前 dataset schema 时用它，否则回退自动值。 */
+  function resolveSlot(spec: SlotSpec, type: VisualizeChart): string | undefined {
+    return overrideOf(type, spec.slot) ?? spec.auto;
+  }
 
   function chartParams(): Parameters<typeof edaVisualize>[1] | null {
     if (chart === "heatmap") {
       if (effectiveNumeric.length < 2) return null;
       return { chart, columns: effectiveNumeric, sample_limit: 1000 };
     }
-    if (chart === "scatter") {
-      if (effectiveNumeric.length < 2) return null;
-      // 必须取两个不同字段：后端对 x==y 会返回 422（同一列做不了散点）。
-      const x = effectiveNumeric[0];
-      const y = effectiveNumeric.find((name) => name !== x);
-      if (!x || !y) return null;
+    const specs = slotSpecs(chart);
+    const at = (slot: ChartSlot) => {
+      const spec = specs.find((s) => s.slot === slot);
+      return spec ? resolveSlot(spec, chart) : undefined;
+    };
+    if (chart === "scatter" || chart === "line") {
+      const x = at("x");
+      const y = at("y");
+      // 必须取两个不同字段：后端对 x==y 会返回 422（同一列做不了散点/折线）。
+      // 不足 2 列时返回 null 走空状态提示。
+      if (!x || !y || x === y) return null;
       return { chart, x, y, sample_limit: 1000 };
-    }
-    if (chart === "line") {
-      const x = selectedColumns.length && temporalCols.some((name) => selectedSet.has(name))
-        ? temporalCols.find((name) => selectedSet.has(name))
-        : temporalCols[0] ?? effectiveNumeric[0];
-      // y 必须与 x 不同列，否则后端 422；找不到第二列时返回 null 走空状态提示。
-      const y = effectiveNumeric.find((name) => name !== x);
-      if (!x || !y) return null;
-      return { chart, x, y, sample_limit: 1000 };
-    }
-    if (chart === "bar") {
-      const column = selectedCategorical[0] ?? categoricalCols[0];
-      return column ? { chart, column, top_n: 20, sample_limit: 1000 } : null;
-    }
-    if (chart === "histogram" || chart === "boxplot") {
-      const column = effectiveNumeric[0];
-      return column ? { chart, column, top_n: 20, bins: 10, sample_limit: 1000 } : null;
-    }
-    if (chart === "qq") {
-      const column = effectiveNumeric[0];
-      return column ? { chart, column } : null;
-    }
-    if (chart === "area") {
-      const column = effectiveNumeric[0];
-      return column ? { chart, column, bins: 12 } : null;
     }
     if (chart === "grouped_bar") {
-      const column = selectedCategorical[0] ?? categoricalCols[0];
-      const y = effectiveNumeric[0];
-      if (!column || !y) return null;
-      // 分组列必须与分类列不同（后端对同列会返回 422）。
-      const groupBy = selectedCategorical[1] ?? categoricalCols.find((name) => name !== column);
-      if (!groupBy || groupBy === column) return null;
+      const column = at("column");
+      const y = at("y");
+      const groupBy = at("group_by");
+      // 三个字段两两互异（后端对重名列会返回 422）。
+      if (!column || !y || !groupBy) return null;
+      if (column === y || column === groupBy || y === groupBy) return null;
       return { chart, column, y, group_by: groupBy, agg: "mean" };
     }
+    const column = at("column");
+    if (!column) return null;
+    if (chart === "bar") return { chart, column, top_n: 20, sample_limit: 1000 };
+    if (chart === "histogram" || chart === "boxplot") {
+      return { chart, column, top_n: 20, bins: 10, sample_limit: 1000 };
+    }
+    if (chart === "qq") return { chart, column };
+    if (chart === "area") return { chart, column, bins: 12 };
     return null;
   }
 
   const params = chartParams();
   const ready = params !== null;
+  const slots = slotSpecs(chart);
 
   async function run() {
     if (!params) return;
@@ -222,8 +321,8 @@ export function VisualizationPanel({
       // 若后端补齐了空数据，清掉本地「重试」状态，避免无意义的自动重跑。
       setError(null);
     } catch (e) {
-      // 展示后端业务原因（缺哪列 / 为什么这列不可用），而不是只给 HTTP 状态码。
-      setError(describeAnalysisError(e));
+      // 展示后端业务原因（缺哪列 / 为什么这列不可用），并补全「影响 + 怎么解决」。
+      setError(formatError(e));
     } finally {
       setLoading(false);
     }
@@ -247,6 +346,33 @@ export function VisualizationPanel({
           </button>
         ))}
       </div>
+
+      {/* 字段位选择器：把 X/Y/分组等槽位显式交给用户，不再只能吃数组前两列。 */}
+      {slots.length > 0 && (
+        <div className="visualization-slots">
+          {slots.map((spec) => (
+            <label className="field" key={spec.slot}>
+              {spec.label}
+              <select
+                value={resolveSlot(spec, chart) ?? ""}
+                onChange={(event) =>
+                  setOverrides((current) => ({
+                    ...current,
+                    [`${chart}.${spec.slot}`]: event.target.value,
+                  }))
+                }
+              >
+                {spec.options.length === 0 && <option value="">无可选字段</option>}
+                {spec.options.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+      )}
 
       <div className="visualization-selection-note">
         <span>{selectionNote}</span>
@@ -281,13 +407,24 @@ export function VisualizationPanel({
           </span>
           <div className="analysis-error-body">
             <strong className="analysis-error-title">这张图暂时生成不了</strong>
-            <span className="analysis-error-message">{error}</span>
+            <span className="analysis-error-message">
+              <b className="analysis-error-tag">发生了什么</b>
+              {error.what}
+            </span>
             {rejectedByBackend.length > 0 && (
               <span className="analysis-error-message">
                 你勾选的 {rejectedByBackend.join("、")} 属于低基数编码列（取值种类过少），
                 后端按分类字段处理，不能参与相关性计算。
               </span>
             )}
+            <span className="analysis-error-hint">
+              <b className="analysis-error-tag">影响</b>
+              {error.impact}
+            </span>
+            <span className="analysis-error-hint">
+              <b className="analysis-error-tag">怎么解决</b>
+              {error.solution}
+            </span>
             {advice.message && (
               <span className="analysis-error-hint">建议：{advice.message}</span>
             )}
@@ -295,6 +432,12 @@ export function VisualizationPanel({
               <span className="analysis-error-hint">
                 可直接使用：<strong>{advice.suggested.join("、")}</strong>
               </span>
+            )}
+            {error.actionLink && error.actionLabel && (
+              <Link className="btn btn-primary analysis-error-action" to={error.actionLink}>
+                {error.actionLabel}
+                <Icon name="arrow-right" size={14} />
+              </Link>
             )}
           </div>
         </div>
@@ -351,15 +494,20 @@ function renderChart(chart: VisualizeChart, data: Record<string, unknown>): Reac
     const y = (data.y as number[]) ?? [];
     const rows = x.map((name, i) => ({ name: String(name), value: Number.isFinite(y[i]) ? y[i] : 0 }));
     return (
-      <ResponsiveContainer width="100%" aspect={ASPECT}>
-        <LineChart data={rows} margin={{ top: 12, right: 20, bottom: 16, left: 4 }}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="name" fontSize={12} interval="preserveStartEnd" />
-          <YAxis fontSize={12} />
-          <Tooltip />
-          <Line type="monotone" dataKey="value" stroke={PRIMARY} dot={rows.length <= 60} />
-        </LineChart>
-      </ResponsiveContainer>
+      <>
+        <p className="muted">
+          {String(data.x_label ?? "")} × {String(data.y_label ?? "")} · 重复 x 按均值聚合
+        </p>
+        <ResponsiveContainer width="100%" aspect={ASPECT}>
+          <LineChart data={rows} margin={{ top: 12, right: 20, bottom: 16, left: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="name" fontSize={12} interval="preserveStartEnd" />
+            <YAxis fontSize={12} />
+            <Tooltip />
+            <Line type="monotone" dataKey="value" stroke={PRIMARY} dot={rows.length <= 60} />
+          </LineChart>
+        </ResponsiveContainer>
+      </>
     );
   }
 
@@ -367,14 +515,17 @@ function renderChart(chart: VisualizeChart, data: Record<string, unknown>): Reac
     const x = (data.x as number[]) ?? [];
     const y = (data.y as number[]) ?? [];
     const rows = x.map((xv, i) => ({ x: Number(xv), y: Number(y[i]) })).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+    const xLabel = String(data.x_label ?? "x");
+    const yLabel = String(data.y_label ?? "y");
     return (
       <>
+        <p className="muted">{xLabel} × {yLabel}</p>
         {Boolean(data.sampled) && <p className="muted">数据已下采样展示 {rows.length} 个点</p>}
         <ResponsiveContainer width="100%" aspect={ASPECT}>
           <ScatterChart margin={{ top: 12, right: 20, bottom: 16, left: 8 }}>
             <CartesianGrid strokeDasharray="3 3" />
-            <XAxis type="number" dataKey="x" fontSize={12} name="x" />
-            <YAxis type="number" dataKey="y" fontSize={12} name="y" />
+            <XAxis type="number" dataKey="x" fontSize={12} name={xLabel} />
+            <YAxis type="number" dataKey="y" fontSize={12} name={yLabel} />
             <Tooltip cursor={{ strokeDasharray: "3 3" }} />
             <Scatter data={rows} fill={PRIMARY} />
           </ScatterChart>
@@ -459,18 +610,24 @@ function renderChart(chart: VisualizeChart, data: Record<string, unknown>): Reac
       return row;
     });
     return (
-      <ResponsiveContainer width="100%" aspect={ASPECT}>
-        <BarChart data={rows} margin={{ top: 12, right: 20, bottom: 16, left: 4 }}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="name" fontSize={12} interval={0} angle={cats.length > 6 ? -20 : 0} height={cats.length > 6 ? 60 : 30} textAnchor={cats.length > 6 ? "end" : "middle"} />
-          <YAxis fontSize={12} />
-          <Tooltip />
-          <Legend />
-          {groups.map((g, i) => (
-            <Bar key={g} dataKey={g} fill={CHART_SERIES[i % CHART_SERIES.length]} />
-          ))}
-        </BarChart>
-      </ResponsiveContainer>
+      <>
+        <p className="muted">
+          {String(data.column_label ?? "")} × {String(data.y_label ?? "")}
+          （按 {String(data.group_label ?? "")} 分组）
+        </p>
+        <ResponsiveContainer width="100%" aspect={ASPECT}>
+          <BarChart data={rows} margin={{ top: 12, right: 20, bottom: 16, left: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="name" fontSize={12} interval={0} angle={cats.length > 6 ? -20 : 0} height={cats.length > 6 ? 60 : 30} textAnchor={cats.length > 6 ? "end" : "middle"} />
+            <YAxis fontSize={12} />
+            <Tooltip />
+            <Legend />
+            {groups.map((g, i) => (
+              <Bar key={g} dataKey={g} fill={CHART_SERIES[i % CHART_SERIES.length]} />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      </>
     );
   }
 

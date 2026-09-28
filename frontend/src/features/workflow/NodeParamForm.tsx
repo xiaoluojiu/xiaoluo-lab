@@ -13,7 +13,7 @@ import { useMemo, useState } from "react";
 
 import { isContinuousNumeric, isNumericColumn, isTemporalColumn } from "../../lib/edaColumns";
 import type { SchemaColumn } from "../../types/dataset";
-import type { ParamSpec } from "./nodeSpecs";
+import { AGGREGATION_FUNCS, type ParamSpec } from "./nodeSpecs";
 import { flattenConfig } from "./configView";
 // 自带样式：沉浸式编辑器不在 .content 内，拿不到 design-foundation 的控件兜底规则。
 import "./params.css";
@@ -22,6 +22,7 @@ interface Props {
   specs: ParamSpec[];
   config: Record<string, unknown>;
   columns: SchemaColumn[];
+  datasetOptions?: Array<{ id: number; name: string }>;
   onChange: (next: Record<string, unknown>) => void;
 }
 
@@ -142,7 +143,165 @@ function JsonField({
   );
 }
 
-export function NodeParamForm({ specs, config, columns, onChange }: Props) {
+/* ---------- enum 多选（固定选项，chips；产出 string[]） ---------- */
+function MultiOptionsField({
+  value, options, onChange,
+}: {
+  value: string[];
+  options: NonNullable<ParamSpec["options"]>;
+  onChange: (next: string[]) => void;
+}) {
+  const selected = new Set(value);
+  return (
+    <div className="wf-columns-list">
+      {options.map((option) => {
+        const active = selected.has(option.value);
+        return (
+          <button
+            key={option.value}
+            type="button"
+            className={`wf-column-chip${active ? " active" : ""}`}
+            aria-pressed={active}
+            onClick={() => {
+              const next = new Set(selected);
+              if (active) next.delete(option.value);
+              else next.add(option.value);
+              onChange(options.filter((o) => next.has(o.value)).map((o) => o.value));
+            }}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------- 条件构造器（data.filter；产出 [{column, op, value}]） ---------- */
+interface FilterConditionRow { column: string; op: string; value: string; }
+
+const FILTER_OPERATORS: NonNullable<ParamSpec["options"]> = [
+  { value: "eq", label: "等于" },
+  { value: "neq", label: "不等于" },
+  { value: "gt", label: "大于" },
+  { value: "gte", label: "大于等于" },
+  { value: "lt", label: "小于" },
+  { value: "lte", label: "小于等于" },
+  { value: "contains", label: "包含子串" },
+  { value: "in", label: "在集合中" },
+  { value: "is_null", label: "为空" },
+];
+
+const EMPTY_CONDITION: FilterConditionRow = { column: "", op: "eq", value: "" };
+
+function ConditionsField({
+  value, options, onChange,
+}: {
+  value: unknown;
+  options: string[];
+  onChange: (next: FilterConditionRow[]) => void;
+}) {
+  const rows: FilterConditionRow[] =
+    Array.isArray(value) && value.length ? (value as FilterConditionRow[]) : [{ ...EMPTY_CONDITION }];
+  const patch = (index: number, next: Partial<FilterConditionRow>) =>
+    onChange(rows.map((row, i) => (i === index ? { ...row, ...next } : row)));
+
+  return (
+    <div className="wf-builder">
+      {rows.map((row, index) => {
+        const noValue = row.op === "is_null";
+        return (
+          <div className={`wf-builder-row${noValue ? " no-value" : ""}`} key={index}>
+            <select
+              className="wf-param-input" aria-label="选择列" value={row.column}
+              onChange={(e) => patch(index, { column: e.target.value })}
+            >
+              <option value="">（选择列）</option>
+              {options.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+            <select
+              className="wf-param-input" aria-label="选择操作符" value={row.op}
+              onChange={(e) => patch(index, { op: e.target.value })}
+            >
+              {FILTER_OPERATORS.map((op) => <option key={op.value} value={op.value}>{op.label}</option>)}
+            </select>
+            {!noValue && (
+              <input
+                className="wf-param-input" aria-label="条件值" value={row.value ?? ""}
+                placeholder={row.op === "in" ? "逗号分隔多个值" : "值"}
+                onChange={(e) => patch(index, { value: e.target.value })}
+              />
+            )}
+            <button
+              type="button" className="wf-builder-remove" title="删除条件" aria-label="删除条件"
+              onClick={() =>
+                onChange(rows.length === 1 ? [{ ...EMPTY_CONDITION }] : rows.filter((_, i) => i !== index))
+              }
+            >
+              ×
+            </button>
+          </div>
+        );
+      })}
+      <button type="button" className="wf-builder-add"
+        onClick={() => onChange([...rows, { ...EMPTY_CONDITION }])}>
+        ＋ 添加条件
+      </button>
+    </div>
+  );
+}
+
+/* ---------- 聚合构造器（data.aggregate；产出 [{column, func}]） ---------- */
+interface AggregationRow { column: string; func: string; }
+
+function AggregationsField({
+  value, options, onChange,
+}: {
+  value: unknown;
+  options: string[];
+  onChange: (next: AggregationRow[]) => void;
+}) {
+  const rows: AggregationRow[] =
+    Array.isArray(value) && value.length ? (value as AggregationRow[]) : [{ column: "", func: "mean" }];
+  const patch = (index: number, next: Partial<AggregationRow>) =>
+    onChange(rows.map((row, i) => (i === index ? { ...row, ...next } : row)));
+
+  return (
+    <div className="wf-builder">
+      {rows.map((row, index) => (
+        <div className="wf-builder-row agg" key={index}>
+          <select
+            className="wf-param-input" aria-label="选择聚合列" value={row.column}
+            onChange={(e) => patch(index, { column: e.target.value })}
+          >
+            <option value="">（选择列；count 可留空）</option>
+            {options.map((name) => <option key={name} value={name}>{name}</option>)}
+          </select>
+          <select
+            className="wf-param-input" aria-label="选择聚合函数" value={row.func}
+            onChange={(e) => patch(index, { func: e.target.value })}
+          >
+            {AGGREGATION_FUNCS.map((func) => <option key={func.value} value={func.value}>{func.label}</option>)}
+          </select>
+          <button
+            type="button" className="wf-builder-remove" title="删除聚合" aria-label="删除聚合"
+            onClick={() =>
+              onChange(rows.length === 1 ? [{ column: "", func: "mean" }] : rows.filter((_, i) => i !== index))
+            }
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button type="button" className="wf-builder-add"
+        onClick={() => onChange([...rows, { column: "", func: "mean" }])}>
+        ＋ 添加聚合
+      </button>
+    </div>
+  );
+}
+
+export function NodeParamForm({ specs, config, columns, datasetOptions = [], onChange }: Props) {
   const flat = useMemo(() => flattenConfig(config), [config]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [advancedDraft, setAdvancedDraft] = useState("");
@@ -190,7 +349,14 @@ export function NodeParamForm({ specs, config, columns, onChange }: Props) {
               )}
             </label>
 
-            {spec.kind === "enum" && (
+            {spec.kind === "enum" && spec.multi && (
+              <MultiOptionsField
+                value={Array.isArray(value) ? (value as string[]) : []}
+                options={spec.options ?? []}
+                onChange={(next) => setValue(spec.key, next)}
+              />
+            )}
+            {spec.kind === "enum" && !spec.multi && (
               <>
                 {spec.options?.length ? (
                   <select
@@ -205,7 +371,6 @@ export function NodeParamForm({ specs, config, columns, onChange }: Props) {
                     ))}
                   </select>
                 ) : (
-                  // 数据集下拉等运行期才知道选项的场景，由调用方以 datalist 提供。
                   <input
                     id={inputId}
                     className="wf-param-input"
@@ -260,6 +425,38 @@ export function NodeParamForm({ specs, config, columns, onChange }: Props) {
 
             {spec.kind === "json" && (
               <JsonField value={value} placeholder={spec.placeholder} onChange={(next) => setValue(spec.key, next)} />
+            )}
+
+            {spec.kind === "dataset" && (
+              <select
+                id={inputId}
+                className="wf-param-input"
+                value={value == null ? "" : String(value)}
+                onChange={(event) =>
+                  setValue(spec.key, event.target.value === "" ? undefined : Number(event.target.value))
+                }
+              >
+                <option value="">（未选择）</option>
+                {datasetOptions.map((option) => (
+                  <option key={option.id} value={option.id}>#{option.id} {option.name}</option>
+                ))}
+              </select>
+            )}
+
+            {spec.kind === "conditions" && (
+              <ConditionsField
+                value={value}
+                options={columns.map((c) => c.column)}
+                onChange={(next) => setValue(spec.key, next)}
+              />
+            )}
+
+            {spec.kind === "aggregations" && (
+              <AggregationsField
+                value={value}
+                options={columns.map((c) => c.column)}
+                onChange={(next) => setValue(spec.key, next)}
+              />
             )}
 
             {spec.hint && <p className="wf-param-hint">{spec.hint}</p>}

@@ -31,7 +31,13 @@ export function edaDescriptive(
 /** GET /datasets/{id}/eda/correlation */
 export function edaCorrelation(
   datasetId: number,
-  options?: { version?: number; columns?: string[]; method?: "pearson" | "spearman" },
+  options?: {
+    version?: number;
+    columns?: string[];
+    method?: "pearson" | "spearman" | "auto";
+    /** true=只用显式勾选的字段，不足 2 个有效数值列时后端直接返回 422，不自动补齐。 */
+    strict?: boolean;
+  },
 ) {
   return unwrap<EdaResult>(
     client.get(`/datasets/${datasetId}/eda/correlation`, {
@@ -39,6 +45,7 @@ export function edaCorrelation(
         version: options?.version,
         columns: columnsParam(options?.columns),
         method: options?.method,
+        strict: options?.strict,
       }),
     }),
   );

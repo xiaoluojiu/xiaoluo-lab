@@ -76,6 +76,21 @@ export default function AI() {
   const displayMessages = session.messages;
 
   /**
+   * 「重试」用：最近一条用户消息。
+   *
+   * 只是把「重发上一条」接到既有 `run.send` 上——不新开执行通道、不碰 useAgentRun，
+   * 符合「AI 实验室只替换加载状态、不改核心逻辑」的约束。
+   * 没有可重发的用户消息时返回 null，进度条上就不会出现一个点了没反应的按钮。
+   */
+  const lastUserMessage = useMemo(() => {
+    for (let i = session.messages.length - 1; i >= 0; i -= 1) {
+      const message = session.messages[i];
+      if (message.role === "user" && message.content.trim()) return message.content;
+    }
+    return null;
+  }, [session.messages]);
+
+  /**
    * 面板自动展开：只在「任务开始」这一次转变上触发（busy 由 false → true），
    * 并在出现待授权弹窗时强制展开。
    * 历史缺陷：原来依赖 [busy, permission] 且无条件 setPanelOpen(true)，
@@ -219,6 +234,7 @@ export default function AI() {
               large={panelSize === "large"}
               onToggleSize={() => setPanelSize((v) => (v === "large" ? "normal" : "large"))}
               onCollapse={() => { panelUserCollapsedRef.current = true; setPanelOpen(false); }}
+              onRetry={run.busy || !lastUserMessage ? undefined : () => void run.send(lastUserMessage)}
             />
           )}
         </div>

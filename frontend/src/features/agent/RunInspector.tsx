@@ -9,6 +9,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { runTraceUrl, getCapabilities, type AgentToolInfo } from "../../api/agent";
 import { toolDisplayName } from "../../store/aiLab";
 import { InfoHint } from "../../components/InfoHint";
+import { TaskProgress, type TaskStatus } from "../../components/TaskProgress";
+import { AGENT_TASK_STAGES, agentStageIndex } from "../../lib/agentEvents";
 import type { AgentEvent, AgentRun, AgentTokenUsage, AnswerSource, InspectorTab } from "../../types/agent";
 import { AgentTimeline } from "./AgentTimeline";
 import { ToolCallCard } from "./ToolCallCard";
@@ -107,6 +109,7 @@ export function RunInspector({
   large,
   onToggleSize,
   onCollapse,
+  onRetry,
 }: {
   run: AgentRun | null;
   events: AgentEvent[];
@@ -122,6 +125,8 @@ export function RunInspector({
   large: boolean;
   onToggleSize: () => void;
   onCollapse: () => void;
+  /** 运行失败后的「重试」；由页面注入（复用既有的发送入口），面板本身不发请求。 */
+  onRetry?: () => void;
 }) {
   const [capabilities, setCapabilities] = useState<Awaited<ReturnType<typeof getCapabilities>> | null>(null);
   const [capsLoading, setCapsLoading] = useState(true);
@@ -138,6 +143,15 @@ export function RunInspector({
   useEffect(() => {
     loadCapabilities();
   }, [loadCapabilities]);
+
+  /**
+   * 加载状态统一走通用 <TaskProgress> 的三态。
+   *
+   * 阶段高亮由既有 `stage` 文案归并而来（4 个粗阶段），进度沿用既有 `progress` ——
+   * useAgentRun 的执行逻辑一行没动，这里只把「一行文字 + 一根条」换成有阶段感的呈现。
+   */
+  const taskStatus: TaskStatus =
+    run?.status === "failed" ? "error" : run?.status === "completed" ? "success" : "running";
 
   /** 工具链：按调用顺序展示调用关系（步序 → 工具 → 状态 → 耗时）。 */
   const chainItems = useMemo(() => {
@@ -173,9 +187,22 @@ export function RunInspector({
           </div>
         </div>
         {(busy || run) && (
-          <div className="ai-panel-progress">
-            <div className="ai-panel-progress-text"><span>{stage}</span><strong>{progress}%</strong></div>
-            <div className="ai-progress-track"><div className="ai-progress-fill" style={{ width: `${progress}%` }} /></div>
+          <div className="ai-panel-task">
+            {/* 加载状态：与 ML 训练、Workflow 运行共用同一个 <TaskProgress>。
+                阶段由既有 stage 归并，进度沿用既有 progress —— 不改执行逻辑。
+                原始 stage 文案（含具体工具名）通过 note 保留，归并不会丢信息。 */}
+            <TaskProgress
+              stages={AGENT_TASK_STAGES}
+              currentStage={agentStageIndex(stage)}
+              progress={progress}
+              status={taskStatus}
+              title="Agent 执行中"
+              note={stage}
+              elapsed={run?.elapsed_seconds}
+              error={run?.error || null}
+              onViewResult={() => onTabChange("overview")}
+              onRetry={onRetry}
+            />
           </div>
         )}
       </div>

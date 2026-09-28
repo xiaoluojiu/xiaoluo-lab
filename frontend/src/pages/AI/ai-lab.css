@@ -191,11 +191,11 @@
 .ai-panel-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .ai-panel-head-actions { display: flex; align-items: center; gap: 6px; }
 .ai-panel-collapse { padding: 4px 10px; font-size: 12px; }
-.ai-panel-progress { margin-top: 10px; }
-.ai-panel-progress-text { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; margin-bottom: 5px; }
-.ai-panel-progress-text span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ai-progress-track { height: 6px; border-radius: 99px; background: var(--surface-muted); overflow: hidden; }
-.ai-progress-fill { height: 100%; background: var(--accent, var(--primary)); transition: width .25s ease; }
+/* 加载状态已统一为通用 <TaskProgress>（阶段高亮 + 三态 + 动作按钮）。
+   这里只收敛它在窄面板里的内边距与字号 —— 原来的 .ai-panel-progress* /
+   .ai-progress-* 一套自绘进度条已被替换，随之删除，避免留下两套口径。 */
+.ai-panel-task { margin-top: 10px; }
+.ai-panel-task .task-progress { padding: 9px 11px; font-size: 12.5px; }
 /* 面板主体：概览数字常驻，页签区占剩余高度并内部滚动。 */
 .ai-panel-body { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 .ai-panel-placeholder { padding: 20px 16px; font-size: 12.5px; line-height: 1.65; }

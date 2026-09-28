@@ -95,16 +95,23 @@ export function HeroBand({ eyebrow, title, description, actions, meta, icon = "s
   );
 }
 
-/* ---------- 插画化空态 ---------- */
+/* ---------- 插画化空态 ----------
+   全站唯一的空态实现（components/StateBlock 从这里 re-export，不再各写一份）。
+   五要素固定为：图标 → 标题 → 说明 → 主操作 → 次操作。
+   为什么要有「次操作」：新用户看到空页面时，「不知道该干嘛」和「想先看看再决定」
+   是两种不同诉求，只给一个主按钮会把后者堵死。 */
 export interface EmptyStateProps {
   title: string;
-  description?: string;
+  description?: ReactNode;
+  /** 主操作：页面的下一步（通常是 <button className="btn primary"> 或 <Link className="btn primary">）。 */
   action?: ReactNode;
+  /** 次操作：低权重入口，不打断主路径（通常是 <Link className="btn link">）。 */
+  secondary?: ReactNode;
   icon?: IconName;
   compact?: boolean;
 }
 
-export function EmptyState({ title, description, action, icon = "database", compact = false }: EmptyStateProps) {
+export function EmptyState({ title, description, action, secondary, icon = "database", compact = false }: EmptyStateProps) {
   return (
     <div className={`empty-state${compact ? " is-compact" : ""}`}>
       <span className="empty-illustration" aria-hidden="true">
@@ -112,7 +119,12 @@ export function EmptyState({ title, description, action, icon = "database", comp
       </span>
       <strong className="empty-title">{title}</strong>
       {description ? <span className="empty-desc">{description}</span> : null}
-      {action ? <div className="empty-action">{action}</div> : null}
+      {action || secondary ? (
+        <div className="empty-actions">
+          {action}
+          {secondary}
+        </div>
+      ) : null}
     </div>
   );
 }
